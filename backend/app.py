@@ -236,27 +236,5 @@ def batch_delete():
     return jsonify({"success": True})
 
 
-@app.route('/api/batch_delete', methods=['POST'])
-@token_required(admin_only=True)  # 只有管理员能批量删
-def batch_delete():
-    data = request.get_json()
-    paths = data.get('paths', [])
-    failed = []
-    for p in paths:
-        abs_path = os.path.abspath(os.path.join(BASE_DIR, p.lstrip('/\\')))
-        if not abs_path.startswith(BASE_DIR):
-            failed.append(p)
-            continue
-        try:
-            if os.path.isdir(abs_path):
-                os.rmdir(abs_path)
-            else:
-                os.remove(abs_path)
-        except Exception:
-            failed.append(p)
-    if failed:
-        return jsonify({'success': False, 'error': f'部分失败: {failed}'})
-    return jsonify({'success': True})
-
 if __name__ == '__main__':
     app.run(debug=True)

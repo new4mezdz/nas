@@ -277,6 +277,14 @@ computed: {
         this.uploadInfo = '上传失败';
       }
     },
+    goParent() {
+  if (this.currentPath === '/' || this.currentPath === '') return;
+
+  const parts = this.currentPath.split('/').filter(p => p);
+  parts.pop();  // 删除最后一级目录名
+  const parentPath = '/' + parts.join('/');
+  this.loadFiles(parentPath || '/');
+},
     fileSelected() {
       this.uploadInfo = '';
     },
