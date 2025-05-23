@@ -45,6 +45,11 @@ const app = Vue.createApp({
       infoMessage: '',
       sambaMessage: '',
 
+      // 预览
+    showPreview: false,
+    previewingFile: null,
+    previewUrl: '',
+    previewType: '',
     }
   },
 computed: {
@@ -342,6 +347,28 @@ computed: {
     downloadFile(item) {
       window.open('/api/download?path=' + encodeURIComponent(this.currentPath.replace(/\/$/, '') + '/' + item.name));
     },
+ // ========== 文件预览 ==========
+      isImage(file) {
+    return /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file.name);
+  },
+  isVideo(file) {
+    return /\.(mp4|webm|ogg|mov|avi)$/i.test(file.name);
+  },
+  isAudio(file) {
+    return /\.(mp3|wav|ogg|m4a)$/i.test(file.name);
+  },
+  previewFile(file) {
+    this.previewingFile = file;
+    this.previewUrl = `/api/preview?path=${encodeURIComponent(this.currentPath.replace(/\/$/, '') + '/' + file.name)}`;
+    this.previewType = this.isImage(file) ? 'image' : (this.isVideo(file) ? 'video' : (this.isAudio(file) ? 'audio' : 'other'));
+    this.showPreview = true;
+  },
+  closePreview() {
+    this.showPreview = false;
+    this.previewUrl = '';
+    this.previewingFile = null;
+    this.previewType = '';
+  },
 
     // ========== 用户管理 ==========
     async loadUserList() {

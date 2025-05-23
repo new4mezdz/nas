@@ -5,8 +5,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 from functools import wraps
 from datetime import datetime, timedelta
-
-
+import  mimetypes
+from flask import send_file
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
@@ -235,6 +235,15 @@ def batch_delete():
         return jsonify({"success": False, "error": f"部分或全部删除失败: {errors}"}), 400
     return jsonify({"success": True})
 
+
+@app.route('/api/preview')
+def preview_file():
+    path = request.args.get('path')
+    abs_path = os.path.join(BASE_DIR, path.lstrip('/'))
+    if not os.path.exists(abs_path):
+        return jsonify({'error': '文件不存在'}), 404
+    mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
+    return send_file(abs_path, mimetype=mime)
 
 if __name__ == '__main__':
     app.run(debug=True)

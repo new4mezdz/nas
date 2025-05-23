@@ -129,3 +129,14 @@ def rename_entry():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+@file_bp.route('/api/preview', methods=['GET'])
+@token_required()
+def preview_file():
+    path = request.args.get('path')
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, path.lstrip('/')))
+    if not os.path.exists(abs_path):
+        return jsonify({'error': '文件不存在'}), 404
+    # 自动推断 mime
+    import mimetypes
+    mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
+    return send_file(abs_path, mimetype=mime)
