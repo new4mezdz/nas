@@ -160,62 +160,76 @@
         </table>
       </div>
 
-       <!-- ========= 文件管理 ========== -->
-      <div class="bg-white p-4 rounded shadow mt-8">
-        <h2 class="text-xl font-semibold mb-3">文件管理</h2>
-        <!-- 批量操作按钮 -->
-        <div class="mb-4 flex items-center space-x-2">
-          <button @click="selectAllFiles" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">全选</button>
-          <button @click="clearAllSelected" class="bg-gray-400 text-white px-3 py-1 rounded hover:bg-gray-500">取消全选</button>
-          <button @click="batchDelete" :disabled="!selectedFiles.length"
-            class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-200">批量删除</button>
-          <span class="ml-4 text-gray-600" v-if="selectedFiles.length">已选 {{ selectedFiles.length }} 项</span>
-        </div>
-        <!-- 其它上传/新建目录区域根据你的需要插入 -->
-        <div class="mb-2">
-          <span>当前路径：{{ currentPath }}</span>
-          <button v-if="currentPath !== '/'" @click="goParent" class="ml-4 text-blue-600">返回上一级</button>
-        </div>
-        <table class="w-full text-left text-sm border">
-          <thead>
-            <tr class="border-b bg-gray-50">
-              <th class="py-2 px-1 w-10"></th>
-              <th class="py-2 px-1">名称</th>
-              <th class="py-2 px-1">类型</th>
-              <th class="py-2 px-1">大小</th>
-              <th class="py-2 px-1">修改时间</th>
-              <th class="py-2 px-1">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in fileList" :key="item.name"
-                :class="{'bg-blue-50': selectedFiles.includes(item.name)}"
-                class="border-b transition-colors">
-              <td class="text-center">
-                <input type="checkbox" v-model="selectedFiles" :value="item.name" />
-              </td>
-              <td>
-                <span v-if="item.is_dir" class="text-blue-600 cursor-pointer" @click="goDir(item.name)">📁 {{ item.name }}</span>
-                <span v-else>📄 {{ item.name }}</span>
-              </td>
-              <td>{{ item.is_dir ? "文件夹" : "文件" }}</td>
-              <td>{{ item.is_dir ? "-" : formatSize(item.size) }}</td>
-              <td>{{ formatTime(item.mtime) }}</td>
-              <td>
-                <button v-if="!item.is_dir"
-                  @click="downloadFile(item)"
-                  class="text-green-600 underline">下载</button>
-                <button v-if="user.is_admin" @click="startRename(item)" class="ml-2 text-blue-600 underline">重命名</button>
-                <button v-if="user.is_admin" @click="deleteEntry(item)" class="ml-2 text-red-600 underline">删除</button>
-                   <button v-if="!item.is_dir && (isImage(item) || isVideo(item) || isAudio(item))"
-          @click="previewFile(item)"
-          class="text-indigo-600 underline mr-2">预览</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <!-- ========= 文件管理 ========== -->
+<div class="bg-white p-4 rounded shadow mt-8">
+  <h2 class="text-xl font-semibold mb-3">文件管理</h2>
+  <!-- 批量操作按钮 -->
+  <div class="mb-4 flex items-center space-x-2">
+    <button @click="selectAllFiles" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">全选</button>
+    <button @click="clearAllSelected" class="bg-gray-400 text-white px-3 py-1 rounded hover:bg-gray-500">取消全选</button>
+    <button @click="batchDelete" :disabled="!selectedFiles.length"
+      class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-200">批量删除</button>
+    <span class="ml-4 text-gray-600" v-if="selectedFiles.length">已选 {{ selectedFiles.length }} 项</span>
+  </div>
+
+  <div class="mb-2 flex items-center space-x-2">
+  <span>当前路径：{{ currentPath }}</span>
+  <button v-if="currentPath !== '/'" @click="goParent" class="text-blue-600">返回上一级</button>
+
+  <!-- 新建文件夹（不要用div包，直接写input和button） -->
+  <input v-model="newDirName" placeholder="新建文件夹名" class="border px-2 py-1 rounded" />
+  <button @click="mkdir" class="bg-green-600 text-white px-3 py-1 rounded">新建文件夹</button>
+  <span class="text-red-600">{{ adminOnlyMsg }}</span>
+
+  <!-- 上传文件 -->
+  <label class="bg-indigo-500 text-white rounded px-2 py-1 cursor-pointer ml-2">
+    <input type="file" ref="uploadFileInput" @change="fileSelected" style="display:none;">
+    选择文件
+  </label>
+  <button @click="uploadFile" class="bg-indigo-600 text-white rounded px-2 py-1 ml-1">上传</button>
+  <span class="ml-2 text-gray-600 text-sm">{{ uploadInfo }}</span>
+</div>
+
+
+  <table class="w-full text-left text-sm border">
+    <thead>
+      <tr class="border-b bg-gray-50">
+        <th class="py-2 px-1 w-10"></th>
+        <th class="py-2 px-1">名称</th>
+        <th class="py-2 px-1">类型</th>
+        <th class="py-2 px-1">大小</th>
+        <th class="py-2 px-1">修改时间</th>
+        <th class="py-2 px-1">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="item in fileList" :key="item.name"
+          :class="{'bg-blue-50': selectedFiles.includes(item.name)}"
+          class="border-b transition-colors">
+        <td class="text-center">
+          <input type="checkbox" v-model="selectedFiles" :value="item.name" />
+        </td>
+        <td>
+          <span v-if="item.is_dir" class="text-blue-600 cursor-pointer" @click="goDir(item.name)">📁 {{ item.name }}</span>
+          <span v-else>📄 {{ item.name }}</span>
+        </td>
+        <td>{{ item.is_dir ? "文件夹" : "文件" }}</td>
+        <td>{{ item.is_dir ? "-" : formatSize(item.size) }}</td>
+        <td>{{ formatTime(item.mtime) }}</td>
+        <td>
+          <button v-if="!item.is_dir"
+            @click="downloadFile(item)"
+            class="text-green-600 underline">下载</button>
+          <button v-if="user.is_admin" @click="startRename(item)" class="ml-2 text-blue-600 underline">重命名</button>
+          <button v-if="user.is_admin" @click="deleteEntry(item)" class="ml-2 text-red-600 underline">删除</button>
+          <button v-if="!item.is_dir && (isImage(item) || isVideo(item) || isAudio(item))"
+                  @click="previewFile(item)"
+                  class="text-indigo-600 underline mr-2">预览</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 
       <!-- ========== 修改密码弹窗 ========== -->

@@ -238,12 +238,34 @@ def batch_delete():
 
 @app.route('/api/preview')
 def preview_file():
-    path = request.args.get('path')
-    abs_path = os.path.join(BASE_DIR, path.lstrip('/'))
-    if not os.path.exists(abs_path):
+    path = request.args.get('path', '').lstrip('/\\')
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
+    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
         return jsonify({'error': '文件不存在'}), 404
     mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
     return send_file(abs_path, mimetype=mime)
+
+
+@app.route('/api/mkdir', methods=['POST'])
+@token_required()
+def mkdir():
+    data = request.get_json()
+    parent = data.get('parent', '/')
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': '文件夹名不能为空'}), 400
+    # 拼接路径并校验
+    safe_parent = parent.lstrip('/\\')
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, safe_parent, name))
+    if not abs_path.startswith(BASE_DIR):
+        return jsonify({'error': '路径非法'}), 400
+    try:
+        os.makedirs(abs_path, exist_ok=False)
+        return jsonify({'success': True})
+    except FileExistsError:
+        return jsonify({'error': '文件夹已存在'}), 400
+    except Exception as e:
+        return jsonify({'error': '创建失败: ' + str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
