@@ -7,18 +7,17 @@ from functools import wraps
 from datetime import datetime, timedelta
 import  mimetypes
 from flask import send_file
+import secrets
+import subprocess
+import time
+import requests
+import os
+from common import BASE_DIR, get_db
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
-DATABASE = os.path.join(os.path.dirname(__file__), 'nas.db')
-BASE_DIR = r"D:\nas_data"  # 改成你的根目录
 
-# ===== 数据库辅助 =====
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-    return g.db
+
 
 @app.teardown_appcontext
 def close_db(error):
@@ -47,6 +46,22 @@ def init_db():
 
 with app.app_context():
     init_db()
+def init_share_table():
+    db = get_db()
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS share_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            password TEXT,
+            expire_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    db.commit()
+
+with app.app_context():
+    init_share_table()
 
 # ===== JWT认证 =====
 def token_required(admin_only=False):
@@ -267,5 +282,124 @@ def mkdir():
     except Exception as e:
         return jsonify({'error': '创建失败: ' + str(e)}), 500
 
+
+@app.route('/api/share', methods=['POST'])
+@token_required()
+def create_share():
+    data = request.get_json()
+    file_path = data.get('file_path', '')
+    expire_hours = int(data.get('expire_hours', 24))
+    password = data.get('password', '')
+
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, file_path.lstrip('/\\')))
+    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
+        return jsonify({'error': '文件不存在'}), 404
+
+    token = secrets.token_urlsafe(16)
+    expire_at = datetime.now() + timedelta(hours=expire_hours)
+    db = get_db()
+    db.execute(
+        "INSERT INTO share_links (file_path, token, password, expire_at) VALUES (?, ?, ?, ?)",
+        (file_path, token, password, expire_at.strftime('%Y-%m-%d %H:%M:%S'))
+    )
+    db.commit()
+
+    # 返回外链地址（相对地址 + ngrok 公网完整地址）
+    return jsonify({
+        'success': True,
+        'share_url': f'/share/{token}',  # 相对地址
+        'full_url': f'{ngrok_url_global}/share/{token}' if ngrok_url_global else None  # 公网地址
+    })
+
+
+@app.route('/share/<token>', methods=['GET', 'POST'])
+def access_share(token):
+    db = get_db()
+    row = db.execute("SELECT * FROM share_links WHERE token=?", (token,)).fetchone()
+    if not row:
+        return "链接无效或已删除", 404
+
+    # 检查过期
+    if row['expire_at'] and datetime.strptime(row['expire_at'], '%Y-%m-%d %H:%M:%S') < datetime.now():
+        return "链接已过期", 403
+
+    # 校验密码
+    if row['password']:
+        if request.method == 'POST':
+            pwd = request.form.get('password', '')
+            if pwd != row['password']:
+                return "密码错误", 403
+        else:
+            # GET: 显示密码输入表单
+            return '''
+                <form method="post">
+                  请输入分享密码：<input name="password" type="password"/>
+                  <button type="submit">提交</button>
+                </form>
+            '''
+    # 密码通过，返回文件
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, row['file_path'].lstrip('/\\')))
+    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
+        return "文件不存在", 404
+    return send_file(abs_path, as_attachment=True)
+
+@app.route('/api/ngrok-url')
+def api_ngrok_url():
+    if ngrok_url_global:
+        return jsonify({'url': ngrok_url_global})
+    return jsonify({'error': 'ngrok 地址暂不可用'}), 503
+
+# ===== NGROK 配置 =====
+NGROK_PATH = r'D:\nas_data\ngrok.exe'
+FLASK_PORT = 5000
+
+ngrok_url_global = None  # 👈 全局变量保存公网地址
+
+def start_ngrok():
+    global ngrok_url_global
+    print("⚙️ 正在启动 ngrok...")
+    ngrok_proc = subprocess.Popen(
+        [NGROK_PATH, 'http', str(FLASK_PORT)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    time.sleep(2)
+    ngrok_url = None
+
+    for i in range(10):
+        try:
+            print(f"⌛ 尝试获取 ngrok 地址（第 {i+1} 次）")
+            r = requests.get(
+                'http://127.0.0.1:4040/api/tunnels',
+                headers={"Accept": "application/json"},  # ✅ 加上这个
+                timeout=2
+            ).json()
+            for t in r.get('tunnels', []):
+                if t['proto'] == 'https':
+                    ngrok_url = t['public_url']
+                    break
+            if ngrok_url:
+                break
+        except Exception as e:
+            print("❌ 获取地址时异常:", e)
+            time.sleep(1)
+
+    if ngrok_url:
+        print('✅ ngrok 公网地址:', ngrok_url)
+        ngrok_url_global = ngrok_url  # ✅ 保存下来
+    else:
+        print('❌ ngrok 启动成功但未获取到公网地址，请手动访问 http://127.0.0.1:4040')
+
+    return ngrok_url, ngrok_proc
+
+# ========== 你的 Flask 路由、逻辑在这里 ==========
+
+
+# ===== 主启动入口 =====
 if __name__ == '__main__':
-    app.run(debug=True)
+    ngrok_url, ngrok_proc = start_ngrok()
+    try:
+        app.run(host='0.0.0.0', port=FLASK_PORT, debug=False)
+    finally:
+        ngrok_proc.terminate()

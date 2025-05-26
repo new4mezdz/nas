@@ -50,6 +50,12 @@ const app = Vue.createApp({
     previewingFile: null,
     previewUrl: '',
     previewType: '',
+       // 分享
+    shareDialogVisible: false,
+    shareFile: null,
+    shareExpire: 24,
+    sharePassword: '',
+    shareUrl: ''
     }
   },
 computed: {
@@ -347,6 +353,31 @@ computed: {
     downloadFile(item) {
       window.open('/api/download?path=' + encodeURIComponent(this.currentPath.replace(/\/$/, '') + '/' + item.name));
     },
+
+     // ========== 分享 ==========
+    openShareDialog(item) {
+    this.shareDialogVisible = true;
+    this.shareFile = item;
+    this.shareExpire = 24;
+    this.sharePassword = '';
+    this.shareUrl = '';
+  },
+  async submitShare() {
+    if (!this.shareFile) return;
+    try {
+      const res = await axios.post('/api/share', {
+        file_path: this.currentPath.replace(/\/$/, '') + '/' + this.shareFile.name,
+        expire_hours: this.shareExpire,
+        password: this.sharePassword
+      });
+      if (res.data.success) {
+        // 这里假设你服务端和前端在同一个域名/端口
+        this.shareUrl = window.location.origin + res.data.share_url;
+      }
+    } catch (e) {
+      alert(e?.response?.data?.error || "分享失败");
+    }
+  },
  // ========== 文件预览 ==========
       isImage(file) {
     return /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file.name);

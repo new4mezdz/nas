@@ -1,6 +1,7 @@
 import os
 from flask import Blueprint, request, jsonify, send_file
-from app import token_required, BASE_DIR
+from common import token_required, BASE_DIR
+
 
 file_bp = Blueprint('filemanager', __name__, url_prefix='/api')
 
