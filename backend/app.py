@@ -13,6 +13,12 @@ import time
 import requests
 import os
 from common import BASE_DIR, get_db
+
+import json
+from ec_engine import encode, decode, ECError
+
+
+from reedsolo import RSCodec
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
@@ -283,6 +289,46 @@ def mkdir():
         return jsonify({'error': '创建失败: ' + str(e)}), 500
 
 
+@app.route('/api/list', methods=['GET'])
+@token_required()
+def list_files():
+    requested_path = request.args.get('path', '/').lstrip('/\\')
+    full_path = os.path.abspath(os.path.join(BASE_DIR, requested_path))
+
+    # 加载纠删码配置
+    ec_cfg = {}
+    ec_cfg_path = os.path.join(BASE_DIR, 'ec_config.json')
+    if os.path.exists(ec_cfg_path):
+        with open(ec_cfg_path, 'r') as f:
+            ec_cfg = json.load(f)
+
+    # 如果请求路径是逻辑卷入口
+    if requested_path == 'ec_volume' and ec_cfg.get('disks'):
+        full_path = os.path.abspath(ec_cfg['disks'][0])  # 映射为第一个纠删码磁盘路径
+
+    # 校验路径合法
+    allowed_paths = [BASE_DIR] + ec_cfg.get('disks', [])
+    if not any(full_path.startswith(p) for p in allowed_paths):
+        return jsonify({'error': '非法路径'}), 403
+
+    if not os.path.exists(full_path) or not os.path.isdir(full_path):
+        return jsonify({'error': '路径不存在或不是文件夹'}), 404
+
+    try:
+        items = []
+        for name in os.listdir(full_path):
+            path = os.path.join(full_path, name)
+            stat = os.stat(path)
+            items.append({
+                'name': name,
+                'is_dir': os.path.isdir(path),
+                'size': stat.st_size,
+                'mtime': stat.st_mtime
+            })
+        return jsonify({'success': True, 'items': items})
+    except Exception as e:
+        return jsonify({'error': '读取失败: ' + str(e)}), 500
+
 @app.route('/api/share', methods=['POST'])
 @token_required()
 def create_share():
@@ -349,7 +395,134 @@ def api_ngrok_url():
         return jsonify({'url': ngrok_url_global})
     return jsonify({'error': 'ngrok 地址暂不可用'}), 503
 
-# ===== NGROK 配置 =====
+
+
+
+@app.route('/api/ec_config', methods=['POST'])
+@token_required(admin_only=True)
+def ec_config():
+    data = request.get_json()
+    scheme = data.get('scheme', '')  # 默认为空
+    disks = data.get('disks', [])
+
+    if scheme:  # 启用了某种纠删码
+        try:
+            k = int(data.get('k'))
+            m = int(data.get('m'))
+        except (ValueError, TypeError):
+            return jsonify({'error': 'k和m必须为整数'}), 400
+        if k <= 0 or m <= 0:
+            return jsonify({'error': 'k和m必须为正整数'}), 400
+    else:
+        # 如果不使用纠删码，可以清空 k/m
+        k = 0
+        m = 0
+
+    config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    with open(config_path, 'w') as f:
+        json.dump({
+            'scheme': scheme,
+            'k': k,
+            'm': m,
+            'disks': disks,
+            'timestamp': datetime.now().isoformat()
+        }, f)
+
+    return jsonify({'success': True, 'message': '纠删码配置已保存（%s）' % (scheme or '未启用')})
+
+@app.route('/api/encode', methods=['POST'])
+@token_required(admin_only=True)
+def api_encode():
+    data = request.get_json()
+    try:
+        encode(
+            scheme=data['scheme'],
+            file_path=os.path.join(BASE_DIR, data['file_path']),
+            k=data['k'],
+            m=data['m'],
+            output_paths=data['disks']
+        )
+        return jsonify({'success': True, 'message': '编码成功'})
+    except ECError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'内部错误: {str(e)}'}), 500
+@app.route('/api/upload', methods=['POST'])
+@token_required()
+def upload_file_with_ec():
+    uploaded_file = request.files.get('file')
+    rel_path = request.form.get('path', '/')
+    if not uploaded_file or not uploaded_file.filename:
+        return jsonify({'error': '未提供文件'}), 400
+
+    filename = uploaded_file.filename
+    target_path = os.path.join(BASE_DIR, rel_path.lstrip('/\\'), filename)
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    uploaded_file.save(target_path)
+
+    # 判断是否启用纠删码
+    ec_config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    if os.path.exists(ec_config_path):
+        with open(ec_config_path, 'r') as f:
+            ec_cfg = json.load(f)
+
+        if ec_cfg.get('scheme') and ec_cfg.get('k') and ec_cfg.get('m'):
+            try:
+                encode(
+                    scheme=ec_cfg['scheme'],
+                    file_path=target_path,
+                    k=ec_cfg['k'],
+                    m=ec_cfg['m'],
+                    output_paths=ec_cfg['disks']
+                )
+                os.remove(target_path)  # 删除原始文件，仅保留编码块
+                return jsonify({'success': True, 'message': '文件上传并编码成功'})
+            except ECError as e:
+                return jsonify({'error': f'纠删码编码失败: {str(e)}'}), 500
+
+    return jsonify({'success': True, 'message': '文件上传成功（未使用纠删码）'})
+
+
+@app.route('/api/download', methods=['GET'])
+@token_required()
+def download_file():
+    rel_path = request.args.get('path', '').lstrip('/\\')
+    original_path = os.path.join(BASE_DIR, rel_path)
+
+    # 检查是否存在原始文件（未启用EC）
+    if os.path.exists(original_path):
+        return send_file(original_path, as_attachment=True)
+
+    # 尝试读取元数据并恢复
+    ec_config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    if not os.path.exists(ec_config_path):
+        return jsonify({'error': '文件不存在'}), 404
+
+    with open(ec_config_path, 'r') as f:
+        ec_cfg = json.load(f)
+
+    filename = os.path.basename(original_path)
+    block_paths = []
+    for i, disk in enumerate(ec_cfg['disks']):
+        block_path = os.path.join(disk, 'encoded', f'{filename}.block_{i}')
+        if os.path.exists(block_path):
+            block_paths.append(block_path)
+
+    if len(block_paths) < ec_cfg['k']:
+        return jsonify({'error': '可用数据块不足，无法解码'}), 500
+
+    # 解码还原
+    from ec_engine import decode  # 你需要实现这个方法
+    restored_path = os.path.join(BASE_DIR, 'tmp', filename)
+    os.makedirs(os.path.dirname(restored_path), exist_ok=True)
+    try:
+        decode(block_paths[:ec_cfg['k']], restored_path, k=ec_cfg['k'], m=ec_cfg['m'])
+        return send_file(restored_path, as_attachment=True)
+    except Exception as e:
+        return jsonify({'error': f'解码失败: {str(e)}'}), 500
+
+
+        # ===== NGROK 配置 =====
 NGROK_PATH = r'D:\nas_data\ngrok.exe'
 FLASK_PORT = 5000
 
