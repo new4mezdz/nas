@@ -73,7 +73,11 @@
       <!-- 主按钮区（修改密码/用户管理） -->
       <div class="mb-4 flex space-x-4">
         <button @click="showChangePasswordForm" class="bg-gray-500 text-white px-3 py-1 rounded">修改密码</button>
-        <button v-if="user.is_admin" @click="showUserAdmin=true" class="bg-indigo-500 text-white px-3 py-1 rounded">用户管理</button>
+          <button v-if="user.is_admin" @click="showUserAdmin=true" class="bg-indigo-500 text-white px-3 py-1 rounded">用户管理</button>
+          <button @click="ecDialogVisible = true" class="bg-gray-700 text-white px-4 py-2 rounded">
+  打开纠删码配置
+</button>
+
       </div>
 
       <!-- 管理员用户管理界面 -->
@@ -135,30 +139,51 @@
         </p>
       </div>
 
-      <!-- 磁盘信息 -->
-      <div class="bg-white p-4 rounded shadow mb-6">
-        <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
-        <table class="w-full text-left text-sm border">
-          <thead>
-            <tr class="border-b bg-gray-50">
-              <th class="py-2 px-1">挂载点</th>
-              <th class="py-2 px-1">文件系统</th>
-              <th class="py-2 px-1">总空间</th>
-              <th class="py-2 px-1">已用空间</th>
-              <th class="py-2 px-1">使用率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="disk in disks" :key="disk.mountpoint" class="border-b">
-              <td class="py-1 px-1">{{ disk.mountpoint }}</td>
-              <td class="py-1 px-1">{{ disk.fstype || '-' }}</td>
-              <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
-              <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
-              <td class="py-1 px-1">{{ disk.percent }}%</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+
+
+
+   <!-- 磁盘信息 -->
+<!-- 磁盘信息 -->
+<div class="bg-white p-4 rounded shadow mb-6">
+  <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
+  <table class="w-full text-left text-sm border">
+    <thead>
+      <tr class="border-b bg-gray-50">
+        <th class="py-2 px-1">挂载点</th>
+        <th class="py-2 px-1">文件系统</th>
+        <th class="py-2 px-1">总空间</th>
+        <th class="py-2 px-1">已用空间</th>
+        <th class="py-2 px-1">使用率</th>
+        <th class="py-2 px-1">纠删码方案</th>
+      </tr>
+    </thead>
+    <tbody>
+     <!-- ======= 逻辑卷（纠删码磁盘合并） ======= -->
+<tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
+  <td class="py-1 px-1">[纠删码卷]</td>
+  <td class="py-1 px-1">--</td>
+  <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
+  <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
+  <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
+  <td class="py-1 px-1">{{ ecDiskGroup.ec_scheme }}</td>
+</tr>
+
+<!-- ======= 非纠删码磁盘列表 ======= -->
+<tr v-for="disk in nonECDiskList" :key="disk.mount"
+    class="border-b hover:bg-gray-100 cursor-pointer"
+    @click="goDisk(disk.mount)">
+  <td class="py-1 px-1">{{ disk.mount }}</td>
+  <td class="py-1 px-1">{{ disk.fstype }}</td>
+  <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
+  <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
+  <td class="py-1 px-1">{{ disk.percent }}%</td>
+  <td class="py-1 px-1">{{ disk.ec_scheme || '-' }}</td>
+</tr>
+
+    </tbody>
+  </table>
+</div>
+
 
       <!-- ========= 文件管理 ========== -->
 <div class="bg-white p-4 rounded shadow mt-8">
@@ -188,6 +213,11 @@
   </label>
   <button @click="uploadFile" class="bg-indigo-600 text-white rounded px-2 py-1 ml-1">上传</button>
   <span class="ml-2 text-gray-600 text-sm">{{ uploadInfo }}</span>
+      <!-- 搜索按钮 -->
+<button @click="showSearchDialog = true" class="ml-2 px-3 py-1 bg-green-500 text-white rounded">
+  🔍 搜索文件
+</button>
+
 </div>
 
 
@@ -282,6 +312,52 @@
   </div>
 </div>
 
+
+        <!-- 纠删码配置弹窗 -->
+<div v-if="ecDialogVisible" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+  <div class="bg-white p-6 rounded shadow-xl w-[400px]">
+    <h2 class="text-xl font-semibold mb-4">纠删码配置</h2>
+
+    <label class="block mb-2">纠删码方案：</label>
+    <select v-model="ecScheme" class="border px-2 py-1 w-full mb-3">
+      <option value="">不使用纠删码</option>
+      <option value="rs">Reed-Solomon</option>
+      <option value="rdp">RDP</option>
+      <option value="jcode">J-Code</option>
+      <option value="tnrdp">TN-RDP</option>
+    </select>
+
+    <label class="block mb-2">数据块数 (k)：</label>
+    <input v-model.number="k" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
+
+    <label class="block mb-2">冗余块数 (m)：</label>
+    <input v-model.number="m" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
+
+    <label class="block mb-2">选择硬盘：</label>
+   <div class="space-y-2 mb-3">
+  <div v-for="disk in disks" :key="disk.mount" class="border rounded p-2">
+    <label class="flex items-center gap-2">
+      <input type="checkbox" v-model="selectedDisks" :value="disk.mount" />
+      <span class="font-mono">{{ disk.mount }}</span>
+    </label>
+    <div class="text-sm text-gray-500 ml-6">
+      <span v-if="disk.ec_scheme">
+        已参与纠删码方案：<strong>{{ disk.ec_scheme.toUpperCase() }}</strong>
+      </span>
+      <span v-else>
+        未参与纠删码
+      </span>
+    </div>
+  </div>
+</div>
+
+    <div class="flex justify-end gap-2 mt-4">
+      <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
+      <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
+    </div>
+  </div>
+</div>
+
 <!-- 分享 -->
 <div v-if="shareDialogVisible"
      class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
@@ -300,6 +376,27 @@
     <div v-if="shareUrl">
       <p class="text-sm mb-1">分享外链（复制给好友）：</p>
       <input :value="shareUrl" readonly class="border px-2 py-1 w-full" />
+    </div>
+  </div>
+</div>
+
+        <!-- 🔍 搜索弹窗 -->
+<div v-if="showSearchDialog" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center">
+  <div class="bg-white w-[500px] p-4 rounded shadow">
+    <h3 class="text-lg font-semibold mb-2">文件搜索</h3>
+    <input type="text" v-model="searchKeyword" placeholder="请输入文件名" class="border p-1 w-full mb-2">
+    <label><input type="radio" v-model="searchScope" value="current"> 当前目录</label>
+    <label><input type="radio" v-model="searchScope" value="all"> 全部磁盘</label>
+    <!-- 可扩展多目录选择 -->
+
+    <button @click="submitSearch" class="mt-2 bg-blue-500 text-white px-3 py-1 rounded">搜索</button>
+    <button @click="showSearchDialog = false" class="ml-2 text-gray-500">取消</button>
+
+    <div v-if="searchResults.length" class="mt-4 max-h-[300px] overflow-y-auto border-t pt-2">
+      <div v-for="file in searchResults" :key="file.path" class="flex justify-between text-sm border-b py-1">
+        <span>{{ file.name }}</span>
+        <button @click="goToFile(file)">打开</button>
+      </div>
     </div>
   </div>
 </div>

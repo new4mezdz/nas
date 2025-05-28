@@ -289,46 +289,6 @@ def mkdir():
         return jsonify({'error': '创建失败: ' + str(e)}), 500
 
 
-@app.route('/api/list', methods=['GET'])
-@token_required()
-def list_files():
-    requested_path = request.args.get('path', '/').lstrip('/\\')
-    full_path = os.path.abspath(os.path.join(BASE_DIR, requested_path))
-
-    # 加载纠删码配置
-    ec_cfg = {}
-    ec_cfg_path = os.path.join(BASE_DIR, 'ec_config.json')
-    if os.path.exists(ec_cfg_path):
-        with open(ec_cfg_path, 'r') as f:
-            ec_cfg = json.load(f)
-
-    # 如果请求路径是逻辑卷入口
-    if requested_path == 'ec_volume' and ec_cfg.get('disks'):
-        full_path = os.path.abspath(ec_cfg['disks'][0])  # 映射为第一个纠删码磁盘路径
-
-    # 校验路径合法
-    allowed_paths = [BASE_DIR] + ec_cfg.get('disks', [])
-    if not any(full_path.startswith(p) for p in allowed_paths):
-        return jsonify({'error': '非法路径'}), 403
-
-    if not os.path.exists(full_path) or not os.path.isdir(full_path):
-        return jsonify({'error': '路径不存在或不是文件夹'}), 404
-
-    try:
-        items = []
-        for name in os.listdir(full_path):
-            path = os.path.join(full_path, name)
-            stat = os.stat(path)
-            items.append({
-                'name': name,
-                'is_dir': os.path.isdir(path),
-                'size': stat.st_size,
-                'mtime': stat.st_mtime
-            })
-        return jsonify({'success': True, 'items': items})
-    except Exception as e:
-        return jsonify({'error': '读取失败: ' + str(e)}), 500
-
 @app.route('/api/share', methods=['POST'])
 @token_required()
 def create_share():
@@ -481,6 +441,95 @@ def upload_file_with_ec():
                 return jsonify({'error': f'纠删码编码失败: {str(e)}'}), 500
 
     return jsonify({'success': True, 'message': '文件上传成功（未使用纠删码）'})
+@app.route('/api/list', methods=['GET'])
+@token_required()
+def list_files():
+    requested_path = request.args.get('path', '/').lstrip('/\\')
+    keyword = request.args.get('q', '').strip().lower()
+
+    full_path = os.path.abspath(os.path.join(BASE_DIR, requested_path))
+
+    # 加载纠删码配置
+    ec_cfg = {}
+    ec_cfg_path = os.path.join(BASE_DIR, 'ec_config.json')
+    if os.path.exists(ec_cfg_path):
+        with open(ec_cfg_path, 'r') as f:
+            ec_cfg = json.load(f)
+
+    # 如果请求路径是逻辑卷入口
+    if requested_path == 'ec_volume' and ec_cfg.get('disks'):
+        full_path = os.path.abspath(ec_cfg['disks'][0])  # 映射为第一个纠删码磁盘路径
+
+    allowed_paths = [BASE_DIR] + ec_cfg.get('disks', []) + [d['mount'] for d in get_disk_info()]
+    if not any(full_path.startswith(os.path.abspath(p)) for p in allowed_paths):
+        return jsonify({'error': '非法路径'}), 403
+
+    if not os.path.exists(full_path) or not os.path.isdir(full_path):
+        return jsonify({'error': '路径不存在或不是文件夹'}), 404
+
+    try:
+        items = []
+        for name in os.listdir(full_path):
+            if keyword and keyword not in name.lower():
+                continue
+            path = os.path.join(full_path, name)
+            stat = os.stat(path)
+            items.append({
+                'name': name,
+                'is_dir': os.path.isdir(path),
+                'size': stat.st_size,
+                'mtime': stat.st_mtime
+            })
+        return jsonify({'success': True, 'items': items})
+    except Exception as e:
+        return jsonify({'error': '读取失败: ' + str(e)}), 500
+
+@app.route('/api/search')
+@token_required()
+def api_search():
+    keyword = request.args.get('keyword', '').strip()
+    scope = request.args.get('scope', 'current')
+    base_path = request.args.get('path', '')
+
+    if not keyword:
+        return jsonify({'success': False, 'error': '关键词不能为空'}), 400
+
+    results = []
+
+    # 决定搜索路径
+    try:
+        if scope == 'all':
+            from utils import get_disk_info
+            search_dirs = [d['mount'] for d in get_disk_info()]
+        else:
+            if os.path.exists(base_path):
+                search_dirs = [base_path]
+            else:
+                from common import BASE_DIR
+                search_dirs = [os.path.join(BASE_DIR, base_path.strip('/'))]
+    except Exception as e:
+        print(f"[搜索] 获取搜索目录出错: {e}")
+        return jsonify({'success': False, 'error': '目录解析失败'}), 500
+
+    # 执行搜索
+    try:
+        for directory in search_dirs:
+            if not os.path.exists(directory):
+                continue
+            for root, dirs, files in os.walk(directory):
+                for fname in files:
+                    if keyword.lower() in fname.lower():
+                        full_path = os.path.join(root, fname)
+                        results.append({
+                            'name': fname,
+                            'path': full_path,
+                            'directory': os.path.dirname(full_path)
+                        })
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        print(f"[搜索] 遍历目录失败: {e}")
+        return jsonify({'success': False, 'error': f'搜索失败: {str(e)}'}), 500
+
 
 
 @app.route('/api/download', methods=['GET'])

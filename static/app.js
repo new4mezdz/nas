@@ -45,6 +45,14 @@ const app = Vue.createApp({
       infoMessage: '',
       sambaMessage: '',
 
+      // 搜索
+
+searchTimer: null,
+    showSearchDialog: false,
+    searchKeyword: '',
+    searchScope: 'current', // or 'all'
+    searchResults: [],
+
       // 预览
     showPreview: false,
     previewingFile: null,
@@ -55,12 +63,41 @@ const app = Vue.createApp({
     shareFile: null,
     shareExpire: 24,
     sharePassword: '',
-    shareUrl: ''
+    shareUrl: '',
+        // 纠删码
+         ecScheme: 'rs',
+    k: 4,
+    m: 2,
+    selectedDisks: [],
+    disks: []  // 后端获取磁盘信息
     }
   },
 computed: {
+  // 非纠删码磁盘列表
+  nonECDiskList() {
+    return this.disks.filter(d => !d.ec_scheme);
+  },
+
+  // 合并显示纠删码磁盘为一个逻辑卷
+  ecDiskGroup() {
+    const ecDisks = this.disks.filter(d => d.ec_scheme);
+    if (ecDisks.length === 0) return null;
+
+    const total = ecDisks.reduce((sum, d) => sum + d.total, 0);
+    const used = ecDisks.reduce((sum, d) => sum + d.used, 0);
+    const percent = Math.round((used / total) * 1000) / 10;
+
+    return {
+      total,
+      used,
+      percent,
+      ec_scheme: ecDisks[0].ec_scheme // 默认用第一个的方案名
+    };
+  },
+
+  // 文件是否全选
   allSelected() {
-    return this.fileList.length && this.selectedFiles.length === this.fileList.length;
+    return this.fileList.length > 0 && this.selectedFiles.length === this.fileList.length;
   }
 },
 
@@ -233,17 +270,92 @@ computed: {
     },
 
     // ========== 文件管理 ==========
-    async loadFiles(path = "/") {
-      // 获取文件列表并清空多选
-      const res = await axios.get('/api/files', { params: { path } });
-      this.currentPath = res.data.current;
-      this.fileList = res.data.items;
-      this.selectedFiles = [];
-    },
-    goDir(dirname) {
-      let path = this.currentPath.endsWith('/') ? this.currentPath : this.currentPath + '/';
-      this.loadFiles(path + dirname);
-    },
+
+   async submitSearch() {
+    if (!this.searchKeyword.trim()) {
+      alert("请输入关键词！");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    const url = `/api/search?keyword=${encodeURIComponent(this.searchKeyword)}&scope=${this.searchScope}&path=${encodeURIComponent(this.currentPath || '/')}`;
+
+    try {
+      const res = await fetch(url, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        alert("❌ 搜索失败：" + (data.error || "未知错误"));
+        return;
+      }
+
+      if (data.results.length === 0) {
+        alert("🔍 没有找到任何文件");
+        return;
+      }
+
+      this.searchResults = data.results;
+    } catch (e) {
+      alert("❌ 网络错误：" + e.message);
+    }
+  },
+
+  goToFile(file) {
+    this.showSearchDialog = false;
+    alert(`✅ 搜索成功，正在定位文件 ${file.name}`);
+
+    this.loadFileList(file.directory, () => {
+      // ⏬ 高亮目标文件
+      this.$nextTick(() => {
+        const rows = document.querySelectorAll(".file-list tr");
+        rows.forEach(row => {
+          if (row.innerText.includes(file.name)) {
+            row.scrollIntoView({ behavior: "smooth", block: "center" });
+            row.classList.add("highlight");
+            setTimeout(() => row.classList.remove("highlight"), 2000);
+          }
+        });
+      });
+    });
+  },
+
+  loadFileList(path, callback) {
+    const token = localStorage.getItem("token");
+    fetch(`/api/list?path=${encodeURIComponent(path)}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          this.fileList = data.items; // 假设你已经绑定了这个 fileList
+          this.currentPath = path;
+          if (callback) callback();
+        } else {
+          alert("❌ 加载失败：" + (data.error || ""));
+        }
+      });
+  },
+
+      goDir(name) {
+    // 拼接新路径
+    let newPath = this.currentPath;
+    if (newPath.endsWith('/')) newPath = newPath.slice(0, -1);
+    if (this.currentPath === '/') {
+      newPath = '/' + name;
+    } else {
+      newPath = `${this.currentPath}/${name}`;
+    }
+    this.loadFiles(newPath);
+  },
+
+    goECVolume() {
+    this.loadFiles('/ec_volume');  // 这个路径在后端中会映射为第一个 EC 磁盘
+  },
+
+
+
     formatSize(size) {
       if (!size) return "-";
       const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -272,22 +384,52 @@ computed: {
       this.selectedFiles = [];
       this.loadFiles(this.currentPath);
     },
-    async uploadFile() {
-      const files = this.$refs.uploadFileInput.files;
-      if (!files || !files[0]) return;
-      const formData = new FormData();
-      formData.append('file', files[0]);
-      formData.append('path', this.uploadTargetDir || this.currentPath);
-      try {
-        const res = await axios.post('/api/upload', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        this.uploadInfo = '上传成功';
-        this.loadFiles(this.currentPath);
-      } catch (e) {
-        this.uploadInfo = '上传失败';
-      }
+    onSearchInput() {
+  if (this.searchTimer) clearTimeout(this.searchTimer);
+  this.searchTimer = setTimeout(() => {
+    this.loadFiles(this.currentPath);
+  }, 300);
+},
+
+    uploadFile() {
+  const file = this.$refs.uploadFileInput.files[0];
+  if (!file) {
+    this.uploadInfo = "请先选择文件";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("path", this.currentPath);  // ✅ 传递当前路径
+
+  this.uploadInfo = "上传中...";
+
+  fetch("/api/upload", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + localStorage.getItem("token"),
     },
+    body: formData,
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.success) {
+        this.uploadInfo = data.message || "上传成功";
+        this.loadFiles();  // 重新加载文件列表
+      } else {
+        this.uploadInfo = data.error || "上传失败";
+      }
+    })
+    .catch((err) => {
+      this.uploadInfo = "上传出错：" + err;
+    });
+},
+
+    goDisk(mountPath) {
+  // 将 Windows 的反斜杠路径转换为 URL 兼容形式
+  const path = mountPath.replace(/\\/g, '/');
+  this.loadFiles(path);
+},
     goParent() {
   if (this.currentPath === '/' || this.currentPath === '') return;
 
@@ -378,6 +520,40 @@ computed: {
       alert(e?.response?.data?.error || "分享失败");
     }
   },
+      // ========== 纠删码 ==========
+      async applyECScheme() {
+    try {
+      const res = await axios.post('/api/ec_config', {
+        scheme: this.ecScheme,
+        k: this.k,
+        m: this.m,
+        disks: this.selectedDisks
+      });
+      alert(res.data.message || "配置已应用");
+    } catch (e) {
+      alert(e.response?.data?.error || "配置失败");
+    }
+  },
+
+      async applyECScheme() {
+  try {
+    const payload = {
+      scheme: this.ecScheme,
+      disks: this.selectedDisks
+    };
+
+    if (this.ecScheme) {
+      payload.k = this.k;
+      payload.m = this.m;
+    }
+
+    const res = await axios.post('/api/ec_config', payload);
+    alert(res.data.message || "配置已应用");
+  } catch (e) {
+    alert(e.response?.data?.error || "配置失败");
+  }
+},
+
  // ========== 文件预览 ==========
       isImage(file) {
     return /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file.name);
