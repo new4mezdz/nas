@@ -347,11 +347,11 @@ computed: {
     } else {
       newPath = `${this.currentPath}/${name}`;
     }
-    this.loadFiles(newPath);
+    this.loadFileList(newPath); // ✅ 正确的
   },
 
     goECVolume() {
-    this.loadFiles('/ec_volume');  // 这个路径在后端中会映射为第一个 EC 磁盘
+     this.loadFileList('/ec_volume');  // 这个路径在后端中会映射为第一个 EC 磁盘
   },
 
 
@@ -415,7 +415,7 @@ computed: {
     .then((data) => {
       if (data.success) {
         this.uploadInfo = data.message || "上传成功";
-        this.loadFiles();  // 重新加载文件列表
+        this.loadFileList(this.currentPath); // ✅
       } else {
         this.uploadInfo = data.error || "上传失败";
       }
@@ -428,7 +428,7 @@ computed: {
     goDisk(mountPath) {
   // 将 Windows 的反斜杠路径转换为 URL 兼容形式
   const path = mountPath.replace(/\\/g, '/');
-  this.loadFiles(path);
+  this.loadFileList(path);  // ✅ 正确
 },
     goParent() {
   if (this.currentPath === '/' || this.currentPath === '') return;
@@ -436,7 +436,7 @@ computed: {
   const parts = this.currentPath.split('/').filter(p => p);
   parts.pop();  // 删除最后一级目录名
   const parentPath = '/' + parts.join('/');
-  this.loadFiles(parentPath || '/');
+ this.loadFileList(parentPath || '/'); // ✅
 },
     fileSelected() {
       this.uploadInfo = '';
@@ -446,7 +446,8 @@ computed: {
       try {
         const res = await axios.post('/api/mkdir', { parent: this.currentPath, name: this.newDirName });
         if (res.data.success) {
-          this.loadFiles(this.currentPath);
+         this.loadFileList(this.currentPath);
+
           this.newDirName = '';
           this.adminOnlyMsg = '';
         } else {
@@ -461,7 +462,7 @@ computed: {
       try {
         const res = await axios.post('/api/delete', { path: this.currentPath.replace(/\/$/, '') + '/' + item.name });
         if (res.data.success) {
-          this.loadFiles(this.currentPath);
+          this.loadFileList(this.currentPath);
         }
       } catch (e) {
         alert(e?.response?.data?.error || "删除失败");
@@ -481,7 +482,7 @@ computed: {
           new_name: this.renameTo
         });
         if (res.data.success) {
-          this.loadFiles(this.currentPath);
+          this.loadFileList(this.currentPath);
           this.cancelRename();
         }
       } catch (e) {
@@ -608,7 +609,7 @@ computed: {
       await Promise.all([
         this.fetchSystemInfo(),
         this.fetchDiskInfo(),
-        this.loadFiles("/")
+       this.loadFileList("/")
       ]);
       this.startSysTimer();
     },
