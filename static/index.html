@@ -252,9 +252,10 @@
             class="text-green-600 underline">下载</button>
           <button v-if="user.is_admin" @click="startRename(item)" class="ml-2 text-blue-600 underline">重命名</button>
           <button v-if="user.is_admin" @click="deleteEntry(item)" class="ml-2 text-red-600 underline">删除</button>
-          <button v-if="!item.is_dir && (isImage(item) || isVideo(item) || isAudio(item))"
-                  @click="previewFile(item)"
-                  class="text-indigo-600 underline mr-2">预览</button>
+          <button v-if="!item.is_dir && isPreviewable(item)"
+        @click="previewFile(item)"
+        class="text-indigo-600 underline mr-2">预览</button>
+
             <!-- 文件操作栏 -->
 <button v-if="!item.is_dir"
         @click="openShareDialog(item)"
@@ -296,19 +297,27 @@
 <div v-if="showPreview" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
   <div class="bg-white rounded shadow-lg p-6 relative w-[95vw] max-w-2xl max-h-[90vh] flex flex-col items-center justify-center">
     <button @click="closePreview" class="absolute right-4 top-2 text-gray-400 text-2xl font-bold">✖</button>
-    <template v-if="previewType === 'image'">
-      <img :src="previewUrl" class="max-w-full max-h-[75vh] object-contain" />
-    </template>
-    <template v-else-if="previewType === 'video'">
-      <video :src="previewUrl" controls class="w-full max-h-[70vh] rounded" />
-    </template>
-    <template v-else-if="previewType === 'audio'">
-      <audio :src="previewUrl" controls class="w-full" />
-    </template>
-    <template v-else>
-      <div>不支持在线预览</div>
-    </template>
-    <div class="mt-2 text-sm text-gray-600">{{ previewingFile?.name }}</div>
+   <template v-if="previewType === 'image'">
+  <img :src="previewUrl" class="max-w-full max-h-[75vh] object-contain" />
+</template>
+<template v-else-if="previewType === 'video'">
+  <video :src="previewUrl" controls class="w-full max-h-[70vh] rounded" />
+</template>
+<template v-else-if="previewType === 'audio'">
+  <audio :src="previewUrl" controls class="w-full" />
+</template>
+<template v-else-if="previewType === 'pdf'">
+ <iframe :src="previewUrl + '#toolbar=0'" class="w-full h-[70vh]" frameborder="0"></iframe>
+</template>
+<template v-else-if="previewType === 'text'">
+  <pre class="w-full h-[70vh] overflow-auto bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap">
+    {{ textContent }}
+  </pre>
+</template>
+<template v-else>
+  <div>❌ 不支持在线预览</div>
+</template>
+      <div class="mt-2 text-sm text-gray-600">{{ previewingFile?.name }}</div>
   </div>
 </div>
 

@@ -13,10 +13,11 @@ import time
 import requests
 import os
 from common import BASE_DIR, get_db
+from common import convert
 
 import json
 from ec_engine import encode, decode, ECError
-
+from docx2pdf import convert
 
 from reedsolo import RSCodec
 # ===== 配置 =====
@@ -75,12 +76,20 @@ def token_required(admin_only=False):
         @wraps(f)
         def decorated(*args, **kwargs):
             token = None
+
+            # ✅ 优先从请求头中读取 token
             if 'Authorization' in request.headers:
                 parts = request.headers['Authorization'].split()
                 if len(parts) == 2 and parts[0] == 'Bearer':
                     token = parts[1]
+
+            # ✅ 如果请求头没有，再从 URL 参数中读取
+            if not token:
+                token = request.args.get('token')
+
             if not token:
                 return jsonify({'error': '缺少Token'}), 401
+
             try:
                 data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
                 db = get_db()
@@ -92,10 +101,13 @@ def token_required(admin_only=False):
                     return jsonify({'error': '管理员权限不足'}), 403
                 g.user = user
             except Exception as e:
+                print("❌ Token 验证失败:", e)  # 临时调试建议保留
                 return jsonify({'error': 'Token无效'}), 401
+
             return f(*args, **kwargs)
         return decorated
     return decorator
+
 
 # ===== 用户注册/登录 =====
 @app.route('/api/register', methods=['POST'])
@@ -258,14 +270,40 @@ def batch_delete():
 
 
 @app.route('/api/preview')
+@token_required()
 def preview_file():
     path = request.args.get('path', '').lstrip('/\\')
     abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
+
     if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
         return jsonify({'error': '文件不存在'}), 404
-    mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
-    return send_file(abs_path, mimetype=mime)
 
+    ext = os.path.splitext(abs_path)[1].lower()
+
+    # ===== 1. DOCX: 自动转 PDF =====
+    if ext == '.docx':
+        pdf_name = os.path.splitext(os.path.basename(abs_path))[0] + '.pdf'
+        pdf_path = os.path.join(BASE_DIR, 'tmp', pdf_name)
+        try:
+            convert(abs_path, pdf_path)
+            return send_file(pdf_path, mimetype='application/pdf')
+        except Exception as e:
+            print("❌ DOCX 转换失败：", e)
+            return jsonify({'error': f'DOCX 转换失败: {str(e)}'}), 500
+
+    # ===== 2. 文本类文件（纯文本返回） =====
+    elif ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css']:
+        try:
+            with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        except Exception as e:
+            return jsonify({'error': f'无法读取文本内容: {str(e)}'}), 500
+
+    # ===== 3. 其他格式（图片、音视频、pdf）原样返回 =====
+    else:
+        mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
+        return send_file(abs_path, mimetype=mime)
 
 @app.route('/api/mkdir', methods=['POST'])
 @token_required()

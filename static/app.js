@@ -58,6 +58,7 @@ searchTimer: null,
     previewingFile: null,
     previewUrl: '',
     previewType: '',
+      textContent: '',
        // 分享
     shareDialogVisible: false,
     shareFile: null,
@@ -556,21 +557,94 @@ computed: {
 },
 
  // ========== 文件预览 ==========
-      isImage(file) {
-    return /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file.name);
-  },
-  isVideo(file) {
-    return /\.(mp4|webm|ogg|mov|avi)$/i.test(file.name);
-  },
-  isAudio(file) {
-    return /\.(mp3|wav|ogg|m4a)$/i.test(file.name);
-  },
-  previewFile(file) {
-    this.previewingFile = file;
-    this.previewUrl = `/api/preview?path=${encodeURIComponent(this.currentPath.replace(/\/$/, '') + '/' + file.name)}`;
-    this.previewType = this.isImage(file) ? 'image' : (this.isVideo(file) ? 'video' : (this.isAudio(file) ? 'audio' : 'other'));
+    isPreviewable(file) {
+  return (
+    this.isImage(file) ||
+    this.isVideo(file) ||
+    this.isAudio(file) ||
+    this.isPdf(file) ||
+    this.isText(file) ||
+    this.isDocx(file)
+  );
+},
+
+    isImage(file) {
+  return /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(file.name);
+},
+isVideo(file) {
+  return /\.(mp4|webm|ogg|mov|avi)$/i.test(file.name);
+},
+isAudio(file) {
+  return /\.(mp3|wav|flac|m4a)$/i.test(file.name);
+},
+isPdf(file) {
+  return /\.pdf$/i.test(file.name);
+},
+isText(file) {
+  return /\.(txt|log|md|py|js|html|css|json)$/i.test(file.name);
+},
+isDocx(file) {
+  return /\.docx$/i.test(file.name);
+},
+
+previewFile(file) {
+  this.previewingFile = file;
+
+  // 1. 拼接后端 API
+  const filePath = this.currentPath.replace(/\/$/, '') + '/' + file.name;
+  const baseApi = `/api/preview?path=${encodeURIComponent(filePath)}`;
+  const token = localStorage.getItem('token');
+
+  // 2. 文本类文件：用 fetchTextContent 读取纯文本
+  if (this.isText(file)) {
+    this.previewType = 'text';
+    this.fetchTextContent(baseApi);  // fetchTextContent 内部会用 axios 带上 header
     this.showPreview = true;
-  },
+    return;
+  }
+
+  // 3. PDF 特例：iframe 预览，token 拼接到 URL 参数
+  if (this.isPdf(file)) {
+    this.previewUrl = `${baseApi}&token=${encodeURIComponent(token)}#toolbar=0`;
+    this.previewType = 'pdf';
+    this.showPreview = true;
+    return;
+  }
+
+  // 4. 其他图片 / 音频 / 视频 → 使用 blob 显示 + 带 token 的 header
+  axios.get(baseApi, {
+    responseType: 'blob',
+    headers: {
+      Authorization: 'Bearer ' + token
+    }
+  }).then(res => {
+    this.previewUrl = URL.createObjectURL(res.data);
+
+    if (this.isImage(file)) this.previewType = 'image';
+    else if (this.isVideo(file)) this.previewType = 'video';
+    else if (this.isAudio(file)) this.previewType = 'audio';
+    else this.previewType = 'other';
+
+    this.showPreview = true;
+  }).catch(err => {
+    alert("预览失败：" + (err.response?.data?.error || '网络错误'));
+    console.error("❌ 预览失败:", err);
+  });
+},
+
+
+    fetchTextContent(url) {
+  fetch(url, { headers: { Authorization: "Bearer " + localStorage.getItem("token") } })
+    .then(res => res.text())
+    .then(content => {
+      this.textContent = content;
+    })
+    .catch(err => {
+      this.textContent = '⚠️ 加载失败: ' + err.message;
+    });
+},
+
+
   closePreview() {
     this.showPreview = false;
     this.previewUrl = '';
