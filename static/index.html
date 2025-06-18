@@ -207,11 +207,10 @@
   <span class="text-red-600">{{ adminOnlyMsg }}</span>
 
   <!-- 上传文件 -->
-  <label class="bg-indigo-500 text-white rounded px-2 py-1 cursor-pointer ml-2">
-    <input type="file" ref="uploadFileInput" @change="fileSelected" style="display:none;">
-    选择文件
-  </label>
-  <button @click="uploadFile" class="bg-indigo-600 text-white rounded px-2 py-1 ml-1">上传</button>
+  <button @click="showUploadDialog = true" class="bg-indigo-600 text-white rounded px-3 py-1 ml-2">
+  📤 上传文件
+</button>
+
   <span class="ml-2 text-gray-600 text-sm">{{ uploadInfo }}</span>
       <!-- 搜索按钮 -->
 <button @click="showSearchDialog = true" class="ml-2 px-3 py-1 bg-green-500 text-white rounded">
@@ -386,6 +385,26 @@
       <p class="text-sm mb-1">分享外链（复制给好友）：</p>
       <input :value="shareUrl" readonly class="border px-2 py-1 w-full" />
     </div>
+  </div>
+</div>
+
+     <!-- 拖拽上传弹窗 -->
+<div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+  <div class="bg-white w-[500px] h-[300px] rounded shadow flex flex-col justify-center items-center border-4"
+       :class="dragOver ? 'border-blue-500 bg-blue-50' : 'border-dashed border-gray-400'"
+       @dragenter.prevent="dragOver = true"
+       @dragover.prevent
+       @dragleave.prevent="dragOver = false"
+       @drop.prevent="handleDrop">
+
+    <h2 class="text-lg font-bold mb-2">拖拽上传文件</h2>
+    <p class="text-gray-600 mb-4">可拖入多个文件，也可点击选择</p>
+
+    <input type="file" ref="dragFileInput" class="hidden" multiple @change="handleFileInputChange" />
+    <button @click="$refs.dragFileInput.click()" class="bg-blue-500 text-white px-4 py-2 rounded">选择文件</button>
+
+    <div class="mt-4 text-sm text-green-600" v-if="uploadStatus">{{ uploadStatus }}</div>
+    <button class="mt-4 text-gray-500 underline text-sm" @click="showUploadDialog = false">取消</button>
   </div>
 </div>
 

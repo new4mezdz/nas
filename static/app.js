@@ -20,6 +20,11 @@ const app = Vue.createApp({
       allDirs: ['/'],
       uploadInfo: '',
        selectedFiles: [],
+       // 上传
+      showUploadDialog: false,
+      uploadFiles: [],
+      dragOver: false,
+      uploadStatus: '',
 
       // 文件操作
       renaming: null,
@@ -390,6 +395,58 @@ computed: {
   this.searchTimer = setTimeout(() => {
     this.loadFiles(this.currentPath);
   }, 300);
+},
+handleDrop(event) {
+  this.dragOver = false;
+  const files = Array.from(event.dataTransfer.files);
+  if (files.length) {
+    this.uploadFiles = files;
+    this.uploadDraggedFiles();
+  }
+},
+handleFileInputChange(event) {
+  const files = Array.from(event.target.files);
+  if (files.length) {
+    this.uploadFiles = files;
+    this.uploadDraggedFiles();
+  }
+},
+async uploadDraggedFiles() {
+  if (!this.uploadFiles.length) return;
+
+  const path = this.currentPath;
+  const token = localStorage.getItem("token");
+
+  for (const file of this.uploadFiles) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("path", path);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+        },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.uploadStatus = `✅ ${file.name} 上传成功`;
+        this.loadFileList(this.currentPath);
+      } else {
+        this.uploadStatus = `❌ ${file.name} 上传失败：${data.error}`;
+      }
+    } catch (err) {
+      this.uploadStatus = `❌ ${file.name} 上传异常：${err.message}`;
+    }
+  }
+
+  setTimeout(() => {
+    this.uploadStatus = '';
+    this.uploadFiles = [];
+    this.showUploadDialog = false;
+  }, 1200);
 },
 
     uploadFile() {
