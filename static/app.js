@@ -75,7 +75,33 @@ searchTimer: null,
     k: 4,
     m: 2,
     selectedDisks: [],
-    disks: []  // 后端获取磁盘信息
+    disks: [],  // 后端获取磁盘信息
+
+      // 文档协作
+      showDocumentCollaboration: false,
+      documents: [],
+      currentDocument: null,
+      documentContent: '',
+      activeUsers: [],
+      saveStatus: '',
+      socket: null,
+      
+      // 新建文档
+      showCreateDocument: false,
+      newDocument: { title: '', content: '' },
+      
+      // 分享文档
+      showShareDialog: false,
+      shareForm: { username: '', permission: 'read' },
+      sharingDocument: null,
+
+      // 协作分享弹窗
+      showCollabShareDialog: false,
+      collabShareFile: null,
+      collabSharePassword: '',
+      collabShareExpire: 24,
+      collabShareUrl: '',
+      collabShareError: '',
     }
   },
 computed: {
@@ -740,7 +766,8 @@ previewFile(file) {
       await Promise.all([
         this.fetchSystemInfo(),
         this.fetchDiskInfo(),
-       this.loadFileList("/")
+        this.loadFileList("/"),
+        this.loadDocuments()
       ]);
       this.startSysTimer();
     },
@@ -766,10 +793,241 @@ previewFile(file) {
       result += minutes + '分钟';
       return result;
     },
+
+    // ========== 文档协作 ==========
+    async loadDocuments() {
+      try {
+        const res = await axios.get('/api/documents');
+        this.documents = res.data;
+      } catch (err) {
+        console.error('加载文档列表失败:', err);
+      }
+    },
+
+    async createDocument() {
+      if (!this.newDocument.title.trim()) {
+        alert('请输入文档标题');
+        return;
+      }
+      
+      try {
+        const res = await axios.post('/api/documents', this.newDocument);
+        if (res.data.success) {
+          this.showCreateDocument = false;
+          this.newDocument = { title: '', content: '' };
+          await this.loadDocuments();
+          // 自动打开新创建的文档
+          const newDoc = this.documents.find(d => d.id === res.data.document_id);
+          if (newDoc) {
+            this.openDocument(newDoc);
+          }
+        }
+      } catch (err) {
+        alert(err.response?.data?.error || '创建文档失败');
+      }
+    },
+
+    async openDocument(doc) {
+      try {
+        const res = await axios.get(`/api/documents/${doc.id}`);
+        this.currentDocument = res.data.document;
+        this.documentContent = this.currentDocument.content;
+        this.activeUsers = [];
+        
+        // 连接WebSocket
+        this.connectToDocument(doc.id);
+        
+        // 加载文档内容
+        this.loadDocumentContent();
+      } catch (err) {
+        alert(err.response?.data?.error || '打开文档失败');
+      }
+    },
+
+    connectToDocument(docId) {
+      // 断开之前的连接
+      if (this.socket) {
+        this.socket.disconnect();
+      }
+
+      // 创建新的WebSocket连接
+      this.socket = io();
+      
+      this.socket.on('connect', () => {
+        console.log('WebSocket连接成功');
+        this.socket.emit('join_document', {
+          token: localStorage.getItem('token'),
+          document_id: docId
+        });
+      });
+
+      this.socket.on('document_state', (data) => {
+        this.documentContent = data.content;
+        this.activeUsers = data.active_users;
+      });
+
+      this.socket.on('document_updated', (data) => {
+        // 处理其他用户的编辑
+        if (data.user_id !== this.user.id) {
+          this.documentContent = data.content;
+          this.activeUsers = data.active_users || this.activeUsers;
+        }
+      });
+
+      this.socket.on('user_joined', (data) => {
+        this.activeUsers.push(data);
+      });
+
+      this.socket.on('user_left', (data) => {
+        this.activeUsers = this.activeUsers.filter(u => u.user_id !== data.user_id);
+      });
+
+      this.socket.on('document_saved', (data) => {
+        this.saveStatus = `文档已由 ${data.username} 保存`;
+        setTimeout(() => {
+          this.saveStatus = '';
+        }, 3000);
+      });
+
+      this.socket.on('error', (data) => {
+        alert(data.message);
+      });
+    },
+
+    onDocumentChange() {
+      // 发送文档变更到服务器
+      if (this.socket && this.currentDocument) {
+        this.socket.emit('document_change', {
+          token: localStorage.getItem('token'),
+          document_id: this.currentDocument.id,
+          content: this.documentContent,
+          change_type: 'update'
+        });
+      }
+    },
+
+    async saveDocument() {
+      if (!this.currentDocument) return;
+      
+      try {
+        this.socket.emit('save_document', {
+          token: localStorage.getItem('token'),
+          document_id: this.currentDocument.id,
+          content: this.documentContent,
+          description: '手动保存'
+        });
+      } catch (err) {
+        this.saveStatus = '保存失败';
+      }
+    },
+
+    closeDocument() {
+      if (this.socket) {
+        this.socket.emit('leave_document', {
+          document_id: this.currentDocument.id
+        });
+        this.socket.disconnect();
+        this.socket = null;
+      }
+      
+      this.currentDocument = null;
+      this.documentContent = '';
+      this.activeUsers = [];
+      this.saveStatus = '';
+    },
+
+    showShareDialog(doc) {
+      this.sharingDocument = doc;
+      this.shareForm = { username: '', permission: 'read' };
+      this.showShareDialog = true;
+    },
+
+    async shareDocument() {
+      if (!this.shareForm.username.trim()) {
+        alert('请输入用户名');
+        return;
+      }
+      
+      try {
+        const res = await axios.post(`/api/documents/${this.sharingDocument.id}/permissions`, this.shareForm);
+        if (res.data.success) {
+          this.showShareDialog = false;
+          alert('分享成功');
+        }
+      } catch (err) {
+        alert(err.response?.data?.error || '分享失败');
+      }
+    },
+
+    getPermissionText(permission) {
+      const texts = {
+        'owner': '所有者',
+        'read': '只读',
+        'write': '读写',
+        'admin': '管理员'
+      };
+      return texts[permission] || permission;
+    },
+
+    formatDate(dateStr) {
+      if (!dateStr) return '';
+      const date = new Date(dateStr);
+      return date.toLocaleString('zh-CN');
+    },
+
+    async showVersions(doc) {
+      try {
+        const res = await axios.get(`/api/documents/${doc.id}/versions`);
+        // 这里可以显示版本历史对话框
+        console.log('版本历史:', res.data);
+      } catch (err) {
+        console.error('获取版本历史失败:', err);
+      }
+    },
+    isCollabEditable(item) {
+      // 支持的文档类型扩展名
+      const docExts = ['.txt', '.md', '.json', '.csv', '.docx', '.xlsx'];
+      return docExts.some(ext => item.name.toLowerCase().endsWith(ext));
+    },
+    openCollabEdit(item) {
+      // 跳转到协作编辑页面，带文件名参数
+      const file = encodeURIComponent(item.name);
+      const path = encodeURIComponent(this.currentPath);
+      window.open(`/collab-edit.html?file=${file}&path=${path}`, '_blank');
+    },
+    // 协作分享弹窗
+    openCollabShareDialog(item) {
+      this.collabShareFile = item;
+      this.collabSharePassword = '';
+      this.collabShareExpire = 24;
+      this.collabShareUrl = '';
+      this.collabShareError = '';
+      this.showCollabShareDialog = true;
+    },
+    async submitCollabShare() {
+      try {
+        const res = await axios.post('/api/collab/share', {
+          file: this.collabShareFile.name,
+          path: this.currentPath,
+          password: this.collabSharePassword,
+          expire: this.collabShareExpire
+        });
+        if (res.data.success) {
+          this.collabShareUrl = window.location.origin + res.data.share_url + (this.collabSharePassword ? `&pw=${encodeURIComponent(this.collabSharePassword)}` : '');
+        } else {
+          this.collabShareError = res.data.error || '生成失败';
+        }
+      } catch (e) {
+        this.collabShareError = '生成失败';
+      }
+    },
   },
   watch: {
     showUserAdmin(val) {
       if (val) this.loadUserList();
+    },
+    showDocumentCollaboration(val) {
+      if (val) this.loadDocuments();
     }
   },
   mounted() {

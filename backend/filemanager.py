@@ -1,6 +1,8 @@
 import os
 from flask import Blueprint, request, jsonify, send_file
 from common import token_required, BASE_DIR
+import shutil
+from datetime import datetime
 
 
 file_bp = Blueprint('filemanager', __name__, url_prefix='/api')
@@ -141,3 +143,48 @@ def preview_file():
     import mimetypes
     mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
     return send_file(abs_path, mimetype=mime)
+
+
+
+@file_bp.route('/edit', methods=['GET', 'POST'])
+@token_required()
+def edit_file():
+    req_path = request.args.get('path')
+    if not req_path:
+        return jsonify({"error": "未指定文件路径"}), 400
+
+    try:
+        abs_path = safe_join(BASE_DIR, req_path.lstrip("/\\"))
+    except Exception:
+        return jsonify({"error": "路径非法"}), 400
+
+    if not os.path.isfile(abs_path):
+        return jsonify({"error": "文件不存在"}), 404
+
+    if request.method == 'GET':
+        # 读取文件内容
+        try:
+            with open(abs_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return jsonify({"success": True, "content": content})
+        except Exception as e:
+            return jsonify({"error": f"读取失败: {str(e)}"}), 500
+
+    elif request.method == 'POST':
+        # 保存文件内容，并生成历史备份
+        data = request.get_json()
+        new_content = data.get('content', '')
+        backup_name = os.path.basename(abs_path) + '.bak_' + datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(os.path.dirname(abs_path), backup_name)
+
+        try:
+            # 备份原文件
+            shutil.copy2(abs_path, backup_path)
+
+            # 保存新内容
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+            return jsonify({"success": True, "message": "保存成功，已备份原文件为 " + backup_name})
+        except Exception as e:
+            return jsonify({"error": f"保存失败: {str(e)}"}), 500

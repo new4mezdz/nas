@@ -20,9 +20,18 @@ from ec_engine import encode, decode, ECError
 from docx2pdf import convert
 
 from reedsolo import RSCodec
+from flask_socketio import SocketIO
+from collaboration import CollaborationManager
+from docx import Document
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
+
+# 初始化SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+# 初始化协作管理器
+collaboration_manager = CollaborationManager(app, socketio)
 
 
 
@@ -656,10 +665,285 @@ def start_ngrok():
 # ========== 你的 Flask 路由、逻辑在这里 ==========
 
 
+# ===== 文档协作API =====
+@app.route('/api/documents', methods=['GET'])
+@token_required()
+def get_documents():
+    """获取用户可访问的文档列表"""
+    db = get_db()
+    user_id = g.user['id']
+    
+    # 获取用户创建的文档
+    created_docs = db.execute(
+        "SELECT id, title, created_at, updated_at FROM collaborative_documents WHERE created_by = ? AND is_active = 1",
+        (user_id,)
+    ).fetchall()
+    
+    # 获取用户有权限的文档
+    shared_docs = db.execute('''
+        SELECT cd.id, cd.title, cd.created_at, cd.updated_at, dp.permission_type
+        FROM collaborative_documents cd
+        JOIN document_permissions dp ON cd.id = dp.document_id
+        WHERE dp.user_id = ? AND cd.is_active = 1
+    ''', (user_id,)).fetchall()
+    
+    documents = []
+    for doc in created_docs:
+        documents.append({
+            'id': doc['id'],
+            'title': doc['title'],
+            'created_at': doc['created_at'],
+            'updated_at': doc['updated_at'],
+            'permission': 'owner'
+        })
+    
+    for doc in shared_docs:
+        documents.append({
+            'id': doc['id'],
+            'title': doc['title'],
+            'created_at': doc['created_at'],
+            'updated_at': doc['updated_at'],
+            'permission': doc['permission_type']
+        })
+    
+    return jsonify(documents)
+
+@app.route('/api/documents', methods=['POST'])
+@token_required()
+def create_document():
+    """创建新文档"""
+    data = request.get_json()
+    title = data.get('title', '').strip()
+    content = data.get('content', '')
+    
+    if not title:
+        return jsonify({'error': '文档标题不能为空'}), 400
+    
+    db = get_db()
+    try:
+        cur = db.execute(
+            "INSERT INTO collaborative_documents (title, content, created_by) VALUES (?, ?, ?)",
+            (title, content, g.user['id'])
+        )
+        db.commit()
+        
+        doc_id = cur.lastrowid
+        return jsonify({
+            'success': True,
+            'document_id': doc_id,
+            'message': '文档创建成功'
+        })
+    except Exception as e:
+        return jsonify({'error': f'创建文档失败: {str(e)}'}), 500
+
+@app.route('/api/documents/<int:doc_id>', methods=['GET'])
+@token_required()
+def get_document(doc_id):
+    """获取文档详情"""
+    db = get_db()
+    
+    # 检查权限
+    if not collaboration_manager.check_document_permission(doc_id, g.user['id'], 'read'):
+        return jsonify({'error': '没有访问权限'}), 403
+    
+    # 获取文档信息
+    doc = db.execute(
+        "SELECT * FROM collaborative_documents WHERE id = ? AND is_active = 1",
+        (doc_id,)
+    ).fetchone()
+    
+    if not doc:
+        return jsonify({'error': '文档不存在'}), 404
+    
+    # 获取版本历史
+    versions = db.execute(
+        "SELECT * FROM document_versions WHERE document_id = ? ORDER BY version_number DESC LIMIT 10",
+        (doc_id,)
+    ).fetchall()
+    
+    return jsonify({
+        'document': dict(doc),
+        'versions': [dict(v) for v in versions]
+    })
+
+@app.route('/api/documents/<int:doc_id>/permissions', methods=['POST'])
+@token_required()
+def share_document(doc_id):
+    """分享文档给其他用户"""
+    data = request.get_json()
+    username = data.get('username', '').strip()
+    permission_type = data.get('permission_type', 'read')
+    
+    if not username:
+        return jsonify({'error': '用户名不能为空'}), 400
+    
+    if permission_type not in ['read', 'write', 'admin']:
+        return jsonify({'error': '无效的权限类型'}), 400
+    
+    db = get_db()
+    
+    # 检查是否是文档所有者
+    doc = db.execute(
+        "SELECT created_by FROM collaborative_documents WHERE id = ?",
+        (doc_id,)
+    ).fetchone()
+    
+    if not doc or doc['created_by'] != g.user['id']:
+        return jsonify({'error': '没有权限分享此文档'}), 403
+    
+    # 查找用户
+    user = db.execute(
+        "SELECT id FROM users WHERE username = ? AND is_active = 1",
+        (username,)
+    ).fetchone()
+    
+    if not user:
+        return jsonify({'error': '用户不存在'}), 404
+    
+    # 添加权限
+    try:
+        db.execute(
+            "INSERT OR REPLACE INTO document_permissions (document_id, user_id, permission_type) VALUES (?, ?, ?)",
+            (doc_id, user['id'], permission_type)
+        )
+        db.commit()
+        return jsonify({'success': True, 'message': '分享成功'})
+    except Exception as e:
+        return jsonify({'error': f'分享失败: {str(e)}'}), 500
+
+@app.route('/api/documents/<int:doc_id>/versions', methods=['GET'])
+@token_required()
+def get_document_versions(doc_id):
+    """获取文档版本历史"""
+    db = get_db()
+    
+    # 检查权限
+    if not collaboration_manager.check_document_permission(doc_id, g.user['id'], 'read'):
+        return jsonify({'error': '没有访问权限'}), 403
+    
+    versions = db.execute('''
+        SELECT dv.*, u.username as author_name
+        FROM document_versions dv
+        JOIN users u ON dv.created_by = u.id
+        WHERE dv.document_id = ?
+        ORDER BY dv.version_number DESC
+    ''', (doc_id,)).fetchall()
+    
+    return jsonify([dict(v) for v in versions])
+
+@app.route('/api/documents/<int:doc_id>/versions/<int:version_id>', methods=['GET'])
+@token_required()
+def get_document_version(doc_id, version_id):
+    """获取特定版本的文档内容"""
+    db = get_db()
+    
+    # 检查权限
+    if not collaboration_manager.check_document_permission(doc_id, g.user['id'], 'read'):
+        return jsonify({'error': '没有访问权限'}), 403
+    
+    version = db.execute(
+        "SELECT * FROM document_versions WHERE document_id = ? AND id = ?",
+        (doc_id, version_id)
+    ).fetchone()
+    
+    if not version:
+        return jsonify({'error': '版本不存在'}), 404
+    
+    return jsonify(dict(version))
+
+# ===== 协作编辑API =====
+import os
+
+@app.route('/api/collab/load')
+def collab_load():
+    file = request.args.get('file', '').strip()
+    path = request.args.get('path', '').strip()
+    # 修正 path 为根目录时的情况
+    if path in ('', '/'): path = ''
+    print('collab_load:', 'file=', file, 'path=', path)
+    if not file:
+        return jsonify({'success': False, 'error': '缺少文件名'}), 400
+    # 只允许在BASE_DIR及其子目录下操作
+    full_path = os.path.abspath(os.path.join(BASE_DIR, path, file))
+    print('collab_load:', 'full_path=', full_path)
+    if not full_path.startswith(os.path.abspath(BASE_DIR)):
+        return jsonify({'success': False, 'error': '非法路径'}), 403
+    if not os.path.exists(full_path):
+        return jsonify({'success': False, 'error': '文件不存在'}), 404
+    try:
+        if file.lower().endswith('.docx'):
+            doc = Document(full_path)
+            content = '\n'.join([p.text for p in doc.paragraphs])
+        else:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        return jsonify({'success': True, 'content': content})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/collab/save', methods=['POST'])
+def collab_save():
+    data = request.get_json()
+    file = data.get('file', '').strip()
+    path = data.get('path', '').strip()
+    content = data.get('content', '')
+    if not file:
+        return jsonify({'success': False, 'error': '缺少文件名'}), 400
+    full_path = os.path.abspath(os.path.join(BASE_DIR, path, file))
+    if not full_path.startswith(os.path.abspath(BASE_DIR)):
+        return jsonify({'success': False, 'error': '非法路径'}), 403
+    try:
+        with open(full_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+# 协作分享链接表（可用sqlite或内存，先用内存实现）
+collab_shares = {}
+
+@app.route('/api/collab/share', methods=['POST'])
+def collab_share():
+    data = request.get_json()
+    file = data.get('file', '').strip()
+    path = data.get('path', '').strip()
+    password = data.get('password', '').strip()
+    expire_hours = int(data.get('expire', 24))
+    if not file:
+        return jsonify({'success': False, 'error': '缺少文件名'}), 400
+    token = secrets.token_urlsafe(16)
+    expire_at = datetime.utcnow() + timedelta(hours=expire_hours)
+    collab_shares[token] = {
+        'file': file,
+        'path': path,
+        'password': password,
+        'expire_at': expire_at
+    }
+    share_url = f'/collab-edit.html?token={token}'
+    return jsonify({'success': True, 'token': token, 'share_url': share_url, 'expire_at': expire_at.isoformat()})
+
+@app.route('/api/collab/validate', methods=['POST'])
+def collab_validate():
+    data = request.get_json()
+    token = data.get('token', '').strip()
+    password = data.get('password', '').strip()
+    info = collab_shares.get(token)
+    if not info:
+        return jsonify({'success': False, 'error': '无效token'}), 400
+    if info['expire_at'] < datetime.utcnow():
+        return jsonify({'success': False, 'error': '链接已过期'}), 403
+    if info['password'] and info['password'] != password:
+        return jsonify({'success': False, 'error': '密码错误'}), 403
+    return jsonify({'success': True, 'file': info['file'], 'path': info['path']})
+
+@app.route('/collab-edit.html')
+def collab_edit_page():
+    return app.send_static_file('collab-edit.html')
+
 # ===== 主启动入口 =====
 if __name__ == '__main__':
     ngrok_url, ngrok_proc = start_ngrok()
     try:
-        app.run(host='0.0.0.0', port=FLASK_PORT, debug=False)
+        socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
     finally:
         ngrok_proc.terminate()
