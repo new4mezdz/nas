@@ -12,8 +12,9 @@ import subprocess
 import time
 import requests
 import os
-from common import BASE_DIR, get_db
+from common import BASE_DIRS, get_db, get_available_drives, is_path_allowed, get_base_dir_for_path
 from common import convert
+from filemanager import safe_join
 
 import json
 from ec_engine import encode, decode, ECError
@@ -22,6 +23,8 @@ from docx2pdf import convert
 from reedsolo import RSCodec
 from flask_socketio import SocketIO
 from collaboration import CollaborationManager
+from collaboration_v2 import CollaborationV2
+from onlyoffice import OnlyOfficeManager
 from docx import Document
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
@@ -32,6 +35,12 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # 初始化协作管理器
 collaboration_manager = CollaborationManager(app, socketio)
+
+# 初始化新协作系统
+collaboration_v2 = CollaborationV2(app)
+
+# 初始化OnlyOffice管理器
+onlyoffice_manager = OnlyOfficeManager(app)
 
 
 
@@ -49,14 +58,15 @@ def init_db():
         password TEXT NOT NULL,
         is_admin INTEGER NOT NULL DEFAULT 0,
         is_active INTEGER NOT NULL DEFAULT 1,
-        registered_at TEXT NOT NULL
+        registered_at TEXT NOT NULL,
+        current_directory TEXT DEFAULT ''
     )''')
     # 保证有一个admin账号
     cur = db.execute("SELECT COUNT(*) FROM users WHERE is_admin=1", ())
     if cur.fetchone()[0] == 0:
         db.execute(
-            "INSERT INTO users (username, password, is_admin, is_active, registered_at) VALUES (?, ?, ?, ?, ?)",
-            ("admin", generate_password_hash("admin123"), 1, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            "INSERT INTO users (username, password, is_admin, is_active, registered_at, current_directory) VALUES (?, ?, ?, ?, ?, ?)",
+            ("admin", generate_password_hash("123"), 1, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "")
         )
     db.commit()
 
@@ -129,8 +139,8 @@ def register():
     db = get_db()
     try:
         db.execute(
-            "INSERT INTO users (username, password, is_admin, is_active, registered_at) VALUES (?, ?, 0, 1, ?)",
-            (username, generate_password_hash(password), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            "INSERT INTO users (username, password, is_admin, is_active, registered_at, current_directory) VALUES (?, ?, 0, 1, ?, ?)",
+            (username, generate_password_hash(password), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "")
         )
         db.commit()
         return jsonify({'success': True, 'message': '注册成功'})
@@ -197,8 +207,40 @@ def update_user(user_id):
     db.commit()
     return jsonify({"success": True})
 
+# 更新用户当前目录
+@app.route('/api/current-directory', methods=['POST'])
+@token_required()
+def update_current_directory():
+    data = request.get_json()
+    directory = data.get('directory', '').strip()
+    
+    # 验证目录路径是否在BASE_DIR下
+    if directory:
+        abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], directory))
+        if not abs_path.startswith(os.path.abspath(BASE_DIRS[0])):
+            return jsonify({'error': '非法路径'}), 403
+        if not os.path.exists(abs_path) or not os.path.isdir(abs_path):
+            return jsonify({'error': '目录不存在'}), 404
+    
+    # 更新用户当前目录
+    db = get_db()
+    db.execute("UPDATE users SET current_directory=? WHERE id=?", (directory, g.user['id']))
+    db.commit()
+    
+    return jsonify({'success': True, 'current_directory': directory})
+
+# 获取用户当前目录
+@app.route('/api/current-directory', methods=['GET'])
+@token_required()
+def get_current_directory():
+    db = get_db()
+    cur = db.execute("SELECT current_directory FROM users WHERE id=?", (g.user['id'],))
+    user = cur.fetchone()
+    return jsonify({'current_directory': user['current_directory'] or ''})
+
 # ===== 系统/磁盘信息接口 =====
 from utils import get_sys_info, get_disk_info
+import shutil
 
 @app.route('/api/system', methods=['GET'])
 @token_required()
@@ -210,6 +252,37 @@ def api_system():
 def api_disk():
     return jsonify(get_disk_info())
 
+# 获取可用盘符
+@app.route('/api/drives', methods=['GET'])
+@token_required()
+def get_drives():
+    """获取系统中可用的盘符"""
+    available_drives = get_available_drives()
+    drives_info = []
+    
+    for drive in available_drives:
+        try:
+            # 获取磁盘使用情况
+            total, used, free = shutil.disk_usage(drive)
+            drives_info.append({
+                'drive': drive,
+                'total': total,
+                'used': used,
+                'free': free,
+                'percent': round((used / total) * 100, 1) if total > 0 else 0
+            })
+        except Exception as e:
+            # 如果无法获取磁盘信息，仍然返回盘符
+            drives_info.append({
+                'drive': drive,
+                'total': 0,
+                'used': 0,
+                'free': 0,
+                'percent': 0
+            })
+    
+    return jsonify(drives_info)
+
 # ===== 注册文件管理蓝图 =====
 from filemanager import file_bp
 app.register_blueprint(file_bp)
@@ -217,7 +290,8 @@ app.register_blueprint(file_bp)
 # ===== 静态页面路由 =====
 @app.route("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    static_folder = app.static_folder or 'static'
+    return send_from_directory(static_folder, "index.html")
 
 # 修改密码（普通用户）
 @app.route('/api/change_password', methods=['PATCH'])
@@ -263,8 +337,8 @@ def batch_delete():
     errors = []
     for path in paths:
         try:
-            abspath = safe_join(BASE_DIR, path.lstrip("/\\"))
-            if not abspath.startswith(BASE_DIR):
+            abspath = safe_join(BASE_DIRS[0], path.lstrip("/\\"))
+            if not abspath.startswith(BASE_DIRS[0]):
                 errors.append(path)
                 continue
             if os.path.isdir(abspath):
@@ -282,34 +356,171 @@ def batch_delete():
 @token_required()
 def preview_file():
     path = request.args.get('path', '').lstrip('/\\')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
-
-    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
+    print(f"[DEBUG] 预览请求路径: {path}")
+    
+    # 使用新的多盘符支持逻辑
+    base_dir = get_base_dir_for_path(path)
+    print(f"[DEBUG] 匹配的base_dir: {base_dir}")
+    
+    if not base_dir:
+        return jsonify({'error': '路径不在允许的目录中'}), 400
+    
+    # 修复路径处理逻辑
+    if path.startswith(base_dir):
+        # 如果path已经包含base_dir，直接使用
+        abs_path = os.path.abspath(path)
+    else:
+        # 否则拼接路径
+        abs_path = os.path.abspath(os.path.join(base_dir, path.lstrip('/')))
+    
+    print(f"[DEBUG] 最终绝对路径: {abs_path}")
+    print(f"[DEBUG] 文件是否存在: {os.path.exists(abs_path)}")
+    
+    if not os.path.exists(abs_path):
         return jsonify({'error': '文件不存在'}), 404
 
     ext = os.path.splitext(abs_path)[1].lower()
 
-    # ===== 1. DOCX: 自动转 PDF =====
+    # ===== 1. DOCX: 直接返回原文件 =====
     if ext == '.docx':
-        pdf_name = os.path.splitext(os.path.basename(abs_path))[0] + '.pdf'
-        pdf_path = os.path.join(BASE_DIR, 'tmp', pdf_name)
-        try:
-            convert(abs_path, pdf_path)
-            return send_file(pdf_path, mimetype='application/pdf')
-        except Exception as e:
-            print("❌ DOCX 转换失败：", e)
-            return jsonify({'error': f'DOCX 转换失败: {str(e)}'}), 500
+        return send_file(abs_path, mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
 
     # ===== 2. 文本类文件（纯文本返回） =====
-    elif ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css']:
+    elif ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css', '.csv']:
         try:
-            with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+            # 首先读取文件的二进制内容
+            with open(abs_path, 'rb') as f:
+                raw_content = f.read()
+            
+            print(f"[DEBUG] 文件大小: {len(raw_content)} 字节")
+            print(f"[DEBUG] 文件前20字节: {raw_content[:20]}")
+            
+            # 首先检测BOM（字节顺序标记）
+            content = None
+            used_encoding = None
+            
+            # 检查UTF-16 LE BOM
+            if raw_content.startswith(b'\xff\xfe'):
+                try:
+                    content = raw_content.decode('utf-16-le')
+                    used_encoding = 'utf-16-le (BOM detected)'
+                    print(f"[DEBUG] 检测到UTF-16 LE BOM，成功解码")
+                except UnicodeDecodeError as e:
+                    print(f"[DEBUG] UTF-16 LE BOM解码失败: {e}")
+            
+            # 检查UTF-16 BE BOM
+            elif raw_content.startswith(b'\xfe\xff'):
+                try:
+                    content = raw_content.decode('utf-16-be')
+                    used_encoding = 'utf-16-be (BOM detected)'
+                    print(f"[DEBUG] 检测到UTF-16 BE BOM，成功解码")
+                except UnicodeDecodeError as e:
+                    print(f"[DEBUG] UTF-16 BE BOM解码失败: {e}")
+            
+            # 检查UTF-8 BOM
+            elif raw_content.startswith(b'\xef\xbb\xbf'):
+                try:
+                    content = raw_content.decode('utf-8-sig')
+                    used_encoding = 'utf-8-sig (BOM detected)'
+                    print(f"[DEBUG] 检测到UTF-8 BOM，成功解码")
+                except UnicodeDecodeError as e:
+                    print(f"[DEBUG] UTF-8 BOM解码失败: {e}")
+            
+            # 如果没有BOM，尝试多种编码方式
+            if content is None:
+                encodings = ['utf-8', 'utf-16-le', 'utf-16-be', 'gbk', 'gb2312', 'big5', 'latin-1']
+                
+                for encoding in encodings:
+                    try:
+                        content = raw_content.decode(encoding)
+                        used_encoding = encoding
+                        print(f"[DEBUG] 成功使用编码: {encoding}")
+                        break
+                    except UnicodeDecodeError as e:
+                        print(f"[DEBUG] 编码 {encoding} 失败: {e}")
+                        continue
+            
+            if content is None:
+                # 如果所有编码都失败，使用替换字符模式
+                print(f"[DEBUG] 所有编码都失败，使用替换模式")
+                content = raw_content.decode('utf-8', errors='replace')
+                used_encoding = 'utf-8 (with replacement)'
+            
+            # 检查内容是否包含乱码字符（更宽松的检测）
+            def has_garbled_text(text):
+                # 检查是否包含大量不可打印字符或控制字符
+                control_chars = sum(1 for c in text if ord(c) < 32 and c not in '\n\r\t')
+                total_chars = len(text)
+                if total_chars > 0 and control_chars / total_chars > 0.1:
+                    return True
+                
+                # 检查是否包含大量乱码字符（连续的不可读字符）
+                garbled_sequences = 0
+                for i in range(len(text) - 1):
+                    if ord(text[i]) > 127 and ord(text[i+1]) > 127:
+                        # 检查是否是常见的中文字符范围
+                        if not (0x4e00 <= ord(text[i]) <= 0x9fff or 0x3400 <= ord(text[i]) <= 0x4dbf):
+                            garbled_sequences += 1
+                
+                return garbled_sequences > len(text) * 0.1
+            
+            if has_garbled_text(content):
+                print(f"[DEBUG] 检测到可能的乱码，尝试重新解码")
+                # 尝试使用不同的错误处理策略
+                for encoding in ['utf-8', 'gbk', 'latin-1']:
+                    try:
+                        test_content = raw_content.decode(encoding, errors='ignore')
+                        if len(test_content.strip()) > 0 and not has_garbled_text(test_content):
+                            content = test_content
+                            used_encoding = f"{encoding} (ignore errors)"
+                            print(f"[DEBUG] 使用 {encoding} (ignore) 成功")
+                            break
+                    except:
+                        continue
+            
+            print(f"[DEBUG] 最终编码: {used_encoding}, 内容长度: {len(content)}")
+            print(f"[DEBUG] 内容预览: {repr(content[:100])}")
+            
+            return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
         except Exception as e:
+            print(f"[DEBUG] 读取文本文件失败: {str(e)}")
             return jsonify({'error': f'无法读取文本内容: {str(e)}'}), 500
 
-    # ===== 3. 其他格式（图片、音视频、pdf）原样返回 =====
+    # ===== 3. PDF文件：返回内嵌预览 =====
+    elif ext == '.pdf':
+        # 检查是否是内嵌预览请求
+        if request.args.get('inline') == 'true':
+            # 直接返回PDF文件内容，设置正确的响应头防止下载
+            mime = 'application/pdf'
+            response = send_file(abs_path, mimetype=mime)
+            response.headers['Content-Disposition'] = 'inline'
+            return response
+        else:
+            # 返回HTML页面来内嵌显示PDF
+            # 从URL参数中获取token并传递给iframe
+            token = request.args.get('token', '')
+            pdf_url = f'/api/preview?path={path}&inline=true'
+            if token:
+                pdf_url += f'&token={token}'
+            
+            html_content = f'''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>PDF预览 - {os.path.basename(abs_path)}</title>
+                <style>
+                    body {{ margin: 0; padding: 0; height: 100vh; }}
+                    iframe {{ width: 100%; height: 100%; border: none; }}
+                </style>
+            </head>
+            <body>
+                <iframe src="{pdf_url}" type="application/pdf"></iframe>
+            </body>
+            </html>
+            '''
+            return html_content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    
+    # ===== 4. 其他格式（图片、音视频等）原样返回 =====
     else:
         mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
         return send_file(abs_path, mimetype=mime)
@@ -324,8 +535,8 @@ def mkdir():
         return jsonify({'error': '文件夹名不能为空'}), 400
     # 拼接路径并校验
     safe_parent = parent.lstrip('/\\')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, safe_parent, name))
-    if not abs_path.startswith(BASE_DIR):
+    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], safe_parent, name))
+    if not abs_path.startswith(BASE_DIRS[0]):
         return jsonify({'error': '路径非法'}), 400
     try:
         os.makedirs(abs_path, exist_ok=False)
@@ -344,8 +555,8 @@ def create_share():
     expire_hours = int(data.get('expire_hours', 24))
     password = data.get('password', '')
 
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, file_path.lstrip('/\\')))
-    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
+    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], file_path.lstrip('/\\')))
+    if not abs_path.startswith(BASE_DIRS[0]) or not os.path.exists(abs_path):
         return jsonify({'error': '文件不存在'}), 404
 
     token = secrets.token_urlsafe(16)
@@ -391,8 +602,8 @@ def access_share(token):
                 </form>
             '''
     # 密码通过，返回文件
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, row['file_path'].lstrip('/\\')))
-    if not abs_path.startswith(BASE_DIR) or not os.path.exists(abs_path):
+    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], row['file_path'].lstrip('/\\')))
+    if not abs_path.startswith(BASE_DIRS[0]) or not os.path.exists(abs_path):
         return "文件不存在", 404
     return send_file(abs_path, as_attachment=True)
 
@@ -425,7 +636,7 @@ def ec_config():
         k = 0
         m = 0
 
-    config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    config_path = os.path.join(BASE_DIRS[0], 'ec_config.json')
     with open(config_path, 'w') as f:
         json.dump({
             'scheme': scheme,
@@ -444,7 +655,7 @@ def api_encode():
     try:
         encode(
             scheme=data['scheme'],
-            file_path=os.path.join(BASE_DIR, data['file_path']),
+            file_path=os.path.join(BASE_DIRS[0], data['file_path']),
             k=data['k'],
             m=data['m'],
             output_paths=data['disks']
@@ -463,12 +674,12 @@ def upload_file_with_ec():
         return jsonify({'error': '未提供文件'}), 400
 
     filename = uploaded_file.filename
-    target_path = os.path.join(BASE_DIR, rel_path.lstrip('/\\'), filename)
+    target_path = os.path.join(BASE_DIRS[0], rel_path.lstrip('/\\'), filename)
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     uploaded_file.save(target_path)
 
     # 判断是否启用纠删码
-    ec_config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    ec_config_path = os.path.join(BASE_DIRS[0], 'ec_config.json')
     if os.path.exists(ec_config_path):
         with open(ec_config_path, 'r') as f:
             ec_cfg = json.load(f)
@@ -494,11 +705,32 @@ def list_files():
     requested_path = request.args.get('path', '/').lstrip('/\\')
     keyword = request.args.get('q', '').strip().lower()
 
-    full_path = os.path.abspath(os.path.join(BASE_DIR, requested_path))
+    # 检查是否包含盘符前缀（如 D:/path 或 D:\path）
+    drive_prefix = None
+    if ':' in requested_path:
+        # 提取盘符前缀
+        parts = requested_path.replace('\\', '/').split('/')
+        if parts[0] and ':' in parts[0]:
+            drive_prefix = parts[0] + '/'
+            # 移除盘符前缀，获取相对路径
+            requested_path = '/'.join(parts[1:]) if len(parts) > 1 else ''
+    
+    # 如果没有盘符前缀，使用默认盘符（第一个可用盘符）
+    if not drive_prefix:
+        available_drives = get_available_drives()
+        if not available_drives:
+            return jsonify({'error': '没有可用的盘符'}), 500
+        drive_prefix = available_drives[0]
+    
+    # 检查盘符是否在允许列表中
+    if drive_prefix not in BASE_DIRS:
+        return jsonify({'error': '不支持的盘符'}), 403
+    
+    full_path = os.path.abspath(os.path.join(drive_prefix, requested_path))
 
     # 加载纠删码配置
     ec_cfg = {}
-    ec_cfg_path = os.path.join(BASE_DIR, 'ec_config.json')
+    ec_cfg_path = os.path.join(drive_prefix, 'ec_config.json')
     if os.path.exists(ec_cfg_path):
         with open(ec_cfg_path, 'r') as f:
             ec_cfg = json.load(f)
@@ -507,7 +739,7 @@ def list_files():
     if requested_path == 'ec_volume' and ec_cfg.get('disks'):
         full_path = os.path.abspath(ec_cfg['disks'][0])  # 映射为第一个纠删码磁盘路径
 
-    allowed_paths = [BASE_DIR] + ec_cfg.get('disks', []) + [d['mount'] for d in get_disk_info()]
+    allowed_paths = [drive_prefix] + ec_cfg.get('disks', []) + [d['mount'] for d in get_disk_info()]
     if not any(full_path.startswith(os.path.abspath(p)) for p in allowed_paths):
         return jsonify({'error': '非法路径'}), 403
 
@@ -524,12 +756,22 @@ def list_files():
             items.append({
                 'name': name,
                 'is_dir': os.path.isdir(path),
-                'size': stat.st_size,
-                'mtime': stat.st_mtime
+                'size': stat.st_size if os.path.isfile(path) else None,
+                'mtime': stat.st_mtime,
+                'path': os.path.join(requested_path, name) if requested_path else name
             })
-        return jsonify({'success': True, 'items': items})
+        
+        # 按文件夹在前，文件在后的顺序排序
+        items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+        
+        return jsonify({
+            'success': True,
+            'current_path': requested_path,
+            'drive_prefix': drive_prefix,
+            'items': items
+        })
     except Exception as e:
-        return jsonify({'error': '读取失败: ' + str(e)}), 500
+        return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
 
 @app.route('/api/search')
 @token_required()
@@ -552,8 +794,8 @@ def api_search():
             if os.path.exists(base_path):
                 search_dirs = [base_path]
             else:
-                from common import BASE_DIR
-                search_dirs = [os.path.join(BASE_DIR, base_path.strip('/'))]
+                from common import BASE_DIRS
+                search_dirs = [os.path.join(BASE_DIRS[0], base_path.strip('/'))]
     except Exception as e:
         print(f"[搜索] 获取搜索目录出错: {e}")
         return jsonify({'success': False, 'error': '目录解析失败'}), 500
@@ -583,14 +825,14 @@ def api_search():
 @token_required()
 def download_file():
     rel_path = request.args.get('path', '').lstrip('/\\')
-    original_path = os.path.join(BASE_DIR, rel_path)
+    original_path = os.path.join(BASE_DIRS[0], rel_path)
 
     # 检查是否存在原始文件（未启用EC）
     if os.path.exists(original_path):
         return send_file(original_path, as_attachment=True)
 
     # 尝试读取元数据并恢复
-    ec_config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    ec_config_path = os.path.join(BASE_DIRS[0], 'ec_config.json')
     if not os.path.exists(ec_config_path):
         return jsonify({'error': '文件不存在'}), 404
 
@@ -609,10 +851,10 @@ def download_file():
 
     # 解码还原
     from ec_engine import decode  # 你需要实现这个方法
-    restored_path = os.path.join(BASE_DIR, 'tmp', filename)
+    restored_path = os.path.join(BASE_DIRS[0], 'tmp', filename)
     os.makedirs(os.path.dirname(restored_path), exist_ok=True)
     try:
-        decode(block_paths[:ec_cfg['k']], restored_path, k=ec_cfg['k'], m=ec_cfg['m'])
+        decode('rs', block_paths[:ec_cfg['k']], restored_path, k=ec_cfg['k'], m=ec_cfg['m'])
         return send_file(restored_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': f'解码失败: {str(e)}'}), 500
@@ -627,40 +869,49 @@ ngrok_url_global = None  # 👈 全局变量保存公网地址
 def start_ngrok():
     global ngrok_url_global
     print("⚙️ 正在启动 ngrok...")
-    ngrok_proc = subprocess.Popen(
-        [NGROK_PATH, 'http', str(FLASK_PORT)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    time.sleep(2)
-    ngrok_url = None
+    
+    # 检查ngrok是否可用
+    try:
+        ngrok_proc = subprocess.Popen(
+            [NGROK_PATH, 'http', str(FLASK_PORT)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        time.sleep(2)
+        ngrok_url = None
 
-    for i in range(10):
-        try:
-            print(f"⌛ 尝试获取 ngrok 地址（第 {i+1} 次）")
-            r = requests.get(
-                'http://127.0.0.1:4040/api/tunnels',
-                headers={"Accept": "application/json"},  # ✅ 加上这个
-                timeout=2
-            ).json()
-            for t in r.get('tunnels', []):
-                if t['proto'] == 'https':
-                    ngrok_url = t['public_url']
+        for i in range(5):  # 减少重试次数
+            try:
+                print(f"⌛ 尝试获取 ngrok 地址（第 {i+1} 次）")
+                r = requests.get(
+                    'http://127.0.0.1:4040/api/tunnels',
+                    headers={"Accept": "application/json"},
+                    timeout=3  # 增加超时时间
+                ).json()
+                for t in r.get('tunnels', []):
+                    if t['proto'] == 'https':
+                        ngrok_url = t['public_url']
+                        break
+                if ngrok_url:
                     break
-            if ngrok_url:
-                break
-        except Exception as e:
-            print("❌ 获取地址时异常:", e)
-            time.sleep(1)
+            except Exception as e:
+                print(f"❌ 获取地址时异常（第 {i+1} 次）: {e}")
+                time.sleep(2)
 
-    if ngrok_url:
-        print('✅ ngrok 公网地址:', ngrok_url)
-        ngrok_url_global = ngrok_url  # ✅ 保存下来
-    else:
-        print('❌ ngrok 启动成功但未获取到公网地址，请手动访问 http://127.0.0.1:4040')
-
-    return ngrok_url, ngrok_proc
+        if ngrok_url:
+            print('✅ ngrok 公网地址:', ngrok_url)
+            ngrok_url_global = ngrok_url
+            return ngrok_url, ngrok_proc
+        else:
+            print('❌ ngrok 启动失败，将使用本地模式运行')
+            ngrok_proc.terminate()
+            return None, None
+            
+    except Exception as e:
+        print(f'❌ ngrok 启动失败: {e}')
+        print('💡 提示：ngrok 不是必需的，程序将在本地模式下运行')
+        return None, None
 
 # ========== 你的 Flask 路由、逻辑在这里 ==========
 
@@ -863,10 +1114,10 @@ def collab_load():
     print('collab_load:', 'file=', file, 'path=', path)
     if not file:
         return jsonify({'success': False, 'error': '缺少文件名'}), 400
-    # 只允许在BASE_DIR及其子目录下操作
-    full_path = os.path.abspath(os.path.join(BASE_DIR, path, file))
+    # 只允许在BASE_DIRS[0]及其子目录下操作
+    full_path = os.path.abspath(os.path.join(BASE_DIRS[0], path, file))
     print('collab_load:', 'full_path=', full_path)
-    if not full_path.startswith(os.path.abspath(BASE_DIR)):
+    if not full_path.startswith(os.path.abspath(BASE_DIRS[0])):
         return jsonify({'success': False, 'error': '非法路径'}), 403
     if not os.path.exists(full_path):
         return jsonify({'success': False, 'error': '文件不存在'}), 404
@@ -875,13 +1126,61 @@ def collab_load():
             doc = Document(full_path)
             content = '\n'.join([p.text for p in doc.paragraphs])
         else:
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # 尝试多种编码方式读取文件
+            encodings = ['utf-8', 'utf-16', 'utf-16le', 'utf-16be', 'gbk', 'gb2312', 'latin1']
+            content = None
+            
+            for encoding in encodings:
+                try:
+                    with open(full_path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    print(f'collab_load: 成功使用 {encoding} 编码读取文件')
+                    break
+                except UnicodeDecodeError:
+                    print(f'collab_load: {encoding} 编码失败，尝试下一个')
+                    continue
+                except Exception as e:
+                    print(f'collab_load: {encoding} 编码读取异常: {e}')
+                    continue
+            
+            if content is None:
+                # 如果所有编码都失败，尝试二进制读取并解码
+                try:
+                    with open(full_path, 'rb') as f:
+                        raw_content = f.read()
+                    
+                    # 尝试检测UTF-16 BOM
+                    if raw_content.startswith(b'\xff\xfe'):
+                        content = raw_content.decode('utf-16le')
+                        print('collab_load: 检测到UTF-16 LE BOM')
+                    elif raw_content.startswith(b'\xfe\xff'):
+                        content = raw_content.decode('utf-16be')
+                        print('collab_load: 检测到UTF-16 BE BOM')
+                    elif raw_content.startswith(b'\xef\xbb\xbf'):
+                        content = raw_content.decode('utf-8')
+                        print('collab_load: 检测到UTF-8 BOM')
+                    else:
+                        # 最后尝试用 latin1 编码（不会抛出异常）
+                        content = raw_content.decode('latin1')
+                        print('collab_load: 使用 latin1 编码作为最后手段')
+                except Exception as e:
+                    print(f'collab_load: 二进制读取失败: {e}')
+                    return jsonify({'success': False, 'error': f'无法读取文件，编码问题: {str(e)}'}), 500
+        
+        # 检查内容长度，如果太长则截断
+        max_length = 1024 * 1024  # 1MB
+        if len(content) > max_length:
+            content = content[:max_length] + f'\n\n... (文件过长，已截断，总长度: {len(content)} 字符)'
+            print(f'collab_load: 文件内容过长，已截断到 {max_length} 字符')
+        
+        print(f'collab_load: 文件内容长度: {len(content)} 字符')
         return jsonify({'success': True, 'content': content})
     except Exception as e:
+        print(f'collab_load: 异常: {e}')
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/collab/save', methods=['POST'])
+@token_required()
 def collab_save():
     data = request.get_json()
     file = data.get('file', '').strip()
@@ -889,8 +1188,8 @@ def collab_save():
     content = data.get('content', '')
     if not file:
         return jsonify({'success': False, 'error': '缺少文件名'}), 400
-    full_path = os.path.abspath(os.path.join(BASE_DIR, path, file))
-    if not full_path.startswith(os.path.abspath(BASE_DIR)):
+    full_path = os.path.abspath(os.path.join(BASE_DIRS[0], path, file))
+    if not full_path.startswith(os.path.abspath(BASE_DIRS[0])):
         return jsonify({'success': False, 'error': '非法路径'}), 403
     try:
         with open(full_path, 'w', encoding='utf-8') as f:
@@ -940,10 +1239,250 @@ def collab_validate():
 def collab_edit_page():
     return app.send_static_file('collab-edit.html')
 
+# ===== OnlyOffice API =====
+@app.route('/api/onlyoffice/documents', methods=['GET'])
+@token_required()
+def get_onlyoffice_documents():
+    """获取OnlyOffice文档列表"""
+    documents = onlyoffice_manager.get_user_documents(g.user['id'])
+    return jsonify(documents)
+
+@app.route('/api/onlyoffice/documents', methods=['POST'])
+@token_required()
+def create_onlyoffice_document():
+    """创建OnlyOffice文档"""
+    data = request.get_json()
+    file_name = data.get('file_name', '').strip()
+    file_type = data.get('file_type', '').strip()
+    file_path = data.get('file_path', '').strip()  # 新增：支持从现有文件路径创建
+    
+    if not file_name or not file_type:
+        return jsonify({'error': '文件名和类型不能为空'}), 400
+    
+    # 如果提供了文件路径，使用现有文件；否则创建新文件
+    if file_path:
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return jsonify({'error': '文件不存在'}), 404
+        
+        # 复制文件到 OnlyOffice 存储目录
+        import shutil
+        import time
+        timestamp = int(time.time())
+        new_file_path = f"{timestamp}_{file_name}"
+        onlyoffice_file_path = os.path.join(onlyoffice_manager.storage_path, new_file_path)
+        
+        try:
+            shutil.copy2(file_path, onlyoffice_file_path)
+        except Exception as e:
+            return jsonify({'error': f'复制文件失败: {str(e)}'}), 500
+        
+        # 创建文档记录
+        doc_id = onlyoffice_manager.create_document(file_name, new_file_path, file_type, g.user['id'])
+    else:
+        # 生成新文件路径
+        file_path = f"{int(time.time())}_{file_name}"
+        # 创建文档记录
+        doc_id = onlyoffice_manager.create_document(file_name, file_path, file_type, g.user['id'])
+    
+    if doc_id:
+        return jsonify({'success': True, 'document': {'id': doc_id}})
+    else:
+        return jsonify({'error': '创建文档失败'}), 500
+
+@app.route('/api/onlyoffice/upload', methods=['POST'])
+@token_required()
+def upload_onlyoffice_document():
+    """上传文档到OnlyOffice"""
+    if 'file' not in request.files:
+        return jsonify({"error": "没有检测到上传文件"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "未选择文件"}), 400
+    
+    success, result = onlyoffice_manager.upload_document(file, g.user['id'])
+    if not success:
+        return jsonify({"error": result}), 400
+    
+    # 当success为True时，result是一个字典
+    if isinstance(result, dict):
+        return jsonify({"success": True, "doc_id": result.get("doc_id"), "filename": result.get("filename")})
+    else:
+        return jsonify({"error": "上传结果格式错误"}), 500
+
+@app.route('/api/onlyoffice/formats', methods=['GET'])
+@token_required()
+def get_supported_formats():
+    """获取支持的文件格式"""
+    formats = onlyoffice_manager.get_supported_formats()
+    return jsonify(formats)
+
+@app.route('/api/onlyoffice/documents/<int:doc_id>/config', methods=['GET'])
+@token_required()
+def get_onlyoffice_config(doc_id):
+    """获取OnlyOffice编辑器配置"""
+    action = request.args.get('action', 'edit')
+    config = onlyoffice_manager.get_document_config(doc_id, g.user['id'], action)
+    
+    if config:
+        return jsonify(config)
+    else:
+        return jsonify({'error': '获取配置失败'}), 404
+
+@app.route('/api/onlyoffice/documents/<int:doc_id>/share', methods=['POST'])
+@token_required()
+def share_onlyoffice_document(doc_id):
+    """分享OnlyOffice文档"""
+    data = request.get_json()
+    username = data.get('username', '').strip()
+    permission_type = data.get('permission_type', 'read')
+    
+    if not username:
+        return jsonify({'error': '用户名不能为空'}), 400
+    
+    success, message = onlyoffice_manager.share_document(doc_id, username, permission_type)
+    
+    if success:
+        return jsonify({'success': True, 'message': message})
+    else:
+        return jsonify({'error': message}), 400
+
+@app.route('/api/onlyoffice/download/<int:doc_id>')
+@token_required()
+def download_onlyoffice_document(doc_id):
+    """下载OnlyOffice文档"""
+    db = get_db()
+    cur = db.execute("SELECT file_path FROM onlyoffice_documents WHERE id=?", (doc_id,))
+    doc = cur.fetchone()
+    
+    if not doc:
+        return jsonify({'error': '文档不存在'}), 404
+    
+    # 检查权限
+    if not onlyoffice_manager.check_document_permission(doc_id, g.user['id'], 'read'):
+        return jsonify({'error': '没有访问权限'}), 403
+    
+    file_path = os.path.join(onlyoffice_manager.storage_path, doc['file_path'])
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': '文件不存在'}), 404
+    
+    return send_file(file_path, as_attachment=True)
+
+@app.route('/api/onlyoffice/callback', methods=['POST'])
+def onlyoffice_callback():
+    """OnlyOffice回调处理"""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': '无效的请求数据'}), 400
+    
+    status = data.get('status')
+    url = data.get('url')
+    key = data.get('key')
+    
+    if status == 2:  # 文档已保存
+        # 从key中提取文档ID
+        # 这里需要根据你的key生成规则来解析
+        doc_id = int(key.split('_')[1]) if '_' in key else None
+        
+        if doc_id and url:
+            success = onlyoffice_manager.save_document(doc_id, url)
+            if success:
+                return jsonify({'error': 0})
+            else:
+                return jsonify({'error': 1})
+    
+    return jsonify({'error': 0})
+
+@app.route('/onlyoffice-edit.html')
+def onlyoffice_edit_page():
+    return app.send_static_file('onlyoffice-edit.html')
+
+# ===== 新协作系统 API =====
+@app.route('/api/collaboration/create', methods=['POST'])
+@token_required()
+def create_collaboration_session():
+    """创建协作会话"""
+    data = request.get_json()
+    file_path = data.get('file_path', '').strip()
+    file_name = data.get('file_name', '').strip()
+    expire_hours = data.get('expire_hours', 24)
+    
+    if not file_path or not file_name:
+        return jsonify({'error': '文件路径和文件名不能为空'}), 400
+    
+    result = collaboration_v2.create_collaboration_session(
+        file_path, file_name, g.user['id'], expire_hours
+    )
+    
+    if result:
+        return jsonify({'success': True, 'session': result})
+    else:
+        return jsonify({'error': '创建协作会话失败'}), 500
+
+@app.route('/api/collaboration/sessions', methods=['GET'])
+@token_required()
+def get_collaboration_sessions():
+    """获取用户的协作会话"""
+    created_sessions = collaboration_v2.get_user_sessions(g.user['id'])
+    participating_sessions = collaboration_v2.get_participating_sessions(g.user['id'])
+    
+    return jsonify({
+        'created': created_sessions,
+        'participating': participating_sessions
+    })
+
+@app.route('/api/collaboration/join', methods=['POST'])
+@token_required()
+def join_collaboration_session():
+    """加入协作会话"""
+    data = request.get_json()
+    session_token = data.get('session_token', '').strip()
+    
+    if not session_token:
+        return jsonify({'error': '会话令牌不能为空'}), 400
+    
+    success, message = collaboration_v2.join_session(
+        session_token, g.user['id'], g.user['username']
+    )
+    
+    if success:
+        return jsonify({'success': True, 'message': message})
+    else:
+        return jsonify({'error': message}), 400
+
+@app.route('/api/collaboration/session/<token>', methods=['GET'])
+def get_session_info(token):
+    """获取会话信息（无需登录）"""
+    session_info = collaboration_v2.get_session_info(token)
+    
+    if session_info:
+        return jsonify({'success': True, 'session': session_info})
+    else:
+        return jsonify({'error': '会话不存在或已过期'}), 404
+
+@app.route('/api/collaboration/close/<int:session_id>', methods=['POST'])
+@token_required()
+def close_collaboration_session(session_id):
+    """关闭协作会话"""
+    success, message = collaboration_v2.close_session(session_id, g.user['id'])
+    
+    if success:
+        return jsonify({'success': True, 'message': message})
+    else:
+        return jsonify({'error': message}), 400
+
+@app.route('/collaboration.html')
+def collaboration_page():
+    return app.send_static_file('collaboration.html')
+
 # ===== 主启动入口 =====
 if __name__ == '__main__':
     ngrok_url, ngrok_proc = start_ngrok()
     try:
         socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
     finally:
-        ngrok_proc.terminate()
+        if ngrok_proc:
+            ngrok_proc.terminate()

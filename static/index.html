@@ -71,12 +71,11 @@
         </div>
       </div>
 
-      <!-- 主按钮区（修改密码/用户管理/文档协作） -->
+      <!-- 主按钮区（修改密码/用户管理） -->
       <div class="mb-4 flex space-x-4">
         <button @click="showChangePasswordForm" class="bg-gray-500 text-white px-3 py-1 rounded">修改密码</button>
         <button v-if="user.is_admin" @click="showUserAdmin=true" class="bg-indigo-500 text-white px-3 py-1 rounded">用户管理</button>
         <button @click="ecDialogVisible = true" class="bg-gray-700 text-white px-4 py-2 rounded">打开纠删码配置</button>
-        <button @click="showDocumentCollaboration = true" class="bg-green-600 text-white px-4 py-2 rounded">文档协作</button>
       </div>
 
       <!-- 管理员用户管理界面 -->
@@ -184,122 +183,27 @@
 </div>
 
 
-      <!-- ========= 文档协作 ========== -->
-      <div v-if="showDocumentCollaboration" class="bg-white p-4 rounded shadow mt-8">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-semibold">文档协作</h2>
-          <div class="flex space-x-2">
-            <button @click="showCreateDocument = true" class="bg-blue-500 text-white px-3 py-1 rounded">新建文档</button>
-            <button @click="showDocumentCollaboration = false" class="bg-gray-500 text-white px-3 py-1 rounded">返回</button>
-          </div>
-        </div>
 
-        <!-- 文档列表 -->
-        <div v-if="!currentDocument" class="space-y-4">
-          <div v-for="doc in documents" :key="doc.id" 
-               class="border p-4 rounded hover:bg-gray-50 cursor-pointer"
-               @click="openDocument(doc)">
-            <div class="flex justify-between items-start">
-              <div>
-                <h3 class="font-semibold text-lg">{{ doc.title }}</h3>
-                <p class="text-sm text-gray-600">
-                  权限: {{ getPermissionText(doc.permission) }} | 
-                  更新: {{ formatDate(doc.updated_at) }}
-                </p>
-              </div>
-              <div class="flex space-x-2">
-                <button v-if="doc.permission === 'owner'" 
-                        @click.stop="showShareDialog(doc)"
-                        class="text-blue-600 hover:underline">分享</button>
-                <button @click.stop="showVersions(doc)"
-                        class="text-green-600 hover:underline">版本</button>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <!-- 文档编辑器 -->
-        <div v-if="currentDocument" class="space-y-4">
-          <div class="flex justify-between items-center">
-            <h3 class="text-lg font-semibold">{{ currentDocument.title }}</h3>
-            <div class="flex space-x-2">
-              <span class="text-sm text-gray-600">在线用户: {{ activeUsers.length }}</span>
-              <button @click="saveDocument" class="bg-green-500 text-white px-3 py-1 rounded">保存</button>
-              <button @click="closeDocument" class="bg-gray-500 text-white px-3 py-1 rounded">关闭</button>
-            </div>
-          </div>
 
-          <!-- 在线用户列表 -->
-          <div v-if="activeUsers.length > 0" class="bg-blue-50 p-2 rounded">
-            <span class="text-sm font-medium">在线用户:</span>
-            <span v-for="user in activeUsers" :key="user.id" 
-                  class="ml-2 text-sm text-blue-700">{{ user.username }}</span>
-          </div>
+      
 
-          <!-- 编辑器 -->
-          <div class="border rounded">
-            <textarea v-model="documentContent" 
-                      @input="onDocumentChange"
-                      class="w-full h-96 p-4 resize-none border-0 focus:outline-none"
-                      placeholder="开始编辑文档..."></textarea>
-          </div>
-
-          <!-- 保存状态 -->
-          <div v-if="saveStatus" class="text-sm" :class="saveStatus.includes('成功') ? 'text-green-600' : 'text-red-600'">
-            {{ saveStatus }}
-          </div>
-        </div>
-      </div>
-
-      <!-- 新建文档对话框 -->
-      <div v-if="showCreateDocument" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white p-6 rounded-lg w-96">
-          <h3 class="text-lg font-semibold mb-4">新建文档</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium mb-1">文档标题</label>
-              <input v-model="newDocument.title" type="text" class="w-full border px-3 py-2 rounded">
-            </div>
-            <div>
-              <label class="block text-sm font-medium mb-1">初始内容</label>
-              <textarea v-model="newDocument.content" class="w-full border px-3 py-2 rounded h-32"></textarea>
-            </div>
-            <div class="flex space-x-2">
-              <button @click="createDocument" class="bg-blue-500 text-white px-4 py-2 rounded">创建</button>
-              <button @click="showCreateDocument = false" class="bg-gray-500 text-white px-4 py-2 rounded">取消</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 分享文档对话框 -->
-      <div v-if="showShareDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white p-6 rounded-lg w-96">
-          <h3 class="text-lg font-semibold mb-4">分享文档</h3>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium mb-1">用户名</label>
-              <input v-model="shareForm.username" type="text" class="w-full border px-3 py-2 rounded">
-            </div>
-            <div>
-              <label class="block text-sm font-medium mb-1">权限</label>
-              <select v-model="shareForm.permission" class="w-full border px-3 py-2 rounded">
-                <option value="read">只读</option>
-                <option value="write">读写</option>
-                <option value="admin">管理员</option>
-              </select>
-            </div>
-            <div class="flex space-x-2">
-              <button @click="shareDocument" class="bg-blue-500 text-white px-4 py-2 rounded">分享</button>
-              <button @click="showShareDialog = false" class="bg-gray-500 text-white px-4 py-2 rounded">取消</button>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- ========= 文件管理 ========== -->
 <div class="bg-white p-4 rounded shadow mt-8">
   <h2 class="text-xl font-semibold mb-3">文件管理</h2>
+  
+  <!-- 盘符选择器 -->
+  <div class="mb-4 flex items-center space-x-2">
+    <label class="text-sm font-medium">当前盘符：</label>
+    <select v-model="currentDrive" @change="switchDrive(currentDrive)" class="border px-2 py-1 rounded">
+      <option v-for="drive in availableDrives" :key="drive.drive" :value="drive.drive">
+        {{ drive.drive }} ({{ formatSize(drive.total) }}, {{ drive.percent }}% 已用)
+      </option>
+    </select>
+    <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
+  </div>
+  
   <!-- 批量操作按钮 -->
   <div class="mb-4 flex items-center space-x-2">
     <button @click="selectAllFiles" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">全选</button>
@@ -310,7 +214,6 @@
   </div>
 
   <div class="mb-2 flex items-center space-x-2">
-  <span>当前路径：{{ currentPath }}</span>
   <button v-if="currentPath !== '/'" @click="goParent" class="text-blue-600">返回上一级</button>
 
   <!-- 新建文件夹（不要用div包，直接写input和button） -->
@@ -371,10 +274,6 @@
           <button v-if="!item.is_dir && isCollabEditable(item)"
             @click="openCollabEdit(item)"
             class="text-purple-600 underline ml-2">协作编辑</button>
-          <!-- 协作分享按钮 -->
-          <button v-if="!item.is_dir && isCollabEditable(item)"
-            @click="openCollabShareDialog(item)"
-            class="text-pink-600 underline ml-2">生成协作链接</button>
 
             <!-- 文件操作栏 -->
 <button v-if="!item.is_dir"

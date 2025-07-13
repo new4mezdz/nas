@@ -14,6 +14,8 @@ const app = Vue.createApp({
 
       // 文件管理
       currentPath: '/',
+      currentDrive: 'D:/', // 当前盘符
+      availableDrives: [], // 可用盘符列表
       fileList: [],
       newDirName: '',
       uploadTargetDir: '/',
@@ -77,24 +79,8 @@ searchTimer: null,
     selectedDisks: [],
     disks: [],  // 后端获取磁盘信息
 
-      // 文档协作
-      showDocumentCollaboration: false,
-      documents: [],
-      currentDocument: null,
-      documentContent: '',
-      activeUsers: [],
-      saveStatus: '',
-      socket: null,
-      
-      // 新建文档
-      showCreateDocument: false,
-      newDocument: { title: '', content: '' },
-      
-      // 分享文档
-      showShareDialog: false,
-      shareForm: { username: '', permission: 'read' },
-      sharingDocument: null,
 
+      
       // 协作分享弹窗
       showCollabShareDialog: false,
       collabShareFile: null,
@@ -102,6 +88,8 @@ searchTimer: null,
       collabShareExpire: 24,
       collabShareUrl: '',
       collabShareError: '',
+      
+
     }
   },
 computed: {
@@ -215,7 +203,7 @@ computed: {
         return;
       }
       if (this.pwForm.new_password !== this.pwForm.confirm) {
-        this.pwMsg = "两次输入的新密码不一致";
+        this.pwMsg = "新密码确认不一致";
         return;
       }
       try {
@@ -223,17 +211,26 @@ computed: {
           old_password: this.pwForm.old_password,
           new_password: this.pwForm.new_password
         });
-        if (res.data && res.data.success) {
-          this.pwMsg = "修改成功，请重新登录";
-          setTimeout(() => {
-            this.showChangePw = false;
-            this.logout();
-          }, 1200);
-        } else {
-          this.pwMsg = res.data.error || "修改失败";
-        }
-      } catch (e) {
-        this.pwMsg = e.response?.data?.error || "修改失败";
+        this.pwMsg = "✅ 密码修改成功";
+        setTimeout(() => {
+          this.showChangePw = false;
+          this.pwMsg = '';
+        }, 1500);
+      } catch (err) {
+        this.pwMsg = err.response?.data?.error || "修改失败";
+      }
+    },
+
+    // 更新用户当前目录
+    async updateCurrentDirectory(path) {
+      try {
+        // 将路径转换为相对路径（去掉开头的/）
+        const relativePath = path.startsWith('/') ? path.substring(1) : path;
+        await axios.post('/api/current-directory', {
+          directory: relativePath
+        });
+      } catch (err) {
+        console.error('更新当前目录失败:', err);
       }
     },
 
@@ -355,14 +352,21 @@ computed: {
 
   loadFileList(path, callback) {
     const token = localStorage.getItem("token");
-    fetch(`/api/list?path=${encodeURIComponent(path)}`, {
+    // 添加盘符前缀
+    const fullPath = this.currentDrive + path.replace(/^\//, '');
+    
+    fetch(`/api/list?path=${encodeURIComponent(fullPath)}`, {
       headers: { "Authorization": `Bearer ${token}` }
     })
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          this.fileList = data.items; // 假设你已经绑定了这个 fileList
+          this.fileList = data.items;
           this.currentPath = path;
+          
+          // 更新用户当前目录到后端
+          this.updateCurrentDirectory(path);
+          
           if (callback) callback();
         } else {
           alert("❌ 加载失败：" + (data.error || ""));
@@ -673,9 +677,9 @@ isDocx(file) {
 previewFile(file) {
   this.previewingFile = file;
 
-  // 1. 拼接后端 API
-  const filePath = this.currentPath.replace(/\/$/, '') + '/' + file.name;
-  const baseApi = `/api/preview?path=${encodeURIComponent(filePath)}`;
+  // 1. 构建完整路径：当前盘符 + 当前路径 + 文件名
+  const fullPath = this.currentDrive + this.currentPath.replace(/^\//, '') + '/' + file.name;
+  const baseApi = `/api/preview?path=${encodeURIComponent(fullPath)}`;
   const token = localStorage.getItem('token');
 
   // 2. 文本类文件：用 fetchTextContent 读取纯文本
@@ -694,7 +698,20 @@ previewFile(file) {
     return;
   }
 
-  // 4. 其他图片 / 音频 / 视频 → 使用 blob 显示 + 带 token 的 header
+  // 4. DOCX 文件：使用本地 OnlyOffice 预览
+  if (this.isDocx(file)) {
+    // 先创建 OnlyOffice 文档记录，然后跳转到编辑页面
+    this.createOnlyOfficeDocument(fullPath, file.name).then(docId => {
+      const onlyofficeUrl = `/onlyoffice-edit.html?doc_id=${docId}&mode=view`;
+      window.open(onlyofficeUrl, '_blank');
+    }).catch(err => {
+      alert("创建 OnlyOffice 文档失败：" + (err.response?.data?.error || '网络错误'));
+      console.error("❌ OnlyOffice 创建失败:", err);
+    });
+    return;
+  }
+
+  // 5. 其他图片 / 音频 / 视频 → 使用 blob 显示 + 带 token 的 header
   axios.get(baseApi, {
     responseType: 'blob',
     headers: {
@@ -766,10 +783,30 @@ previewFile(file) {
       await Promise.all([
         this.fetchSystemInfo(),
         this.fetchDiskInfo(),
-        this.loadFileList("/"),
-        this.loadDocuments()
+        this.fetchAvailableDrives(),
+        this.loadFileList("/")
       ]);
       this.startSysTimer();
+    },
+
+    // 获取可用盘符
+    async fetchAvailableDrives() {
+      try {
+        const res = await axios.get('/api/drives');
+        this.availableDrives = res.data;
+        if (this.availableDrives.length > 0) {
+          this.currentDrive = this.availableDrives[0].drive;
+        }
+      } catch (err) {
+        console.error('获取盘符失败:', err);
+      }
+    },
+
+    // 切换盘符
+    switchDrive(drive) {
+      this.currentDrive = drive;
+      this.currentPath = '/';
+      this.loadFileList('/');
     },
 
     // Samba 重启
@@ -795,205 +832,156 @@ previewFile(file) {
     },
 
     // ========== 文档协作 ==========
-    async loadDocuments() {
-      try {
-        const res = await axios.get('/api/documents');
-        this.documents = res.data;
-      } catch (err) {
-        console.error('加载文档列表失败:', err);
-      }
-    },
 
-    async createDocument() {
-      if (!this.newDocument.title.trim()) {
-        alert('请输入文档标题');
-        return;
-      }
-      
+    // ========== OnlyOffice ==========
+    async createOnlyOfficeDocument(filePath, fileName) {
       try {
-        const res = await axios.post('/api/documents', this.newDocument);
-        if (res.data.success) {
-          this.showCreateDocument = false;
-          this.newDocument = { title: '', content: '' };
-          await this.loadDocuments();
-          // 自动打开新创建的文档
-          const newDoc = this.documents.find(d => d.id === res.data.document_id);
-          if (newDoc) {
-            this.openDocument(newDoc);
-          }
-        }
-      } catch (err) {
-        alert(err.response?.data?.error || '创建文档失败');
-      }
-    },
-
-    async openDocument(doc) {
-      try {
-        const res = await axios.get(`/api/documents/${doc.id}`);
-        this.currentDocument = res.data.document;
-        this.documentContent = this.currentDocument.content;
-        this.activeUsers = [];
+        const response = await axios.post('/api/onlyoffice/documents', {
+          file_name: fileName,
+          file_path: filePath,
+          file_type: '.docx'
+        });
         
-        // 连接WebSocket
-        this.connectToDocument(doc.id);
-        
-        // 加载文档内容
-        this.loadDocumentContent();
-      } catch (err) {
-        alert(err.response?.data?.error || '打开文档失败');
-      }
-    },
-
-    connectToDocument(docId) {
-      // 断开之前的连接
-      if (this.socket) {
-        this.socket.disconnect();
-      }
-
-      // 创建新的WebSocket连接
-      this.socket = io();
-      
-      this.socket.on('connect', () => {
-        console.log('WebSocket连接成功');
-        this.socket.emit('join_document', {
-          token: localStorage.getItem('token'),
-          document_id: docId
-        });
-      });
-
-      this.socket.on('document_state', (data) => {
-        this.documentContent = data.content;
-        this.activeUsers = data.active_users;
-      });
-
-      this.socket.on('document_updated', (data) => {
-        // 处理其他用户的编辑
-        if (data.user_id !== this.user.id) {
-          this.documentContent = data.content;
-          this.activeUsers = data.active_users || this.activeUsers;
+        if (response.data.success) {
+          return response.data.document.id;
+        } else {
+          throw new Error(response.data.error || '创建文档失败');
         }
-      });
-
-      this.socket.on('user_joined', (data) => {
-        this.activeUsers.push(data);
-      });
-
-      this.socket.on('user_left', (data) => {
-        this.activeUsers = this.activeUsers.filter(u => u.user_id !== data.user_id);
-      });
-
-      this.socket.on('document_saved', (data) => {
-        this.saveStatus = `文档已由 ${data.username} 保存`;
-        setTimeout(() => {
-          this.saveStatus = '';
-        }, 3000);
-      });
-
-      this.socket.on('error', (data) => {
-        alert(data.message);
-      });
-    },
-
-    onDocumentChange() {
-      // 发送文档变更到服务器
-      if (this.socket && this.currentDocument) {
-        this.socket.emit('document_change', {
-          token: localStorage.getItem('token'),
-          document_id: this.currentDocument.id,
-          content: this.documentContent,
-          change_type: 'update'
-        });
+      } catch (error) {
+        console.error('创建 OnlyOffice 文档失败:', error);
+        throw error;
       }
     },
 
-    async saveDocument() {
-      if (!this.currentDocument) return;
-      
-      try {
-        this.socket.emit('save_document', {
-          token: localStorage.getItem('token'),
-          document_id: this.currentDocument.id,
-          content: this.documentContent,
-          description: '手动保存'
-        });
-      } catch (err) {
-        this.saveStatus = '保存失败';
-      }
-    },
-
-    closeDocument() {
-      if (this.socket) {
-        this.socket.emit('leave_document', {
-          document_id: this.currentDocument.id
-        });
-        this.socket.disconnect();
-        this.socket = null;
-      }
-      
-      this.currentDocument = null;
-      this.documentContent = '';
-      this.activeUsers = [];
-      this.saveStatus = '';
-    },
-
-    showShareDialog(doc) {
-      this.sharingDocument = doc;
-      this.shareForm = { username: '', permission: 'read' };
-      this.showShareDialog = true;
-    },
-
-    async shareDocument() {
-      if (!this.shareForm.username.trim()) {
-        alert('请输入用户名');
-        return;
-      }
-      
-      try {
-        const res = await axios.post(`/api/documents/${this.sharingDocument.id}/permissions`, this.shareForm);
-        if (res.data.success) {
-          this.showShareDialog = false;
-          alert('分享成功');
-        }
-      } catch (err) {
-        alert(err.response?.data?.error || '分享失败');
-      }
-    },
-
-    getPermissionText(permission) {
-      const texts = {
-        'owner': '所有者',
-        'read': '只读',
-        'write': '读写',
-        'admin': '管理员'
-      };
-      return texts[permission] || permission;
-    },
-
-    formatDate(dateStr) {
-      if (!dateStr) return '';
-      const date = new Date(dateStr);
-      return date.toLocaleString('zh-CN');
-    },
-
-    async showVersions(doc) {
-      try {
-        const res = await axios.get(`/api/documents/${doc.id}/versions`);
-        // 这里可以显示版本历史对话框
-        console.log('版本历史:', res.data);
-      } catch (err) {
-        console.error('获取版本历史失败:', err);
-      }
-    },
     isCollabEditable(item) {
       // 支持的文档类型扩展名
-      const docExts = ['.txt', '.md', '.json', '.csv', '.docx', '.xlsx'];
-      return docExts.some(ext => item.name.toLowerCase().endsWith(ext));
+      const textExts = ['.txt', '.md', '.json', '.csv', '.py', '.js', '.html', '.css', '.log'];
+      const officeExts = ['.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt'];
+      
+      const fileName = item.name.toLowerCase();
+      return textExts.some(ext => fileName.endsWith(ext)) || 
+             officeExts.some(ext => fileName.endsWith(ext));
     },
-    openCollabEdit(item) {
-      // 跳转到协作编辑页面，带文件名参数
-      const file = encodeURIComponent(item.name);
-      const path = encodeURIComponent(this.currentPath);
-      window.open(`/collab-edit.html?file=${file}&path=${path}`, '_blank');
+    async openCollabEdit(item) {
+      try {
+        const fileName = item.name.toLowerCase();
+        const textExts = ['.txt', '.md', '.json', '.csv', '.py', '.js', '.html', '.css', '.log'];
+        const officeExts = ['.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt'];
+        
+        // 构建完整路径：当前盘符 + 当前路径 + 文件名
+        const fullPath = this.currentDrive + this.currentPath.replace(/^\//, '') + '/' + item.name;
+        console.log('创建协作会话，文件路径:', fullPath);
+        
+        // 检查文件类型
+        if (officeExts.some(ext => fileName.endsWith(ext))) {
+          // Office文档：使用OnlyOffice协作编辑
+          await this.openOfficeCollabEdit(item, fullPath);
+        } else if (textExts.some(ext => fileName.endsWith(ext))) {
+          // 文本文件：使用文本协作编辑
+          await this.openTextCollabEdit(item, fullPath);
+        } else {
+          alert('不支持的文件类型');
+        }
+      } catch (error) {
+        console.error('创建协作会话失败:', error);
+        alert('创建协作会话失败: ' + (error.response?.data?.error || error.message));
+      }
+    },
+    
+    // 打开Office文档协作编辑
+    async openOfficeCollabEdit(item, fullPath) {
+      try {
+        // 首先尝试创建OnlyOffice文档记录
+        const response = await axios.post('/api/onlyoffice/documents', {
+          file_name: item.name,
+          file_path: fullPath,
+          file_type: '.' + item.name.split('.').pop()
+        });
+        
+        if (response.data.success) {
+          const docId = response.data.document.id;
+          const onlyofficeUrl = `/onlyoffice-edit.html?doc_id=${docId}&mode=edit`;
+          
+          // 在新窗口中打开OnlyOffice编辑器
+          window.open(onlyofficeUrl, '_blank');
+        } else {
+          // OnlyOffice服务不可用，降级为下载模式
+          this.showOfficeDownloadOption(item, fullPath);
+        }
+      } catch (error) {
+        console.error('打开 OnlyOffice 编辑器失败:', error);
+        // OnlyOffice服务不可用，降级为下载模式
+        this.showOfficeDownloadOption(item, fullPath);
+      }
+    },
+    
+    // 显示Office文档下载选项
+    showOfficeDownloadOption(item, fullPath) {
+      const message = `OnlyOffice 编辑器暂时不可用。\n\n文件：${item.name}\n\n您可以选择：\n1. 下载文件到本地编辑\n2. 稍后重试\n\n是否现在下载文件？`;
+      
+      if (confirm(message)) {
+        this.downloadOfficeFile(item, fullPath);
+      }
+    },
+    
+    // 下载Office文件
+    async downloadOfficeFile(item, fullPath) {
+      try {
+        const response = await fetch(`/api/download?path=${encodeURIComponent(fullPath)}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = item.name;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          
+          alert('文件下载成功！您可以使用本地Office软件进行编辑。');
+        } else {
+          throw new Error(`下载失败: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('下载文件失败:', error);
+        alert('下载文件失败: ' + error.message);
+      }
+    },
+    
+    // 打开文本文件协作编辑
+    async openTextCollabEdit(item, fullPath) {
+      try {
+        const response = await axios.post('/api/collaboration/create', {
+          file_path: fullPath,
+          file_name: item.name,
+          expire_hours: 24
+        });
+        
+        if (response.data.success) {
+          const session = response.data.session;
+          const shareUrl = window.location.origin + session.share_url;
+          
+          // 显示分享链接
+          if (confirm(`协作会话创建成功！\n\n分享链接：${shareUrl}\n\n是否复制链接到剪贴板？`)) {
+            navigator.clipboard.writeText(shareUrl);
+            alert('链接已复制到剪贴板！');
+          }
+          
+          // 直接打开协作页面
+          window.open(session.share_url, '_blank');
+        } else {
+          alert('创建协作会话失败: ' + response.data.error);
+        }
+      } catch (error) {
+        console.error('创建文本协作会话失败:', error);
+        alert('创建文本协作会话失败: ' + (error.response?.data?.error || error.message));
+      }
     },
     // 协作分享弹窗
     openCollabShareDialog(item) {
@@ -1004,6 +992,8 @@ previewFile(file) {
       this.collabShareError = '';
       this.showCollabShareDialog = true;
     },
+    
+
     async submitCollabShare() {
       try {
         const res = await axios.post('/api/collab/share', {
@@ -1026,9 +1016,7 @@ previewFile(file) {
     showUserAdmin(val) {
       if (val) this.loadUserList();
     },
-    showDocumentCollaboration(val) {
-      if (val) this.loadDocuments();
-    }
+
   },
   mounted() {
     const token = localStorage.getItem('token');

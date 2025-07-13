@@ -96,6 +96,81 @@ class CollaborationManager:
             print(f"Client disconnected: {request.sid}")
             self.handle_user_disconnect(request.sid)
         
+        @self.socketio.on('join_collaboration')
+        def handle_join_collaboration(data):
+            """用户加入协作会话"""
+            try:
+                session_token = data.get('session_token')
+                username = data.get('username')
+                
+                if not session_token or not username:
+                    emit('error', {'message': '缺少必要参数'})
+                    return
+                
+                # 加入协作房间
+                room = f"collab_{session_token}"
+                join_room(room)
+                
+                # 记录用户会话
+                self.user_sessions[request.sid] = {
+                    'username': username,
+                    'session_token': session_token,
+                    'room': room
+                }
+                
+                # 通知其他用户
+                emit('user_joined', {
+                    'username': username
+                }, room=room, include_self=False)
+                
+                print(f"User {username} joined collaboration session {session_token}")
+                
+            except Exception as e:
+                print(f"Error in join_collaboration: {e}")
+                emit('error', {'message': '加入协作失败'})
+        
+        @self.socketio.on('content_change')
+        def handle_content_change(data):
+            """处理内容变更"""
+            try:
+                session_token = data.get('session_token')
+                content = data.get('content')
+                username = data.get('username')
+                
+                if not session_token or not content:
+                    return
+                
+                # 广播内容变更给其他用户
+                room = f"collab_{session_token}"
+                emit('content_change', {
+                    'content': content,
+                    'username': username
+                }, room=room, include_self=False)
+                
+            except Exception as e:
+                print(f"Error in content_change: {e}")
+        
+        @self.socketio.on('cursor_move')
+        def handle_cursor_move(data):
+            """处理光标移动"""
+            try:
+                session_token = data.get('session_token')
+                position = data.get('position')
+                username = data.get('username')
+                
+                if not session_token or position is None:
+                    return
+                
+                # 广播光标位置给其他用户
+                room = f"collab_{session_token}"
+                emit('cursor_move', {
+                    'position': position,
+                    'username': username
+                }, room=room, include_self=False)
+                
+            except Exception as e:
+                print(f"Error in cursor_move: {e}")
+        
         @self.socketio.on('join_document')
         def handle_join_document(data):
             """用户加入文档编辑"""

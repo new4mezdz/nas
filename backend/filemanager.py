@@ -1,6 +1,6 @@
 import os
 from flask import Blueprint, request, jsonify, send_file
-from common import token_required, BASE_DIR
+from common import token_required, BASE_DIRS, get_base_dir_for_path
 import shutil
 from datetime import datetime
 
@@ -18,7 +18,10 @@ def safe_join(base, *paths):
 def list_files():
     req_path = request.args.get('path', '/')
     try:
-        abs_path = safe_join(BASE_DIR, req_path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(req_path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, req_path.lstrip("/\\"))
     except Exception:
         return jsonify({"error": "路径非法"}), 400
     if not os.path.exists(abs_path):
@@ -47,7 +50,10 @@ def download_file():
     if not req_path:
         return jsonify({"error": "未指定文件"}), 400
     try:
-        abs_path = safe_join(BASE_DIR, req_path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(req_path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, req_path.lstrip("/\\"))
     except Exception:
         return jsonify({"error": "路径非法"}), 400
     if not os.path.isfile(abs_path):
@@ -59,7 +65,10 @@ def download_file():
 def upload_file():
     req_path = request.form.get('path', '/')
     try:
-        abs_path = safe_join(BASE_DIR, req_path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(req_path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, req_path.lstrip("/\\"))
     except Exception:
         return jsonify({"error": "路径非法"}), 400
     if not os.path.isdir(abs_path):
@@ -84,7 +93,10 @@ def make_dir():
     if not new_dir:
         return jsonify({"error": "目录名不能为空"}), 400
     try:
-        parent_abs = safe_join(BASE_DIR, parent.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(parent)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        parent_abs = safe_join(base_dir, parent.lstrip("/\\"))
         if not os.path.isdir(parent_abs):
             return jsonify({"error": "目标父目录不存在"}), 400
         abs_path = os.path.join(parent_abs, new_dir)
@@ -103,7 +115,10 @@ def delete_entry():
     if not path:
         return jsonify({"error": "未指定路径"}), 400
     try:
-        abs_path = safe_join(BASE_DIR, path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, path.lstrip("/\\"))
         if not os.path.exists(abs_path):
             return jsonify({"error": "文件不存在"}), 404
         if os.path.isdir(abs_path):
@@ -124,7 +139,10 @@ def rename_entry():
     if not path or not new_name:
         return jsonify({"error": "参数缺失"}), 400
     try:
-        abs_path = safe_join(BASE_DIR, path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, path.lstrip("/\\"))
         if not os.path.exists(abs_path):
             return jsonify({"error": "文件不存在"}), 404
         new_abs = os.path.join(os.path.dirname(abs_path), new_name)
@@ -132,17 +150,7 @@ def rename_entry():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-@file_bp.route('/api/preview', methods=['GET'])
-@token_required()
-def preview_file():
-    path = request.args.get('path')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, path.lstrip('/')))
-    if not os.path.exists(abs_path):
-        return jsonify({'error': '文件不存在'}), 404
-    # 自动推断 mime
-    import mimetypes
-    mime = mimetypes.guess_type(abs_path)[0] or 'application/octet-stream'
-    return send_file(abs_path, mimetype=mime)
+
 
 
 
@@ -154,7 +162,10 @@ def edit_file():
         return jsonify({"error": "未指定文件路径"}), 400
 
     try:
-        abs_path = safe_join(BASE_DIR, req_path.lstrip("/\\"))
+        base_dir = get_base_dir_for_path(req_path)
+        if not base_dir:
+            return jsonify({"error": "路径不在允许的目录中"}), 400
+        abs_path = safe_join(base_dir, req_path.lstrip("/\\"))
     except Exception:
         return jsonify({"error": "路径非法"}), 400
 

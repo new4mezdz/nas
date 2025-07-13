@@ -6,7 +6,49 @@ import jwt
 import subprocess
 # ========= ✅ 不再依赖 app.py =========
 DATABASE = os.path.join(os.path.dirname(__file__), 'nas.db')
-BASE_DIR = r"D:\nas_data"
+
+# 支持多个盘符
+BASE_DIRS = ['D:/', 'E:/', 'F:/', 'G:/', 'H:/', 'I:/', 'J:/', 'K:/', 'L:/', 'M:/', 'N:/', 'O:/', 'P:/', 'Q:/', 'R:/', 'S:/', 'T:/', 'U:/', 'V:/', 'W:/', 'X:/', 'Y:/', 'Z:/']
+
+def get_available_drives():
+    """获取系统中可用的盘符"""
+    available_drives = []
+    for drive in BASE_DIRS:
+        if os.path.exists(drive):
+            available_drives.append(drive)
+    return available_drives
+
+def is_path_allowed(path):
+    """检查路径是否在允许的盘符范围内"""
+    # 标准化路径格式，处理不同的斜杠
+    normalized_path = os.path.normpath(path)
+    abs_path = os.path.abspath(normalized_path)
+    
+    for base_dir in BASE_DIRS:
+        normalized_base = os.path.normpath(base_dir)
+        abs_base = os.path.abspath(normalized_base)
+        
+        # 检查路径是否以base_dir开头
+        if abs_path.startswith(abs_base):
+            return True
+    
+    return False
+
+def get_base_dir_for_path(path):
+    """根据路径获取对应的BASE_DIR"""
+    # 标准化路径格式，处理不同的斜杠
+    normalized_path = os.path.normpath(path)
+    abs_path = os.path.abspath(normalized_path)
+    
+    for base_dir in BASE_DIRS:
+        normalized_base = os.path.normpath(base_dir)
+        abs_base = os.path.abspath(normalized_base)
+        
+        # 检查路径是否以base_dir开头
+        if abs_path.startswith(abs_base):
+            return base_dir
+    
+    return None
 
 def convert(src_path, pdf_path):
     output_dir = os.path.dirname(pdf_path)

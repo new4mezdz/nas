@@ -1,4 +1,3 @@
-const Y = window.Y;
 // 解析URL参数
 function getQueryParam(name) {
   const url = new URL(window.location.href);
@@ -13,25 +12,52 @@ const pwFromUrl = getQueryParam('pw');
 let quill = null; // 全局变量
 
 function loadFileContentAndStartCollab(file, path, token) {
+  console.log('开始加载文件内容:', file, path);
   fetch(`/api/collab/load?file=${encodeURIComponent(file)}&path=${encodeURIComponent(path)}`)
-    .then(res => res.json())
-    .then(data => {
-      let initialContent = '';
-      if (data.success && data.content) {
-        initialContent = data.content;
+    .then(res => {
+      console.log('API响应状态:', res.status, res.statusText);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
-      startCollab(file, path, token, initialContent);
+      return res.text(); // 先获取文本内容
+    })
+    .then(text => {
+      console.log('API响应文本长度:', text.length);
+      console.log('API响应文本前100字符:', text.substring(0, 100));
+      
+      try {
+        const data = JSON.parse(text);
+        console.log('JSON解析成功:', data);
+        
+        let initialContent = '';
+        if (data.success && data.content) {
+          initialContent = data.content;
+          console.log('文件内容长度:', initialContent.length);
+        } else {
+          console.error('API返回失败:', data.error);
+          alert('加载文件失败: ' + (data.error || '未知错误'));
+          return;
+        }
+        startCollab(file, path, token, initialContent);
+      } catch (jsonError) {
+        console.error('JSON解析失败:', jsonError);
+        console.error('响应文本:', text);
+        alert('解析文件内容失败: ' + jsonError.message);
+      }
+    })
+    .catch(error => {
+      console.error('加载文件失败:', error);
+      alert('加载文件失败: ' + error.message);
     });
 }
 
 function startCollab(file, path, token, initialContent) {
   document.getElementById('fileName').textContent = decodeURIComponent(file || '');
-  const roomName = token || encodeURIComponent((path || '') + '/' + (file || ''));
-  // 1. 创建Yjs文档
-  theYdoc = new Y.Doc();
-  // 2. 连接WebSocket服务器（roomName为协作房间名/文档ID）
-  const provider = new window.Y.WebsocketProvider('ws://localhost:1234', roomName, theYdoc);
-  // 3. 绑定到Quill
+  
+  // 使用纯Quill编辑器，不依赖Yjs和WebSocket
+  console.log('使用本地编辑模式');
+  
+  // 初始化Quill编辑器
   quill = new Quill('#editor', {
     theme: 'snow',
     modules: { toolbar: [
@@ -44,20 +70,14 @@ function startCollab(file, path, token, initialContent) {
     ] }
   });
   window.quill = quill;
-  // 4. 只在本地初始化时设置内容（避免协作覆盖）
+  
+  // 设置初始内容
   if (initialContent) {
     quill.setContents(quill.clipboard.convert(initialContent));
   }
-  // 5. 绑定协作
-  const ytext = theYdoc.getText('quill');
-  const binding = new window.Y.QuillBinding(ytext, quill, provider.awareness);
-
-  // 在线用户显示
-  document.getElementById('userCount').textContent = 1;
-  provider.awareness.on('change', () => {
-    const states = Array.from(provider.awareness.getStates().values());
-    document.getElementById('userCount').textContent = states.length;
-  });
+  
+  // 本地编辑模式
+  document.getElementById('userCount').textContent = '本地编辑';
 
   // 状态栏
   const statusBar = document.getElementById('statusBar');

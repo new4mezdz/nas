@@ -2,7 +2,7 @@ import platform, psutil, os
 import shutil
 import time
 import json
-from common import BASE_DIR  # 确保你有这个
+from common import BASE_DIRS  # 确保你有这个
 SIM_DISK_COUNT = 6
 
 def get_sys_info():
@@ -26,7 +26,7 @@ def get_disk_info():
     ec_scheme = ''
 
     # 加载纠删码配置
-    config_path = os.path.join(BASE_DIR, 'ec_config.json')
+    config_path = os.path.join(BASE_DIRS[0], 'ec_config.json')
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
@@ -38,9 +38,9 @@ def get_disk_info():
 
     # ========== 添加模拟盘（推荐） ==========
     for i in range(1, SIM_DISK_COUNT + 1):
-        sim_path = os.path.join(BASE_DIR, f"sim_disk{i}")
+        sim_path = os.path.join(BASE_DIRS[0], f"sim_disk{i}")
         os.makedirs(sim_path, exist_ok=True)
-        usage = shutil.disk_usage(BASE_DIR)  # 使用主盘容量信息
+        usage = shutil.disk_usage(BASE_DIRS[0])  # 使用主盘容量信息
         disks.append({
             'mount': sim_path,
             'fstype': '-',

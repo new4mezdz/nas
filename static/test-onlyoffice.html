@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OnlyOffice API 测试</title>
+    <script src="https://cdn.jsdelivr.net/npm/@onlyoffice/document-editor@1.5.0/dist/api.js"></script>
+</head>
+<body>
+    <h1>OnlyOffice API 测试</h1>
+    <div id="status">正在检查 API...</div>
+    
+    <script>
+        setTimeout(() => {
+            if (typeof DocsAPI !== 'undefined') {
+                document.getElementById('status').innerHTML = '✅ OnlyOffice API 加载成功！';
+                console.log('DocsAPI:', DocsAPI);
+            } else {
+                document.getElementById('status').innerHTML = '❌ OnlyOffice API 加载失败！';
+                console.error('DocsAPI 未定义');
+            }
+        }, 2000);
+    </script>
+</body>
+</html> 

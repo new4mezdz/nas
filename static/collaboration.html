@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档协作 - NAS</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 18px;
+        }
+        
+        .header .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .toolbar {
+            background: white;
+            padding: 8px 20px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+        
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .btn:hover {
+            opacity: 0.8;
+        }
+        
+        .session-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-left: auto;
+        }
+        
+        .status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status.online {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .status.offline {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .main-content {
+            display: flex;
+            height: calc(100vh - 100px);
+        }
+        
+        .editor-panel {
+            flex: 1;
+            background: white;
+            margin: 8px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sidebar {
+            width: 280px;
+            background: white;
+            margin: 8px 8px 8px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sidebar-section {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .sidebar-section h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        
+        .participant-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .participant-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .participant-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #3498db;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .participant-name {
+            flex: 1;
+            font-size: 12px;
+        }
+        
+        .online-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #27ae60;
+        }
+        
+        .offline-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #bdc3c7;
+        }
+        
+        .editor-container {
+            flex: 1;
+            padding: 15px;
+            overflow: auto;
+        }
+        
+        .editor {
+            width: 100%;
+            height: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            line-height: 1.6;
+            resize: none;
+            outline: none;
+        }
+        
+        .csv-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
+        
+        .csv-table th,
+        .csv-table td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        
+        .csv-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .csv-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        
+        .csv-table tr:hover {
+            background-color: #e9ecef;
+        }
+        
+        .table-container {
+            max-height: 100%;
+            overflow: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .view-mode-toggle {
+            margin-bottom: 10px;
+        }
+        
+        .view-mode-toggle button {
+            margin-right: 10px;
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            background: white;
+            cursor: pointer;
+        }
+        
+        .view-mode-toggle button.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 400px;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: black;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        
+        .error {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        .success {
+            color: #27ae60;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        .share-link {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            margin-top: 10px;
+        }
+        
+        .copy-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .copy-btn:hover {
+            background: #5a6268;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📝 文档协作</h1>
+        <div class="user-info">
+            <span id="currentUser"></span>
+            <span class="status" id="connectionStatus">离线</span>
+            <button class="btn btn-secondary" onclick="goBack()">返回</button>
+        </div>
+    </div>
+    
+    <div class="toolbar">
+        <button class="btn btn-primary" onclick="saveDocument()">保存</button>
+        <button class="btn btn-secondary" onclick="showShareDialog()">分享链接</button>
+        <button class="btn btn-secondary" onclick="downloadDocument()">下载</button>
+        
+        <div class="session-info">
+            <span id="fileName">未加载文档</span>
+            <span id="participantCount">参与者: 0</span>
+        </div>
+    </div>
+    
+    <div class="main-content">
+        <div class="editor-panel">
+            <div class="editor-container">
+                <!-- 视图切换按钮 -->
+                <div class="view-mode-toggle" id="viewModeToggle" style="display: none;">
+                    <button id="textModeBtn" onclick="switchToTextMode()">文本模式</button>
+                    <button id="tableModeBtn" onclick="switchToTableMode()">表格模式</button>
+                </div>
+                
+                <!-- 文本编辑器 -->
+                <textarea id="editor" placeholder="文档内容将在这里显示..." disabled></textarea>
+                
+                <!-- 表格显示 -->
+                <div id="tableContainer" class="table-container" style="display: none;">
+                    <table id="csvTable" class="csv-table"></table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <h3>📋 会话信息</h3>
+                <div id="sessionInfo">
+                    <p><strong>文档:</strong> <span id="docName">-</span></p>
+                    <p><strong>创建者:</strong> <span id="creatorName">-</span></p>
+                    <p><strong>创建时间:</strong> <span id="createdTime">-</span></p>
+                    <p><strong>过期时间:</strong> <span id="expireTime">-</span></p>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>👥 参与者 (<span id="participantCount2">0</span>)</h3>
+                <div class="participant-list" id="participantList">
+                    <p style="color: #666; font-size: 12px;">暂无参与者</p>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>💬 实时消息</h3>
+                <div id="messageLog" style="max-height: 150px; overflow-y: auto; font-size: 12px;">
+                    <p style="color: #666;">等待连接...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 分享对话框 -->
+    <div id="shareModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>分享协作链接</h3>
+                <span class="close" onclick="closeShareDialog()">&times;</span>
+            </div>
+            <div class="form-group">
+                <label>分享链接:</label>
+                <div class="share-link" id="shareLink">生成中...</div>
+                <button class="copy-btn" onclick="copyShareLink()">复制链接</button>
+            </div>
+            <div class="form-group">
+                <label>过期时间:</label>
+                <select id="expireHours">
+                    <option value="1">1小时</option>
+                    <option value="6">6小时</option>
+                    <option value="24" selected>24小时</option>
+                    <option value="72">3天</option>
+                    <option value="168">7天</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" onclick="updateShareLink()">更新链接</button>
+                <button class="btn btn-secondary" onclick="closeShareDialog()">关闭</button>
+            </div>
+            <div id="shareError" class="error"></div>
+            <div id="shareSuccess" class="success"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let sessionToken = null;
+        let sessionInfo = null;
+        let currentUser = null;
+        let isConnected = false;
+        let currentViewMode = 'text'; // 'text' 或 'table'
+        let csvData = null; // 存储解析后的CSV数据
+        
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 从URL参数获取会话令牌
+            const urlParams = new URLSearchParams(window.location.search);
+            sessionToken = urlParams.get('token');
+            
+            if (!sessionToken) {
+                alert('缺少会话令牌');
+                window.location.href = '/';
+                return;
+            }
+            
+            // 检查登录状态
+            const token = localStorage.getItem('token');
+            if (!token) {
+                alert('请先登录');
+                window.location.href = '/';
+                return;
+            }
+            
+            // 显示当前用户
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            currentUser = user;
+            document.getElementById('currentUser').textContent = user.username || '未知用户';
+            
+            // 加载会话信息
+            loadSessionInfo();
+        });
+        
+        // 加载会话信息
+        async function loadSessionInfo() {
+            try {
+                const response = await fetch(`/api/collaboration/session/${sessionToken}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    sessionInfo = data.session;
+                    updateSessionDisplay();
+                    
+                    // 加入会话
+                    await joinSession();
+                    
+                    // 连接WebSocket
+                    connectWebSocket();
+                    
+                    // 加载文档内容
+                    loadDocumentContent();
+                } else {
+                    alert('会话不存在或已过期');
+                    window.location.href = '/';
+                }
+                
+            } catch (error) {
+                console.error('加载会话信息失败:', error);
+                alert('加载会话信息失败');
+            }
+        }
+        
+        // 更新会话显示
+        function updateSessionDisplay() {
+            document.getElementById('fileName').textContent = sessionInfo.file_name;
+            document.getElementById('docName').textContent = sessionInfo.file_name;
+            document.getElementById('creatorName').textContent = sessionInfo.creator_name;
+            document.getElementById('createdTime').textContent = formatDate(sessionInfo.created_at);
+            document.getElementById('expireTime').textContent = formatDate(sessionInfo.expires_at);
+            document.getElementById('participantCount').textContent = `参与者: ${sessionInfo.current_participants}`;
+            document.getElementById('participantCount2').textContent = sessionInfo.current_participants;
+            
+            updateParticipantList();
+        }
+        
+        // 更新参与者列表
+        function updateParticipantList() {
+            const list = document.getElementById('participantList');
+            list.innerHTML = '';
+            
+            if (sessionInfo.participants.length === 0) {
+                list.innerHTML = '<p style="color: #666; font-size: 12px;">暂无参与者</p>';
+                return;
+            }
+            
+            sessionInfo.participants.forEach(participant => {
+                const item = document.createElement('div');
+                item.className = 'participant-item';
+                
+                const avatar = document.createElement('div');
+                avatar.className = 'participant-avatar';
+                avatar.textContent = participant.username.charAt(0).toUpperCase();
+                
+                const name = document.createElement('div');
+                name.className = 'participant-name';
+                name.textContent = participant.username;
+                
+                const indicator = document.createElement('div');
+                indicator.className = participant.is_online ? 'online-indicator' : 'offline-indicator';
+                
+                item.appendChild(avatar);
+                item.appendChild(name);
+                item.appendChild(indicator);
+                list.appendChild(item);
+            });
+        }
+        
+        // 加入会话
+        async function joinSession() {
+            try {
+                const response = await fetch('/api/collaboration/join', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({
+                        session_token: sessionToken
+                    })
+                });
+                
+                const data = await response.json();
+                if (!data.success) {
+                    alert('加入会话失败: ' + data.error);
+                }
+                
+            } catch (error) {
+                console.error('加入会话失败:', error);
+            }
+        }
+        
+        // 连接WebSocket
+        function connectWebSocket() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                console.log('WebSocket已连接');
+                document.getElementById('connectionStatus').textContent = '在线';
+                document.getElementById('connectionStatus').className = 'status online';
+                isConnected = true;
+                
+                // 加入协作房间
+                socket.emit('join_collaboration', {
+                    session_token: sessionToken,
+                    username: currentUser.username
+                });
+            });
+            
+            socket.on('disconnect', function() {
+                console.log('WebSocket已断开');
+                document.getElementById('connectionStatus').textContent = '离线';
+                document.getElementById('connectionStatus').className = 'status offline';
+                isConnected = false;
+            });
+            
+            socket.on('user_joined', function(data) {
+                addMessage(`${data.username} 加入了协作`);
+                refreshSessionInfo();
+            });
+            
+            socket.on('user_left', function(data) {
+                addMessage(`${data.username} 离开了协作`);
+                refreshSessionInfo();
+            });
+            
+            socket.on('content_change', function(data) {
+                if (data.username !== currentUser.username) {
+                    // 更新编辑器内容
+                    document.getElementById('editor').value = data.content;
+                }
+            });
+            
+            socket.on('cursor_move', function(data) {
+                if (data.username !== currentUser.username) {
+                    // 显示其他用户的光标位置
+                    showRemoteCursor(data);
+                }
+            });
+        }
+        
+        // 解析CSV内容
+        function parseCSV(content) {
+            const lines = content.split('\n');
+            const result = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line === '') continue;
+                
+                // 简单的CSV解析（处理逗号分隔，但不处理引号内的逗号）
+                const cells = line.split(',').map(cell => cell.trim());
+                result.push(cells);
+            }
+            
+            return result;
+        }
+        
+        // 显示CSV表格
+        function displayCSVTable(data) {
+            const table = document.getElementById('csvTable');
+            table.innerHTML = '';
+            
+            if (data.length === 0) {
+                table.innerHTML = '<tr><td>无数据</td></tr>';
+                return;
+            }
+            
+            // 创建表头
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            
+            // 使用第一行作为表头，或者生成默认表头
+            const headers = data[0] || [];
+            headers.forEach((header, index) => {
+                const th = document.createElement('th');
+                th.textContent = header || `列${index + 1}`;
+                headerRow.appendChild(th);
+            });
+            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            // 创建表体
+            const tbody = document.createElement('tbody');
+            for (let i = 1; i < data.length; i++) {
+                const row = document.createElement('tr');
+                const rowData = data[i] || [];
+                
+                // 确保每行的单元格数量与表头一致
+                for (let j = 0; j < headers.length; j++) {
+                    const td = document.createElement('td');
+                    td.textContent = rowData[j] || '';
+                    row.appendChild(td);
+                }
+                
+                tbody.appendChild(row);
+            }
+            
+            table.appendChild(tbody);
+        }
+        
+        // 切换到文本模式
+        function switchToTextMode() {
+            currentViewMode = 'text';
+            document.getElementById('textModeBtn').classList.add('active');
+            document.getElementById('tableModeBtn').classList.remove('active');
+            document.getElementById('editor').style.display = 'block';
+            document.getElementById('tableContainer').style.display = 'none';
+        }
+        
+        // 切换到表格模式
+        function switchToTableMode() {
+            currentViewMode = 'table';
+            document.getElementById('textModeBtn').classList.remove('active');
+            document.getElementById('tableModeBtn').classList.add('active');
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('tableContainer').style.display = 'block';
+            
+            // 如果还没有解析CSV数据，先解析
+            if (csvData === null && document.getElementById('editor').value) {
+                csvData = parseCSV(document.getElementById('editor').value);
+            }
+            
+            if (csvData) {
+                displayCSVTable(csvData);
+            }
+        }
+        
+        // 显示Office文档编辑选项
+        function showOfficeEditOptions(fileExt) {
+            const editorContainer = document.querySelector('.editor-container');
+            
+            // 隐藏原有的编辑器
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('tableContainer').style.display = 'none';
+            document.getElementById('viewModeToggle').style.display = 'none';
+            
+            // 创建Office编辑选项界面
+            const officeOptions = document.createElement('div');
+            officeOptions.id = 'officeOptions';
+            officeOptions.innerHTML = `
+                <div style="text-align: center; padding: 40px 20px;">
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="color: #333; margin-bottom: 10px;">📄 Office 文档编辑</h3>
+                        <p style="color: #666; margin-bottom: 20px;">
+                            检测到 ${fileExt.toUpperCase()} 格式的文档，您可以选择以下编辑方式：
+                        </p>
+                    </div>
+                    
+                    <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
+                        <div style="border: 2px solid #007bff; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; min-width: 200px;" 
+                             onclick="openOnlyOfficeEditor('edit')">
+                            <div style="font-size: 48px; margin-bottom: 10px;">✏️</div>
+                            <h4 style="margin: 0 0 10px 0; color: #007bff;">OnlyOffice 编辑</h4>
+                            <p style="margin: 0; color: #666; font-size: 14px;">
+                                使用专业的 Office 编辑器<br>
+                                支持实时协作编辑
+                            </p>
+                        </div>
+                        
+                        <div style="border: 2px solid #28a745; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; min-width: 200px;" 
+                             onclick="openOnlyOfficeEditor('view')">
+                            <div style="font-size: 48px; margin-bottom: 10px;">👁️</div>
+                            <h4 style="margin: 0 0 10px 0; color: #28a745;">OnlyOffice 预览</h4>
+                            <p style="margin: 0; color: #666; font-size: 14px;">
+                                仅查看文档内容<br>
+                                不可编辑
+                            </p>
+                        </div>
+                        
+                        <div style="border: 2px solid #6c757d; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; min-width: 200px;" 
+                             onclick="downloadOfficeFile()">
+                            <div style="font-size: 48px; margin-bottom: 10px;">⬇️</div>
+                            <h4 style="margin: 0 0 10px 0; color: #6c757d;">下载文件</h4>
+                            <p style="margin: 0; color: #666; font-size: 14px;">
+                                下载到本地<br>
+                                使用本地 Office 软件编辑
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
+                        <p style="margin: 0; color: #666; font-size: 14px;">
+                            💡 <strong>提示：</strong>OnlyOffice 编辑器提供完整的 Office 功能，包括格式化、图表、公式等。
+                        </p>
+                    </div>
+                </div>
+            `;
+            
+            editorContainer.appendChild(officeOptions);
+            addMessage(`检测到 ${fileExt.toUpperCase()} 文档，已显示编辑选项`);
+        }
+        
+        // 打开OnlyOffice编辑器
+        async function openOnlyOfficeEditor(mode) {
+            try {
+                // 创建OnlyOffice文档记录
+                const response = await fetch('/api/onlyoffice/documents', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({
+                        file_name: sessionInfo.file_name,
+                        file_path: sessionInfo.file_path,
+                        file_type: '.' + sessionInfo.file_name.split('.').pop()
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    const docId = data.document.id;
+                    const onlyofficeUrl = `/onlyoffice-edit.html?doc_id=${docId}&mode=${mode}`;
+                    
+                    // 在新窗口中打开OnlyOffice编辑器
+                    window.open(onlyofficeUrl, '_blank');
+                    addMessage(`已打开 OnlyOffice ${mode === 'edit' ? '编辑器' : '预览器'}`);
+                } else {
+                    alert('创建 OnlyOffice 文档失败：' + (data.error || '未知错误'));
+                    addMessage('创建 OnlyOffice 文档失败');
+                }
+                
+            } catch (error) {
+                console.error('打开 OnlyOffice 编辑器失败:', error);
+                alert('打开 OnlyOffice 编辑器失败：' + error.message);
+                addMessage('打开 OnlyOffice 编辑器失败');
+            }
+        }
+        
+        // 下载Office文件
+        async function downloadOfficeFile() {
+            try {
+                const response = await fetch(`/api/download?path=${encodeURIComponent(sessionInfo.file_path)}`, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = sessionInfo.file_name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(url);
+                    
+                    addMessage('文件下载成功');
+                } else {
+                    throw new Error(`下载失败: ${response.status}`);
+                }
+            } catch (error) {
+                console.error('下载文件失败:', error);
+                alert('下载文件失败: ' + error.message);
+                addMessage('下载文件失败');
+            }
+        }
+        
+        // 加载文档内容
+        async function loadDocumentContent() {
+            try {
+                // 检查文件类型
+                const fileExt = sessionInfo.file_name.toLowerCase().split('.').pop();
+                const textFileTypes = ['txt', 'md', 'json', 'csv', 'py', 'js', 'html', 'css', 'log'];
+                const officeFileTypes = ['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt'];
+                const binaryFileTypes = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'mp4', 'mp3', 'wav'];
+                
+                if (officeFileTypes.includes(fileExt)) {
+                    // 对于Office文档，显示OnlyOffice编辑选项
+                    showOfficeEditOptions(fileExt);
+                    return;
+                }
+                
+                if (binaryFileTypes.includes(fileExt)) {
+                    // 对于其他二进制文件，显示提示信息
+                    document.getElementById('editor').value = `⚠️ 不支持的文件类型\n\n文件名: ${sessionInfo.file_name}\n文件类型: ${fileExt.toUpperCase()}\n\n此文件类型不支持在文本编辑器中直接编辑。\n\n建议:\n1. 使用 OnlyOffice 编辑器进行编辑\n2. 或者转换为文本格式后再进行协作编辑`;
+                    document.getElementById('editor').disabled = true;
+                    addMessage(`文件类型 ${fileExt.toUpperCase()} 不支持文本编辑`);
+                    return;
+                }
+                
+                const response = await fetch(`/api/preview?path=${encodeURIComponent(sessionInfo.file_path)}`, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    }
+                });
+                
+                if (response.ok) {
+                    // 对于文本文件，直接读取响应内容
+                    const contentType = response.headers.get('content-type');
+                    console.log('响应Content-Type:', contentType);
+                    
+                    // 检查是否是文本类型文件
+                    if (contentType && (contentType.includes('text/') || contentType.includes('application/json') || contentType.includes('application/javascript'))) {
+                        const content = await response.text();
+                        document.getElementById('editor').value = content;
+                        document.getElementById('editor').disabled = false;
+                        
+                        // 如果是CSV文件，显示视图切换按钮
+                        if (fileExt === 'csv') {
+                            document.getElementById('viewModeToggle').style.display = 'block';
+                            document.getElementById('textModeBtn').classList.add('active');
+                            // 解析CSV数据
+                            csvData = parseCSV(content);
+                        }
+                        
+                        addMessage('文档加载成功');
+                    } else {
+                        // 对于其他格式，先尝试作为文本读取
+                        try {
+                            const content = await response.text();
+                            // 检查内容是否看起来像文本（不包含太多控制字符）
+                            const controlChars = (content.match(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g) || []).length;
+                            const totalChars = content.length;
+                            
+                            if (totalChars > 0 && (controlChars / totalChars) < 0.1) {
+                                // 看起来像文本文件
+                                document.getElementById('editor').value = content;
+                                document.getElementById('editor').disabled = false;
+                                addMessage('文档加载成功');
+                            } else {
+                                // 可能是二进制文件
+                                document.getElementById('editor').value = `⚠️ 不支持的文件类型\n\n文件名: ${sessionInfo.file_name}\n文件类型: ${fileExt.toUpperCase()}\n\n此文件类型不支持在文本编辑器中直接编辑。\n\n建议:\n1. 使用 OnlyOffice 编辑器进行编辑\n2. 或者转换为文本格式后再进行协作编辑`;
+                                document.getElementById('editor').disabled = true;
+                                addMessage(`文件类型 ${fileExt.toUpperCase()} 不支持文本编辑`);
+                            }
+                        } catch (textError) {
+                            console.error('读取文本内容失败:', textError);
+                            document.getElementById('editor').value = '❌ 无法读取文档内容\n\n此文件可能不是纯文本格式，或者文件已损坏。';
+                            document.getElementById('editor').disabled = true;
+                            addMessage('文档读取失败');
+                        }
+                    }
+                } else {
+                    console.error('加载文档失败:', response.status, response.statusText);
+                    document.getElementById('editor').value = `❌ 加载文档失败\n\n错误代码: ${response.status}\n错误信息: ${response.statusText}\n\n请检查文件是否存在，或者联系管理员。`;
+                    document.getElementById('editor').disabled = true;
+                    addMessage(`加载文档失败: ${response.status}`);
+                }
+                
+            } catch (error) {
+                console.error('加载文档内容失败:', error);
+                document.getElementById('editor').value = `❌ 加载文档失败\n\n错误信息: ${error.message}\n\n请检查网络连接，或者联系管理员。`;
+                document.getElementById('editor').disabled = true;
+                addMessage(`加载文档失败: ${error.message}`);
+            }
+        }
+        
+        // 保存文档
+        async function saveDocument() {
+            if (!isConnected) {
+                alert('未连接到服务器');
+                return;
+            }
+            
+            const content = document.getElementById('editor').value;
+            
+            try {
+                const response = await fetch('/api/collab/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({
+                        file: sessionInfo.file_name,
+                        path: sessionInfo.file_path.replace('/' + sessionInfo.file_name, ''),
+                        content: content
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addMessage('文档已保存');
+                    
+                    // 通知其他用户内容已更新
+                    socket.emit('content_updated', {
+                        session_token: sessionToken,
+                        content: content
+                    });
+                } else {
+                    alert('保存失败: ' + data.error);
+                }
+                
+            } catch (error) {
+                console.error('保存失败:', error);
+                alert('保存失败');
+            }
+        }
+        
+        // 下载文档
+        function downloadDocument() {
+            const content = document.getElementById('editor').value;
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = sessionInfo.file_name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+        
+        // 显示分享对话框
+        function showShareDialog() {
+            document.getElementById('shareLink').textContent = window.location.href;
+            document.getElementById('shareModal').style.display = 'block';
+        }
+        
+        // 关闭分享对话框
+        function closeShareDialog() {
+            document.getElementById('shareModal').style.display = 'none';
+        }
+        
+        // 复制分享链接
+        function copyShareLink() {
+            const link = document.getElementById('shareLink').textContent;
+            navigator.clipboard.writeText(link).then(function() {
+                document.getElementById('shareSuccess').textContent = '链接已复制到剪贴板';
+                setTimeout(() => {
+                    document.getElementById('shareSuccess').textContent = '';
+                }, 2000);
+            });
+        }
+        
+        // 更新分享链接
+        async function updateShareLink() {
+            const expireHours = document.getElementById('expireHours').value;
+            
+            try {
+                const response = await fetch('/api/collaboration/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({
+                        file_path: sessionInfo.file_path,
+                        file_name: sessionInfo.file_name,
+                        expire_hours: parseInt(expireHours)
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    const newUrl = window.location.origin + data.session.share_url;
+                    document.getElementById('shareLink').textContent = newUrl;
+                    document.getElementById('shareSuccess').textContent = '链接已更新';
+                    setTimeout(() => {
+                        document.getElementById('shareSuccess').textContent = '';
+                    }, 2000);
+                } else {
+                    document.getElementById('shareError').textContent = data.error;
+                }
+                
+            } catch (error) {
+                console.error('更新链接失败:', error);
+                document.getElementById('shareError').textContent = '更新链接失败';
+            }
+        }
+        
+        // 刷新会话信息
+        async function refreshSessionInfo() {
+            try {
+                const response = await fetch(`/api/collaboration/session/${sessionToken}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    sessionInfo = data.session;
+                    updateSessionDisplay();
+                }
+                
+            } catch (error) {
+                console.error('刷新会话信息失败:', error);
+            }
+        }
+        
+        // 添加消息
+        function addMessage(message) {
+            const log = document.getElementById('messageLog');
+            const time = new Date().toLocaleTimeString();
+            const messageElement = document.createElement('div');
+            messageElement.innerHTML = `<span style="color: #666;">[${time}]</span> ${message}`;
+            log.appendChild(messageElement);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // 显示远程光标
+        function showRemoteCursor(data) {
+            // 这里可以实现显示其他用户光标位置的功能
+            console.log('远程光标:', data);
+        }
+        
+        // 编辑器内容变化时发送更新
+        document.getElementById('editor').addEventListener('input', function() {
+            if (isConnected) {
+                const content = this.value;
+                socket.emit('content_change', {
+                    session_token: sessionToken,
+                    content: content,
+                    username: currentUser.username
+                });
+            }
+        });
+        
+        // 格式化日期
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString('zh-CN');
+        }
+        
+        // 返回主页
+        function goBack() {
+            window.location.href = '/';
+        }
+        
+        // 点击模态框外部关闭
+        window.onclick = function(event) {
+            const modal = document.getElementById('shareModal');
+            if (event.target === modal) {
+                closeShareDialog();
+            }
+        }
+        
+        // 页面卸载时断开连接
+        window.addEventListener('beforeunload', function() {
+            if (socket) {
+                socket.disconnect();
+            }
+        });
+    </script>
+</body>
+</html> 
