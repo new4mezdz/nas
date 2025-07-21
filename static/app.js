@@ -582,7 +582,39 @@ async uploadDraggedFiles() {
       this.renameTo = '';
     },
     downloadFile(item) {
-      window.open('/api/download?path=' + encodeURIComponent(this.currentPath.replace(/\/$/, '') + '/' + item.name));
+      const token = localStorage.getItem('token');
+      // 构建绝对路径：当前盘符 + 当前路径 + 文件名
+      const fullPath = this.currentDrive + this.currentPath.replace(/^\//, '') + '/' + item.name;
+      if (window.Blob && window.URL && window.URL.createObjectURL) {
+        fetch('/api/download?path=' + encodeURIComponent(fullPath), {
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        })
+          .then(res => {
+            if (!res.ok) throw new Error('下载失败');
+            return res.blob();
+          })
+          .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = item.name;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+              window.URL.revokeObjectURL(url);
+              document.body.removeChild(a);
+            }, 100);
+          })
+          .catch(() => {
+            const fallbackUrl = '/api/download?path=' + encodeURIComponent(fullPath) + '&token=' + encodeURIComponent(token);
+            window.open(fallbackUrl);
+          });
+      } else {
+        const url = '/api/download?path=' + encodeURIComponent(fullPath) + '&token=' + encodeURIComponent(token);
+        window.open(url);
+      }
     },
 
      // ========== 分享 ==========
