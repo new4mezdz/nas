@@ -1,13 +1,347 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <title>NAS 控制面板示例</title>
+
+  <!-- 现有的脚本 -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <!-- ====== 新增：PWA 支持 ====== -->
+
+  <!-- PWA 清单文件 -->
+  <link rel="manifest" href="/static/pwa/manifest.json">
+
+  <!-- PWA 主题颜色 -->
+  <meta name="theme-color" content="#2c3e50">
+  <meta name="msapplication-TileColor" content="#2c3e50">
+
+  <!-- 移动端视口优化 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+  <!-- iOS Safari 支持 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="NAS">
+  <link rel="apple-touch-icon" href="/static/pwa/icons/icon-192.png">
+
+  <!-- Android Chrome 支持 -->
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- Windows 支持 -->
+  <meta name="msapplication-starturl" content="/">
+  <meta name="msapplication-TileImage" content="/static/pwa/icons/icon-144.png">
+
+  <!-- PWA 相关样式优化 -->
+  <style>
+    /* PWA 模式下的样式优化 */
+    @media (display-mode: standalone) {
+      body {
+        /* 适配刘海屏等 */
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+
+      /* 隐藏可能的滚动条 */
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 3px;
+      }
+    }
+
+    /* 安装横幅样式 */
+    .install-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 20px;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      z-index: 10000;
+      font-size: 14px;
+      transform: translateY(-100%);
+      transition: transform 0.3s ease;
+    }
+
+    .install-banner.show {
+      transform: translateY(0);
+    }
+
+    .install-btn {
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: white;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 0 10px;
+      transition: all 0.2s ease;
+    }
+
+    .install-btn:hover {
+      background: rgba(255,255,255,0.3);
+    }
+
+    .dismiss-btn {
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
+      padding: 6px 10px;
+      font-size: 18px;
+    }
+  </style>
 </head>
+
+<!-- ====== PWA JavaScript 在这里 ====== -->
+<script>
+// ====== PWA 功能脚本 ======
+
+// Service Worker 注册
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const registration = await navigator.serviceWorker.register('/static/pwa/sw.js');
+      console.log('✅ Service Worker 注册成功:', registration.scope);
+
+      // 检查更新
+      registration.addEventListener('updatefound', () => {
+        const newWorker = registration.installing;
+        console.log('🔄 发现新版本...');
+
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            console.log('📦 新版本已就绪');
+            showUpdateNotification();
+          }
+        });
+      });
+
+    } catch (error) {
+      console.error('❌ Service Worker 注册失败:', error);
+    }
+  });
+
+  // 监听 SW 控制权变化
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    console.log('🔄 Service Worker 已更新，刷新页面...');
+    window.location.reload();
+  });
+}
+
+// 显示更新通知
+function showUpdateNotification() {
+  // 如果 Vue 应用已加载，使用 Vue 的消息系统
+  if (window.app && window.app.infoMessage !== undefined) {
+    window.app.infoMessage = '发现新版本！';
+
+    // 3秒后询问是否更新
+    setTimeout(() => {
+      if (confirm('🔄 发现新版本，是否立即更新？')) {
+        navigator.serviceWorker.getRegistration().then(reg => {
+          if (reg && reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      }
+    }, 1000);
+  } else {
+    // 降级方案：直接询问
+    setTimeout(() => {
+      if (confirm('🔄 发现新版本，是否立即更新？')) {
+        navigator.serviceWorker.getRegistration().then(reg => {
+          if (reg && reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      }
+    }, 2000);
+  }
+}
+
+// PWA 安装提示
+let deferredPrompt = null;
+let installBannerShown = false;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  console.log('💡 PWA 可以安装');
+  e.preventDefault();
+  deferredPrompt = e;
+
+  // 延迟显示安装提示，给用户一些时间熟悉应用
+  setTimeout(() => {
+    if (!installBannerShown && !isInstallDismissed()) {
+      showInstallBanner();
+    }
+  }, 5000); // 5秒后显示
+});
+
+// 检查是否被用户关闭过
+function isInstallDismissed() {
+  const dismissed = localStorage.getItem('pwa-install-dismissed');
+  if (!dismissed) return false;
+
+  const dismissTime = parseInt(dismissed);
+  const now = Date.now();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+
+  return now < dismissTime + sevenDays;
+}
+
+// 显示安装横幅
+function showInstallBanner() {
+  if (installBannerShown || isPWAMode()) return;
+
+  installBannerShown = true;
+
+  const banner = document.createElement('div');
+  banner.id = 'pwa-install-banner';
+  banner.className = 'install-banner';
+  banner.innerHTML = `
+    <span style="margin-right: 15px;">📱 将 NAS 添加到主屏幕，获得更好的体验</span>
+    <button class="install-btn" onclick="installPWA()">立即安装</button>
+    <button class="dismiss-btn" onclick="dismissInstallBanner()">×</button>
+  `;
+
+  document.body.appendChild(banner);
+
+  // 动画显示
+  setTimeout(() => {
+    banner.classList.add('show');
+  }, 100);
+}
+
+// 安装 PWA
+window.installPWA = async function() {
+  if (!deferredPrompt) return;
+
+  try {
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+
+    console.log('PWA 安装结果:', outcome);
+
+    if (outcome === 'accepted') {
+      console.log('🎉 用户同意安装 PWA');
+    } else {
+      console.log('😔 用户拒绝安装 PWA');
+    }
+
+    deferredPrompt = null;
+    removeInstallBanner();
+
+  } catch (error) {
+    console.error('PWA 安装失败:', error);
+  }
+};
+
+// 关闭安装横幅
+window.dismissInstallBanner = function() {
+  localStorage.setItem('pwa-install-dismissed', Date.now().toString());
+  removeInstallBanner();
+};
+
+// 移除安装横幅
+function removeInstallBanner() {
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) {
+    banner.classList.remove('show');
+    setTimeout(() => {
+      if (banner.parentNode) {
+        banner.parentNode.removeChild(banner);
+      }
+    }, 300);
+  }
+  installBannerShown = false;
+}
+
+// 检测 PWA 运行模式
+function isPWAMode() {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+         window.navigator.standalone === true ||
+         document.referrer.includes('android-app://');
+}
+
+// PWA 安装完成事件
+window.addEventListener('appinstalled', () => {
+  console.log('🎉 PWA 安装成功！');
+
+  // 移除安装横幅
+  removeInstallBanner();
+
+  // 显示成功消息
+  if (window.app && window.app.infoMessage !== undefined) {
+    window.app.infoMessage = '🎉 应用已成功添加到主屏幕！';
+    setTimeout(() => {
+      window.app.infoMessage = '';
+    }, 3000);
+  } else {
+    // 降级方案
+    alert('🎉 应用已成功添加到主屏幕！');
+  }
+
+  // 清理
+  deferredPrompt = null;
+});
+
+// PWA 模式优化
+if (isPWAMode()) {
+  console.log('🚀 运行在 PWA 模式');
+  document.body.classList.add('pwa-mode');
+
+  // PWA 模式下的特殊处理
+  document.addEventListener('DOMContentLoaded', () => {
+    // 添加状态栏适配
+    if (window.app && window.app.infoMessage !== undefined) {
+      // 短暂显示PWA模式提示
+      window.app.infoMessage = '🚀 PWA 模式已启用';
+      setTimeout(() => {
+        window.app.infoMessage = '';
+      }, 2000);
+    }
+  });
+}
+
+// 网络状态监听
+window.addEventListener('online', () => {
+  console.log('🌐 网络已连接');
+  if (window.app && window.app.infoMessage !== undefined) {
+    window.app.infoMessage = '🌐 网络已恢复';
+    setTimeout(() => {
+      window.app.infoMessage = '';
+    }, 2000);
+  }
+});
+
+window.addEventListener('offline', () => {
+  console.log('📡 网络已断开');
+  if (window.app && window.app.errorMessage !== undefined) {
+    window.app.errorMessage = '📡 网络连接已断开，部分功能可能不可用';
+    setTimeout(() => {
+      window.app.errorMessage = '';
+    }, 5000);
+  }
+});
+
+// 调试：显示 PWA 信息
+console.log('PWA 状态:', {
+  'Service Worker 支持': 'serviceWorker' in navigator,
+  '当前运行模式': isPWAMode() ? 'PWA独立模式' : '浏览器模式',
+  '网络状态': navigator.onLine ? '在线' : '离线',
+  '可安装': deferredPrompt !== null
+});
+</script>
 <body class="bg-gray-100 min-h-screen">
   <div id="app" class="max-w-5xl mx-auto p-6">
 
@@ -137,155 +471,154 @@
         </p>
       </div>
 
+      <!-- 磁盘信息 -->
+      <div class="bg-white p-4 rounded shadow mb-6">
+        <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
+        <table class="w-full text-left text-sm border">
+          <thead>
+            <tr class="border-b bg-gray-50">
+              <th class="py-2 px-1">挂载点</th>
+              <th class="py-2 px-1">文件系统</th>
+              <th class="py-2 px-1">总空间</th>
+              <th class="py-2 px-1">已用空间</th>
+              <th class="py-2 px-1">使用率</th>
+              <th class="py-2 px-1">纠删码方案</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- ======= 逻辑卷（纠删码磁盘合并） ======= -->
+            <tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
+              <td class="py-1 px-1">[纠删码卷]</td>
+              <td class="py-1 px-1">--</td>
+              <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
+              <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
+              <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
+              <td class="py-1 px-1">{{ ecDiskGroup.ec_scheme }}</td>
+            </tr>
 
-
-
-   <!-- 磁盘信息 -->
-<!-- 磁盘信息 -->
-<div class="bg-white p-4 rounded shadow mb-6">
-  <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
-  <table class="w-full text-left text-sm border">
-    <thead>
-      <tr class="border-b bg-gray-50">
-        <th class="py-2 px-1">挂载点</th>
-        <th class="py-2 px-1">文件系统</th>
-        <th class="py-2 px-1">总空间</th>
-        <th class="py-2 px-1">已用空间</th>
-        <th class="py-2 px-1">使用率</th>
-        <th class="py-2 px-1">纠删码方案</th>
-      </tr>
-    </thead>
-    <tbody>
-     <!-- ======= 逻辑卷（纠删码磁盘合并） ======= -->
-<tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
-  <td class="py-1 px-1">[纠删码卷]</td>
-  <td class="py-1 px-1">--</td>
-  <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
-  <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
-  <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
-  <td class="py-1 px-1">{{ ecDiskGroup.ec_scheme }}</td>
-</tr>
-
-<!-- ======= 非纠删码磁盘列表 ======= -->
-<tr v-for="disk in nonECDiskList" :key="disk.mount"
-    class="border-b hover:bg-gray-100 cursor-pointer"
-    @click="goDisk(disk.mount)">
-  <td class="py-1 px-1">{{ disk.mount }}</td>
-  <td class="py-1 px-1">{{ disk.fstype }}</td>
-  <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
-  <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
-  <td class="py-1 px-1">{{ disk.percent }}%</td>
-  <td class="py-1 px-1">{{ disk.ec_scheme || '-' }}</td>
-</tr>
-
-    </tbody>
-  </table>
-</div>
-
-
-
-
-
-      
-
+            <!-- ======= 非纠删码磁盘列表 ======= -->
+            <tr v-for="disk in nonECDiskList" :key="disk.mount"
+                class="border-b hover:bg-gray-100 cursor-pointer"
+                @click="goDisk(disk.mount)">
+              <td class="py-1 px-1">{{ disk.mount }}</td>
+              <td class="py-1 px-1">{{ disk.fstype }}</td>
+              <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
+              <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
+              <td class="py-1 px-1">{{ disk.percent }}%</td>
+              <td class="py-1 px-1">{{ disk.ec_scheme || '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <!-- ========= 文件管理 ========== -->
-<div class="bg-white p-4 rounded shadow mt-8">
-  <h2 class="text-xl font-semibold mb-3">文件管理</h2>
-  
-  <!-- 盘符选择器 -->
-  <div class="mb-4 flex items-center space-x-2">
-    <label class="text-sm font-medium">当前盘符：</label>
-    <select v-model="currentDrive" @change="switchDrive(currentDrive)" class="border px-2 py-1 rounded">
-      <option v-for="drive in availableDrives" :key="drive.drive" :value="drive.drive">
-        {{ drive.drive }} ({{ formatSize(drive.total) }}, {{ drive.percent }}% 已用)
-      </option>
-    </select>
-    <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
-  </div>
-  
-  <!-- 批量操作按钮 -->
-  <div class="mb-4 flex items-center space-x-2">
-    <button @click="selectAllFiles" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">全选</button>
-    <button @click="clearAllSelected" class="bg-gray-400 text-white px-3 py-1 rounded hover:bg-gray-500">取消全选</button>
-    <button @click="batchDelete" :disabled="!selectedFiles.length"
-      class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-200">批量删除</button>
-    <span class="ml-4 text-gray-600" v-if="selectedFiles.length">已选 {{ selectedFiles.length }} 项</span>
-  </div>
+      <div class="bg-white p-4 rounded shadow mt-8">
+        <h2 class="text-xl font-semibold mb-3">文件管理</h2>
 
-  <div class="mb-2 flex items-center space-x-2">
-  <button v-if="currentPath !== '/'" @click="goParent" class="text-blue-600">返回上一级</button>
+        <!-- 盘符选择器 -->
+        <div class="mb-4 flex items-center space-x-2">
+          <label class="text-sm font-medium">当前盘符：</label>
+          <select v-model="currentDrive" @change="switchDrive(currentDrive)" class="border px-2 py-1 rounded">
+            <option v-for="drive in availableDrives" :key="drive.drive" :value="drive.drive">
+              {{ drive.drive }} ({{ formatSize(drive.total) }}, {{ drive.percent }}% 已用)
+            </option>
+          </select>
+          <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
+        </div>
 
-  <!-- 新建文件夹（不要用div包，直接写input和button） -->
-  <input v-model="newDirName" placeholder="新建文件夹名" class="border px-2 py-1 rounded" />
-  <button @click="mkdir" class="bg-green-600 text-white px-3 py-1 rounded">新建文件夹</button>
-  <span class="text-red-600">{{ adminOnlyMsg }}</span>
+        <!-- 批量操作按钮 -->
+        <div class="mb-4 flex items-center space-x-2">
+          <button @click="selectAllFiles" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">全选</button>
+          <button @click="clearAllSelected" class="bg-gray-400 text-white px-3 py-1 rounded hover:bg-gray-500">取消全选</button>
+          <button @click="batchDelete" :disabled="!selectedFiles.length"
+            class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-200">批量删除</button>
+          <span class="ml-4 text-gray-600" v-if="selectedFiles.length">已选 {{ selectedFiles.length }} 项</span>
+        </div>
 
-  <!-- 上传文件 -->
-  <button @click="showUploadDialog = true" class="bg-indigo-600 text-white rounded px-3 py-1 ml-2">
-  📤 上传文件
-</button>
+        <div class="mb-2 flex items-center space-x-2">
+          <button v-if="currentPath !== '/'" @click="goParent" class="text-blue-600">返回上一级</button>
 
-  <span class="ml-2 text-gray-600 text-sm">{{ uploadInfo }}</span>
-      <!-- 搜索按钮 -->
-<button @click="showSearchDialog = true" class="ml-2 px-3 py-1 bg-green-500 text-white rounded">
-  🔍 搜索文件
-</button>
+          <!-- 新建文件夹（不要用div包，直接写input和button） -->
+          <input v-model="newDirName" placeholder="新建文件夹名" class="border px-2 py-1 rounded" />
+          <button @click="mkdir" class="bg-green-600 text-white px-3 py-1 rounded">新建文件夹</button>
+          <span class="text-red-600">{{ adminOnlyMsg }}</span>
 
-</div>
+          <!-- 上传文件 -->
+          <button @click="showUploadDialog = true" class="bg-indigo-600 text-white rounded px-3 py-1 ml-2">
+            📤 上传文件
+          </button>
 
+          <span class="ml-2 text-gray-600 text-sm">{{ uploadInfo }}</span>
+          <!-- 搜索按钮 -->
+          <button @click="showSearchDialog = true" class="ml-2 px-3 py-1 bg-green-500 text-white rounded">
+            🔍 搜索文件
+          </button>
+        </div>
 
-  <table class="w-full text-left text-sm border">
-    <thead>
-      <tr class="border-b bg-gray-50">
-        <th class="py-2 px-1 w-10"></th>
-        <th class="py-2 px-1">名称</th>
-        <th class="py-2 px-1">类型</th>
-        <th class="py-2 px-1">大小</th>
-        <th class="py-2 px-1">修改时间</th>
-        <th class="py-2 px-1">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr v-for="item in fileList" :key="item.name"
-          :class="{'bg-blue-50': selectedFiles.includes(item.name)}"
-          class="border-b transition-colors">
-        <td class="text-center">
-          <input type="checkbox" v-model="selectedFiles" :value="item.name" />
-        </td>
-        <td>
-          <span v-if="item.is_dir" class="text-blue-600 cursor-pointer" @click="goDir(item.name)">📁 {{ item.name }}</span>
-          <span v-else>📄 {{ item.name }}</span>
-        </td>
-        <td>{{ item.is_dir ? "文件夹" : "文件" }}</td>
-        <td>{{ item.is_dir ? "-" : formatSize(item.size) }}</td>
-        <td>{{ formatTime(item.mtime) }}</td>
-        <td>
-          <button v-if="!item.is_dir"
-            @click="downloadFile(item)"
-            class="text-green-600 underline">下载</button>
-          <button v-if="user.is_admin" @click="startRename(item)" class="ml-2 text-blue-600 underline">重命名</button>
-          <button v-if="user.is_admin" @click="deleteEntry(item)" class="ml-2 text-red-600 underline">删除</button>
-          <button v-if="!item.is_dir && isPreviewable(item)"
-        @click="previewFile(item)"
-        class="text-indigo-600 underline mr-2">预览</button>
+        <table class="w-full text-left text-sm border">
+          <thead>
+            <tr class="border-b bg-gray-50">
+              <th class="py-2 px-1 w-10"></th>
+              <th class="py-2 px-1">名称</th>
+              <th class="py-2 px-1">类型</th>
+              <th class="py-2 px-1">大小</th>
+              <th class="py-2 px-1">修改时间</th>
+              <th class="py-2 px-1">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in fileList" :key="item.name"
+                :class="{'bg-blue-50': selectedFiles.includes(item.name)}"
+                class="border-b transition-colors">
+              <td class="text-center">
+                <input type="checkbox" v-model="selectedFiles" :value="item.name" />
+              </td>
+              <!-- ========== 修复后的文件名显示（支持重命名） ========== -->
+              <td>
+                <!-- 重命名模式：显示输入框 -->
+                <div v-if="renaming === item.name" class="flex items-center space-x-2">
+                  <input v-model="renameTo"
+                         @keyup.enter="submitRename(item)"
+                         @keyup.esc="cancelRename"
+                         class="border px-2 py-1 rounded flex-1"
+                         ref="renameInput" />
+                  <button @click="submitRename(item)" class="text-green-600 hover:text-green-800 text-lg">✓</button>
+                  <button @click="cancelRename" class="text-red-600 hover:text-red-800 text-lg">✗</button>
+                </div>
 
-          <!-- 协作编辑按钮，仅文档类文件显示 -->
-          <button v-if="!item.is_dir && isCollabEditable(item)"
-            @click="openCollabEdit(item)"
-            class="text-purple-600 underline ml-2">协作编辑</button>
+                <!-- 正常显示模式 -->
+                <div v-else>
+                  <span v-if="item.is_dir" class="text-blue-600 cursor-pointer" @click="goDir(item.name)">📁 {{ item.name }}</span>
+                  <span v-else>📄 {{ item.name }}</span>
+                </div>
+              </td>
+              <td>{{ item.is_dir ? "文件夹" : "文件" }}</td>
+              <td>{{ item.is_dir ? "-" : formatSize(item.size) }}</td>
+              <td>{{ formatTime(item.mtime) }}</td>
+              <td>
+                <button v-if="!item.is_dir"
+                  @click="downloadFile(item)"
+                  class="text-green-600 underline">下载</button>
+                <button v-if="user.is_admin" @click="startRename(item)" class="ml-2 text-blue-600 underline">重命名</button>
+                <button v-if="user.is_admin" @click="deleteEntry(item)" class="ml-2 text-red-600 underline">删除</button>
+                <button v-if="!item.is_dir && isPreviewable(item)"
+                  @click="previewFile(item)"
+                  class="text-indigo-600 underline mr-2">预览</button>
 
-            <!-- 文件操作栏 -->
-<button v-if="!item.is_dir"
-        @click="openShareDialog(item)"
-        class="text-blue-600 underline ml-2">分享</button>
+                <!-- 协作编辑按钮，仅文档类文件显示 -->
+                <button v-if="!item.is_dir && isCollabEditable(item)"
+                  @click="openCollabEdit(item)"
+                  class="text-purple-600 underline ml-2">协作编辑</button>
 
-        </td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
+                <!-- 文件操作栏 -->
+                <button v-if="!item.is_dir"
+                        @click="openShareDialog(item)"
+                        class="text-blue-600 underline ml-2">分享</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <!-- ========== 修改密码弹窗 ========== -->
       <div v-if="showChangePw" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-30 flex items-center justify-center z-50">
@@ -300,179 +633,177 @@
         </div>
       </div>
 
-    <!-- ========== 管理员重置密码弹窗 ========== -->
-    <div v-if="resetUser" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div class="bg-white rounded shadow-lg p-8 w-full max-w-sm relative">
-        <button @click="showResetPw(u)" class="text-orange-600 underline ml-2">重置密码</button>
-        <h2 class="text-xl font-bold mb-4">重置 {{resetUser.username}} 的密码</h2>
-        <input v-model="resetPwForm.new_password" type="password" placeholder="新密码" class="w-full border px-2 py-1 mb-2"/>
-        <input v-model="resetPwForm.confirm" type="password" placeholder="确认新密码" class="w-full border px-2 py-1 mb-2"/>
-        <button @click="resetPassword" class="w-full bg-blue-600 text-white rounded py-2">确认重置</button>
-        <div class="mt-2 text-sm text-red-600" v-if="resetPwMsg">{{ resetPwMsg }}</div>
+      <!-- ========== 管理员重置密码弹窗 ========== -->
+      <div v-if="resetUser" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-30 flex items-center justify-center z-50">
+        <div class="bg-white rounded shadow-lg p-8 w-full max-w-sm relative">
+          <button @click="resetUser=null" class="absolute right-4 top-4 text-gray-400">✖</button>
+          <h2 class="text-xl font-bold mb-4">重置 {{resetUser.username}} 的密码</h2>
+          <input v-model="resetPwForm.new_password" type="password" placeholder="新密码" class="w-full border px-2 py-1 mb-2"/>
+          <input v-model="resetPwForm.confirm" type="password" placeholder="确认新密码" class="w-full border px-2 py-1 mb-2"/>
+          <button @click="resetPassword" class="w-full bg-blue-600 text-white rounded py-2">确认重置</button>
+          <div class="mt-2 text-sm text-red-600" v-if="resetPwMsg">{{ resetPwMsg }}</div>
+        </div>
       </div>
-    </div>
 
-<!-- ========== 文件预览弹窗 ========== -->
-<div v-if="showPreview" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
-  <div class="bg-white rounded shadow-lg p-6 relative w-[95vw] max-w-2xl max-h-[90vh] flex flex-col items-center justify-center">
-    <button @click="closePreview" class="absolute right-4 top-2 text-gray-400 text-2xl font-bold">✖</button>
-   <template v-if="previewType === 'image'">
-  <img :src="previewUrl" class="max-w-full max-h-[75vh] object-contain" />
-</template>
-<template v-else-if="previewType === 'video'">
-  <video :src="previewUrl" controls class="w-full max-h-[70vh] rounded" />
-</template>
-<template v-else-if="previewType === 'audio'">
-  <audio :src="previewUrl" controls class="w-full" />
-</template>
-<template v-else-if="previewType === 'pdf'">
- <iframe :src="previewUrl + '#toolbar=0'" class="w-full h-[70vh]" frameborder="0"></iframe>
-</template>
-<template v-else-if="previewType === 'text'">
-  <pre class="w-full h-[70vh] overflow-auto bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap">
-    {{ textContent }}
-  </pre>
-</template>
-<template v-else>
-  <div>❌ 不支持在线预览</div>
-</template>
-      <div class="mt-2 text-sm text-gray-600">{{ previewingFile?.name }}</div>
-  </div>
-</div>
-
-
-        <!-- 纠删码配置弹窗 -->
-<div v-if="ecDialogVisible" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-  <div class="bg-white p-6 rounded shadow-xl w-[400px]">
-    <h2 class="text-xl font-semibold mb-4">纠删码配置</h2>
-
-    <label class="block mb-2">纠删码方案：</label>
-    <select v-model="ecScheme" class="border px-2 py-1 w-full mb-3">
-      <option value="">不使用纠删码</option>
-      <option value="rs">Reed-Solomon</option>
-      <option value="rdp">RDP</option>
-      <option value="jcode">J-Code</option>
-      <option value="tnrdp">TN-RDP</option>
-    </select>
-
-    <label class="block mb-2">数据块数 (k)：</label>
-    <input v-model.number="k" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
-
-    <label class="block mb-2">冗余块数 (m)：</label>
-    <input v-model.number="m" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
-
-    <label class="block mb-2">选择硬盘：</label>
-   <div class="space-y-2 mb-3">
-  <div v-for="disk in disks" :key="disk.mount" class="border rounded p-2">
-    <label class="flex items-center gap-2">
-      <input type="checkbox" v-model="selectedDisks" :value="disk.mount" />
-      <span class="font-mono">{{ disk.mount }}</span>
-    </label>
-    <div class="text-sm text-gray-500 ml-6">
-      <span v-if="disk.ec_scheme">
-        已参与纠删码方案：<strong>{{ disk.ec_scheme.toUpperCase() }}</strong>
-      </span>
-      <span v-else>
-        未参与纠删码
-      </span>
-    </div>
-  </div>
-</div>
-
-    <div class="flex justify-end gap-2 mt-4">
-      <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
-      <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
-    </div>
-  </div>
-</div>
-
-<!-- 分享 -->
-<div v-if="shareDialogVisible"
-     class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-  <div class="bg-white p-6 rounded shadow-lg w-96">
-    <h2 class="text-lg font-bold mb-4">分享文件：{{ shareFile.name }}</h2>
-    <label class="block mb-2">有效期（小时）：
-      <input v-model="shareExpire" type="number" min="1" class="border px-2 py-1 w-full" />
-    </label>
-    <label class="block mb-4">密码（可选）：
-      <input v-model="sharePassword" type="text" class="border px-2 py-1 w-full" />
-    </label>
-    <div class="flex gap-2 mb-4">
-      <button @click="submitShare" class="bg-blue-500 text-white px-4 py-2 rounded">生成分享链接</button>
-      <button @click="shareDialogVisible=false" class="bg-gray-300 px-4 py-2 rounded">取消</button>
-    </div>
-    <div v-if="shareUrl">
-      <p class="text-sm mb-1">分享外链（复制给好友）：</p>
-      <input :value="shareUrl" readonly class="border px-2 py-1 w-full" />
-    </div>
-  </div>
-</div>
-
-     <!-- 拖拽上传弹窗 -->
-<div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-  <div class="bg-white w-[500px] h-[300px] rounded shadow flex flex-col justify-center items-center border-4"
-       :class="dragOver ? 'border-blue-500 bg-blue-50' : 'border-dashed border-gray-400'"
-       @dragenter.prevent="dragOver = true"
-       @dragover.prevent
-       @dragleave.prevent="dragOver = false"
-       @drop.prevent="handleDrop">
-
-    <h2 class="text-lg font-bold mb-2">拖拽上传文件</h2>
-    <p class="text-gray-600 mb-4">可拖入多个文件，也可点击选择</p>
-
-    <input type="file" ref="dragFileInput" class="hidden" multiple @change="handleFileInputChange" />
-    <button @click="$refs.dragFileInput.click()" class="bg-blue-500 text-white px-4 py-2 rounded">选择文件</button>
-
-    <div class="mt-4 text-sm text-green-600" v-if="uploadStatus">{{ uploadStatus }}</div>
-    <button class="mt-4 text-gray-500 underline text-sm" @click="showUploadDialog = false">取消</button>
-  </div>
-</div>
-
-        <!-- 🔍 搜索弹窗 -->
-<div v-if="showSearchDialog" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center">
-  <div class="bg-white w-[500px] p-4 rounded shadow">
-    <h3 class="text-lg font-semibold mb-2">文件搜索</h3>
-    <input type="text" v-model="searchKeyword" placeholder="请输入文件名" class="border p-1 w-full mb-2">
-    <label><input type="radio" v-model="searchScope" value="current"> 当前目录</label>
-    <label><input type="radio" v-model="searchScope" value="all"> 全部磁盘</label>
-    <!-- 可扩展多目录选择 -->
-
-    <button @click="submitSearch" class="mt-2 bg-blue-500 text-white px-3 py-1 rounded">搜索</button>
-    <button @click="showSearchDialog = false" class="ml-2 text-gray-500">取消</button>
-
-    <div v-if="searchResults.length" class="mt-4 max-h-[300px] overflow-y-auto border-t pt-2">
-      <div v-for="file in searchResults" :key="file.path" class="flex justify-between text-sm border-b py-1">
-        <span>{{ file.name }}</span>
-        <button @click="goToFile(file)">打开</button>
+      <!-- ========== 文件预览弹窗 ========== -->
+      <div v-if="showPreview" class="fixed left-0 top-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded shadow-lg p-6 relative w-[95vw] max-w-2xl max-h-[90vh] flex flex-col items-center justify-center">
+          <button @click="closePreview" class="absolute right-4 top-2 text-gray-400 text-2xl font-bold">✖</button>
+          <template v-if="previewType === 'image'">
+            <img :src="previewUrl" class="max-w-full max-h-[75vh] object-contain" />
+          </template>
+          <template v-else-if="previewType === 'video'">
+            <video :src="previewUrl" controls class="w-full max-h-[70vh] rounded" />
+          </template>
+          <template v-else-if="previewType === 'audio'">
+            <audio :src="previewUrl" controls class="w-full" />
+          </template>
+          <!-- PDF预览模板保持不变 -->
+          <template v-else-if="previewType === 'pdf'">
+            <iframe :src="previewUrl" class="w-full h-[70vh]" frameborder="0"></iframe>
+          </template>
+          <template v-else-if="previewType === 'text'">
+            <pre class="w-full h-[70vh] overflow-auto bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap">{{ textContent }}</pre>
+          </template>
+          <template v-else>
+            <div>❌ 不支持在线预览</div>
+          </template>
+          <div class="mt-2 text-sm text-gray-600">{{ previewingFile?.name }}</div>
+        </div>
       </div>
-    </div>
-  </div>
-</div>
 
-<!-- 协作分享弹窗 -->
-<div v-if="showCollabShareDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-  <div class="bg-white p-6 rounded shadow-lg w-96">
-    <h2 class="text-lg font-bold mb-4">生成协作分享链接</h2>
-    <div class="mb-2">文件：{{ collabShareFile?.name }}</div>
-    <label class="block mb-2">有效期（小时）：
-      <input v-model="collabShareExpire" type="number" min="1" class="border px-2 py-1 w-full" />
-    </label>
-    <label class="block mb-4">密码（可选）：
-      <input v-model="collabSharePassword" type="text" class="border px-2 py-1 w-full" />
-    </label>
-    <div class="flex gap-2 mb-4">
-      <button @click="submitCollabShare" class="bg-pink-500 text-white px-4 py-2 rounded">生成链接</button>
-      <button @click="showCollabShareDialog=false" class="bg-gray-300 px-4 py-2 rounded">取消</button>
-    </div>
-    <div v-if="collabShareUrl">
-      <p class="text-sm mb-1">协作外链（复制给协作者）：</p>
-      <input :value="collabShareUrl" readonly class="border px-2 py-1 w-full" />
-    </div>
-    <div v-if="collabShareError" class="text-red-600 text-sm mt-2">{{ collabShareError }}</div>
-  </div>
-</div>
+      <!-- 纠删码配置弹窗 -->
+      <div v-if="ecDialogVisible" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded shadow-xl w-[400px]">
+          <h2 class="text-xl font-semibold mb-4">纠删码配置</h2>
 
+          <label class="block mb-2">纠删码方案：</label>
+          <select v-model="ecScheme" class="border px-2 py-1 w-full mb-3">
+            <option value="">不使用纠删码</option>
+            <option value="rs">Reed-Solomon</option>
+            <option value="rdp">RDP</option>
+            <option value="jcode">J-Code</option>
+            <option value="tnrdp">TN-RDP</option>
+          </select>
 
+          <label class="block mb-2">数据块数 (k)：</label>
+          <input v-model.number="k" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
+
+          <label class="block mb-2">冗余块数 (m)：</label>
+          <input v-model.number="m" type="number" min="1" class="border px-2 py-1 w-full mb-3" />
+
+          <label class="block mb-2">选择硬盘：</label>
+          <div class="space-y-2 mb-3">
+            <div v-for="disk in disks" :key="disk.mount" class="border rounded p-2">
+              <label class="flex items-center gap-2">
+                <input type="checkbox" v-model="selectedDisks" :value="disk.mount" />
+                <span class="font-mono">{{ disk.mount }}</span>
+              </label>
+              <div class="text-sm text-gray-500 ml-6">
+                <span v-if="disk.ec_scheme">
+                  已参与纠删码方案：<strong>{{ disk.ec_scheme.toUpperCase() }}</strong>
+                </span>
+                <span v-else>
+                  未参与纠删码
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 mt-4">
+            <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
+            <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分享 -->
+      <div v-if="shareDialogVisible"
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div class="bg-white p-6 rounded shadow-lg w-96">
+          <h2 class="text-lg font-bold mb-4">分享文件：{{ shareFile.name }}</h2>
+          <label class="block mb-2">有效期（小时）：
+            <input v-model="shareExpire" type="number" min="1" class="border px-2 py-1 w-full" />
+          </label>
+          <label class="block mb-4">密码（可选）：
+            <input v-model="sharePassword" type="text" class="border px-2 py-1 w-full" />
+          </label>
+          <div class="flex gap-2 mb-4">
+            <button @click="submitShare" class="bg-blue-500 text-white px-4 py-2 rounded">生成分享链接</button>
+            <button @click="shareDialogVisible=false" class="bg-gray-300 px-4 py-2 rounded">取消</button>
+          </div>
+          <div v-if="shareUrl">
+            <p class="text-sm mb-1">分享外链（复制给好友）：</p>
+            <input :value="shareUrl" readonly class="border px-2 py-1 w-full" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 拖拽上传弹窗 -->
+      <div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+        <div class="bg-white w-[500px] h-[300px] rounded shadow flex flex-col justify-center items-center border-4"
+             :class="dragOver ? 'border-blue-500 bg-blue-50' : 'border-dashed border-gray-400'"
+             @dragenter.prevent="dragOver = true"
+             @dragover.prevent
+             @dragleave.prevent="dragOver = false"
+             @drop.prevent="handleDrop">
+
+          <h2 class="text-lg font-bold mb-2">拖拽上传文件</h2>
+          <p class="text-gray-600 mb-4">可拖入多个文件，也可点击选择</p>
+
+          <input type="file" ref="dragFileInput" class="hidden" multiple @change="handleFileInputChange" />
+          <button @click="$refs.dragFileInput.click()" class="bg-blue-500 text-white px-4 py-2 rounded">选择文件</button>
+
+          <div class="mt-4 text-sm text-green-600" v-if="uploadStatus">{{ uploadStatus }}</div>
+          <button class="mt-4 text-gray-500 underline text-sm" @click="showUploadDialog = false">取消</button>
+        </div>
+      </div>
+
+      <!-- 🔍 搜索弹窗 -->
+      <div v-if="showSearchDialog" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center">
+        <div class="bg-white w-[500px] p-4 rounded shadow">
+          <h3 class="text-lg font-semibold mb-2">文件搜索</h3>
+          <input type="text" v-model="searchKeyword" placeholder="请输入文件名" class="border p-1 w-full mb-2">
+          <label><input type="radio" v-model="searchScope" value="current"> 当前目录</label>
+          <label><input type="radio" v-model="searchScope" value="all"> 全部磁盘</label>
+          <!-- 可扩展多目录选择 -->
+
+          <button @click="submitSearch" class="mt-2 bg-blue-500 text-white px-3 py-1 rounded">搜索</button>
+          <button @click="showSearchDialog = false" class="ml-2 text-gray-500">取消</button>
+
+          <div v-if="searchResults.length" class="mt-4 max-h-[300px] overflow-y-auto border-t pt-2">
+            <div v-for="file in searchResults" :key="file.path" class="flex justify-between text-sm border-b py-1">
+              <span>{{ file.name }}</span>
+              <button @click="goToFile(file)">打开</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 协作分享弹窗 -->
+      <div v-if="showCollabShareDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div class="bg-white p-6 rounded shadow-lg w-96">
+          <h2 class="text-lg font-bold mb-4">生成协作分享链接</h2>
+          <div class="mb-2">文件：{{ collabShareFile?.name }}</div>
+          <label class="block mb-2">有效期（小时）：
+            <input v-model="collabShareExpire" type="number" min="1" class="border px-2 py-1 w-full" />
+          </label>
+          <label class="block mb-4">密码（可选）：
+            <input v-model="collabSharePassword" type="text" class="border px-2 py-1 w-full" />
+          </label>
+          <div class="flex gap-2 mb-4">
+            <button @click="submitCollabShare" class="bg-pink-500 text-white px-4 py-2 rounded">生成链接</button>
+            <button @click="showCollabShareDialog=false" class="bg-gray-300 px-4 py-2 rounded">取消</button>
+          </div>
+          <div v-if="collabShareUrl">
+            <p class="text-sm mb-1">协作外链（复制给协作者）：</p>
+            <input :value="collabShareUrl" readonly class="border px-2 py-1 w-full" />
+          </div>
+          <div v-if="collabShareError" class="text-red-600 text-sm mt-2">{{ collabShareError }}</div>
+        </div>
+      </div>
+
+    </div>
   </div>
   <script src="/static/app.js"></script>
 </body>

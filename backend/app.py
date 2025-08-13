@@ -168,6 +168,8 @@ def token_required(f=None, admin_only=False):
         return decorator(f)
     return decorator
 
+
+
 # ===== 用户注册/登录 =====
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -556,6 +558,91 @@ def create_share():
         'full_url': f'{ngrok_url_global}/share/{token}' if ngrok_url_global else None  # 公网地址
     })
 
+# ===== PWA 支持路由 =====
+# 将以下代码添加到您的 app.py 文件中，放在其他 @app.route 附近
+# 在 backend/app.py 中添加或修改这些PWA路由
+
+# ===== 完整的PWA路由（放在backend/app.py中）=====
+
+@app.route('/static/pwa/manifest.json')
+def pwa_manifest():
+    """PWA应用清单 - 确保正确的HTTP头"""
+    try:
+        # 方法1：直接返回JSON数据（推荐）
+        manifest_data = {
+            "name": "NAS控制面板",
+            "short_name": "NAS",
+            "description": "个人网络存储系统管理界面",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#f7fafc",
+            "theme_color": "#2c3e50",
+            "lang": "zh-CN",
+            "scope": "/",
+            "icons": [
+                {
+                    "src": "/static/pwa/icons/icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "any maskable"
+                },
+                {
+                    "src": "/static/pwa/icons/icon-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "any maskable"
+                }
+            ]
+        }
+
+        # 创建响应，确保正确的Content-Type
+        response = jsonify(manifest_data)
+        response.headers['Content-Type'] = 'application/manifest+json'
+        response.headers['Cache-Control'] = 'public, max-age=86400'  # 缓存24小时
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        return response
+
+    except Exception as e:
+        print(f"[ERROR] Manifest路由错误: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/static/pwa/sw.js')
+def pwa_service_worker():
+    """PWA Service Worker"""
+    response = send_from_directory('../client/pwa', 'sw.js', mimetype='application/javascript')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/favicon.ico')
+def favicon():
+    """网站图标 - 使用PWA图标作为favicon"""
+    return send_from_directory('../static/pwa/icons', 'icon-192.png', mimetype='image/png')
+
+# 可选：更新测试路由以验证路径
+@app.route('/test-pwa')
+def test_pwa():
+    import os
+
+    # 获取当前工作目录 (backend目录)
+    cwd = os.getcwd()
+
+    result = {
+        'message': 'PWA路径测试 (从backend目录)',
+        'current_working_directory': cwd,
+        'files': {
+            '../client/pwa/manifest.json': os.path.exists('../client/pwa/manifest.json'),
+            '../client/pwa/sw.js': os.path.exists('../client/pwa/sw.js'),
+            '../static/pwa/icons/icon-192.png': os.path.exists('../static/pwa/icons/icon-192.png'),
+            '../static/pwa/icons/icon-512.png': os.path.exists('../static/pwa/icons/icon-512.png'),
+            '../static/index.html': os.path.exists('../static/index.html'),
+            '../static/app.js': os.path.exists('../static/app.js')
+        }
+    }
+
+    return jsonify(result)
 
 @app.route('/share/<token>', methods=['GET', 'POST'])
 def access_share(token):
