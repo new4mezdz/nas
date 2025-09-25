@@ -58,8 +58,10 @@ collaboration_v2 = CollaborationV2(app)
 onlyoffice_manager = OnlyOfficeManager(app)
 preview_sessions = {}
 # 放在 import 之后、全局区域
-EC_CFG_PATH = os.path.join(BASE_DIRS[0], "ec_config.json")
-EC_IDX_PATH = os.path.join(BASE_DIRS[0], "ec_index.json")
+# [修改] 将配置文件路径改为 app.py 所在的目录 (backend 目录)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+EC_CFG_PATH = os.path.join(BACKEND_DIR, "ec_config.json")
+EC_IDX_PATH = os.path.join(BACKEND_DIR, "ec_index.json")
 
 def _load_json(path: str, default):
     try:
@@ -364,7 +366,29 @@ def api_system():
 @app.route('/api/disk', methods=['GET'])
 @token_required()
 def api_disk():
-    return jsonify(get_disk_info())
+    # 1. 获取基础磁盘信息
+    disk_info = get_disk_info()
+
+    # 2. 读取纠删码配置
+    ec_cfg = _load_json(EC_CFG_PATH, {})
+    ec_disks = set()
+    ec_scheme_name = None
+
+    if ec_cfg and ec_cfg.get("disks"):
+        # 将配置中的磁盘路径也进行规范化，以便比较
+        ec_disks = set(_norm_abs(d) for d in ec_cfg.get("disks", []))
+        ec_scheme_name = ec_cfg.get("scheme", "rs").upper()
+
+    # 3. 遍历磁盘信息，为参与纠删码的硬盘添加标记
+    for disk in disk_info:
+        # 规范化当前磁盘的挂载点
+        normalized_mount = _norm_abs(disk.get("mount", ""))
+        if normalized_mount in ec_disks:
+            disk['ec_scheme'] = ec_scheme_name
+        else:
+            disk['ec_scheme'] = None
+
+    return jsonify(disk_info)
 
 
 # 获取可用盘符
@@ -749,16 +773,31 @@ def api_ngrok_url():
 
 # ====== /api/ec_config：支持 GET（查看）与 POST（保存）======
 # ===== /api/ec_config：保存时对 disks 做 _norm_abs 归一化 =====
-@app.route("/api/ec_config", methods=["GET", "POST"])
+# ===== /api/ec_config：支持 GET（查看）、POST（保存）和 DELETE（删除）=====
+@app.route("/api/ec_config", methods=["GET", "POST", "DELETE"])
 @token_required()
 def api_ec_config():
     """
-    GET  返回当前纠删码配置与容量评估
-    POST 保存纠删码配置（scheme=rs, k, m, disks），归一化 disks，创建各盘 encoded/ 目录，并返回容量评估
+    GET    返回当前纠删码配置与容量评估
+    POST   保存纠删码配置（scheme=rs, k, m, disks），归一化 disks，创建各盘 encoded/ 目录，并返回容量评估
+    DELETE 删除纠删码配置，清空设置
     """
+    # 新增：处理DELETE请求
+    if request.method == "DELETE":
+        try:
+            # 删除配置文件
+            if os.path.exists(EC_CFG_PATH):
+                os.remove(EC_CFG_PATH)
+            # 删除索引文件
+            if os.path.exists(EC_IDX_PATH):
+                os.remove(EC_IDX_PATH)
+            return jsonify({"success": True, "message": "纠删码配置已成功删除"})
+        except Exception as e:
+            return jsonify({"error": f"删除配置失败: {str(e)}"}), 500
+
+    # ----- 原有的GET和POST逻辑保持不变 -----
     def _capacity_estimate(disks_norm: list, k: int):
-        info = get_disk_info()  # 已包含真实盘 + 模拟盘
-        # 建立“归一化 mount -> info”映射
+        info = get_disk_info()
         info_map = { _norm_abs(d["mount"]): d for d in info if "mount" in d }
         sizes = []
         for d in disks_norm:
@@ -767,7 +806,6 @@ def api_ec_config():
                 total = int(di.get("bytes_total") or di.get("total") or 0)
                 free  = int(di.get("bytes_free")  or di.get("free")  or 0)
             else:
-                # 兜底：直接看该路径所在卷的容量
                 try:
                     import shutil
                     du = shutil.disk_usage(d)
@@ -809,7 +847,6 @@ def api_ec_config():
     if k <= 0 or m <= 0:
         return jsonify({"error": "k 和 m 必须为正整数"}), 400
 
-    # 归一化 + 去重（保持顺序）
     seen = set()
     disks_norm = []
     for d in raw_disks:
@@ -821,28 +858,23 @@ def api_ec_config():
     if len(disks_norm) < k + m:
         return jsonify({"error": f"磁盘数量不足，需要 ≥ k+m = {k+m}"}), 400
 
-    # 校验：必须在 get_disk_info() 返回的挂载/目录集合中（已包含模拟盘）
     mounts = { _norm_abs(d["mount"]) for d in get_disk_info() }
     invalid = [orig for orig in raw_disks if _norm_abs(orig) not in mounts]
     if invalid:
         return jsonify({"error": "存在无效磁盘", "invalid": invalid}), 400
 
-    # 准备各盘 encoded 目录
     try:
         for d in disks_norm:
             os.makedirs(os.path.join(d, "encoded"), exist_ok=True)
     except Exception as e:
         return jsonify({"error": f"无法创建 encoded 目录：{e}"}), 500
 
-    # 保存配置（写入归一化后的 disks）
     cfg = {"scheme": scheme, "k": k, "m": m, "disks": disks_norm}
     _save_json(EC_CFG_PATH, cfg)
 
-    # 初始化索引文件（如不存在）
     if not os.path.exists(EC_IDX_PATH):
         _save_json(EC_IDX_PATH, {"files": {}})
 
-    # 容量评估（基于归一化后的 disks）
     capacity = _capacity_estimate(disks_norm, k)
 
     return jsonify({
@@ -919,82 +951,100 @@ def api_encode():
 @app.route('/api/upload', methods=['POST'])
 @token_required()
 def upload_file_with_ec():
-    uploaded_file = request.files.get('file')
-    rel_path = request.form.get('path', '/')
-    if not uploaded_file or not uploaded_file.filename:
+    uploaded_files = request.files.getlist('file')
+    upload_path = request.form.get('path', '/')
+
+    if not uploaded_files or not all(f.filename for f in uploaded_files):
         return jsonify({'error': '未提供文件'}), 400
 
-    # 逻辑盘：自动 RS
-    if _is_ec_volume(rel_path):
+    # 逻辑盘：自动 RS (此部分逻辑是正确的，无需修改)
+    if _is_ec_volume(upload_path):
         ec_cfg = _load_json(EC_CFG_PATH, {})
         if not ec_cfg or ec_cfg.get("scheme", "").lower() != "rs":
             return jsonify({'error': '未配置或未启用RS纠删码'}), 400
 
-        k = int(ec_cfg.get("k") or 0)
-        m = int(ec_cfg.get("m") or 0)
-        disks = ec_cfg.get("disks") or []
-        if k <= 0 or m <= 0 or len(disks) < k + m:
-            return jsonify({'error': 'RS参数无效或磁盘数量不足'}), 400
+        k = int(ec_cfg.get("k", 0))
+        m = int(ec_cfg.get("m", 0))
+        disks = ec_cfg.get("disks", [])
 
-        data = uploaded_file.read()
-        try:
-            shards = rs_encode(data, k, m)
-        except Exception as e:
-            return jsonify({'error': f'纠删码编码失败: {e}'}), 500
+        if k <= 0: return jsonify({'error': 'RS参数无效：k值必须大于0'}), 400
+        if m <= 0: return jsonify({'error': 'RS参数无效：m值必须大于0'}), 400
+        if len(disks) < k + m: return jsonify(
+            {'error': f'RS参数无效：磁盘数量 ({len(disks)}) 不足，需要至少 k+m ({k + m}) 个'}), 400
 
-        shard_size = len(shards[0]) if shards else 0
-        file_sha = hashlib.sha256(data).hexdigest()
+        for uploaded_file in uploaded_files:
+            data = uploaded_file.read()
+            try:
+                shards = rs_encode(data, k, m)
+            except Exception as e:
+                return jsonify({'error': f'文件 {uploaded_file.filename} 纠删码编码失败: {e}'}), 500
 
-        # 解析逻辑盘内相对路径：/ec_volume、/ec_volume/sub/、/ec_volume/sub/xx
-        base = rel_path.replace("\\", "/").strip("/")
-        rel_in_volume = base.split("/", 1)[1] if "/" in base else ""
-        # 如果 rel_in_volume 是目录，就把文件名拼上
-        if rel_in_volume and rel_in_volume.endswith("/"):
-            logical_name = os.path.join(rel_in_volume, uploaded_file.filename)
-        elif rel_in_volume and rel_in_volume != uploaded_file.filename:
-            # 可能传的是 /ec_volume/sub/xx.txt
-            logical_name = rel_in_volume
-        else:
-            logical_name = uploaded_file.filename
-        logical_name = logical_name.replace("\\", "/").lstrip("/")
+            shard_size = len(shards[0]) if shards else 0
+            file_sha = hashlib.sha256(data).hexdigest()
 
-        meta = {"k": k, "m": m, "shard_size": shard_size, "original_size": len(data), "sha256": file_sha}
+            norm_path = upload_path.replace("\\", "/").strip("/")
+            rel_in_volume = '' if norm_path == 'ec_volume' else norm_path[len('ec_volume/'):]
+            logical_name = os.path.join(rel_in_volume, uploaded_file.filename).replace("\\", "/")
+            meta = {"k": k, "m": m, "shard_size": shard_size, "original_size": len(data), "sha256": file_sha}
 
-        try:
-            for i, disk in enumerate(disks[:k + m]):
-                enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
-                os.makedirs(enc_dir, exist_ok=True)
-                with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.blk_{i}"), "wb") as f:
-                    f.write(shards[i])
-                with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.meta.json"), "w", encoding="utf-8") as mf:
-                    json.dump(meta, mf, ensure_ascii=False)
-        except Exception as e:
-            # 尽力回滚
-            for i, disk in enumerate(disks[:k + m]):
-                try:
+            try:
+                for i, disk in enumerate(disks[:k + m]):
                     enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
-                    os.remove(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.blk_{i}"))
-                except Exception:
-                    pass
-            return jsonify({'error': f'写入分片失败: {e}'}), 500
+                    os.makedirs(enc_dir, exist_ok=True)
+                    with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.blk_{i}"), "wb") as f:
+                        f.write(shards[i])
+                    with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.meta.json"), "w",
+                              encoding="utf-8") as mf:
+                        json.dump(meta, mf, ensure_ascii=False)
+            except Exception as e:
+                return jsonify({'error': f'写入分片失败: {e}'}), 500
 
-        # 索引登记（key 用逻辑盘相对路径）
-        idx = _load_json(EC_IDX_PATH, {"files": {}})
-        idx["files"][logical_name] = {
-            "size": len(data), "k": k, "m": m, "sha256": file_sha,
-            "disks": disks, "ctime": int(time.time())
-        }
-        _save_json(EC_IDX_PATH, idx)
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+            idx["files"][logical_name] = {"size": len(data), "k": k, "m": m, "sha256": file_sha, "disks": disks,
+                                          "ctime": int(time.time())}
+            _save_json(EC_IDX_PATH, idx)
 
-        return jsonify({'success': True, 'message': '文件已写入逻辑盘并完成RS编码', 'name': logical_name})
+        return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件已写入逻辑盘并完成RS编码'})
 
     # 普通目录：原样保存
-    filename = uploaded_file.filename
-    target_path = os.path.join(BASE_DIRS[0], rel_path.lstrip('/\\'), filename)
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    uploaded_file.save(target_path)
-    return jsonify({'success': True, 'message': '文件上传成功（未使用纠删码）'})
+    else:
+        try:
+            # [最终修复] 直接使用前端发送的完整路径，并进行安全校验
 
+            # 1. 验证路径中是否包含盘符
+            drive, _ = os.path.splitdrive(upload_path)
+            if not drive:
+                return jsonify({'error': '上传路径格式错误，缺少盘符'}), 400
+
+            drive = drive.upper().replace('\\', '/')
+            if not os.path.exists(drive):
+                return jsonify({'error': f'磁盘 {drive} 不存在'}), 404
+
+            # 2. 将前端路径直接转换为绝对路径，作为目标目录
+            target_dir = os.path.abspath(upload_path)
+
+            # 3. 安全检查：确保目标目录在我们期望的盘符下
+            if not target_dir.upper().startswith(drive):
+                return jsonify({'error': f'非法上传路径: {target_dir}'}), 403
+
+            # 4. 创建目标目录
+            os.makedirs(target_dir, exist_ok=True)
+
+            for uploaded_file in uploaded_files:
+                filename = uploaded_file.filename
+                target_path = os.path.join(target_dir, filename)
+
+                # 最终的安全检查
+                if not os.path.abspath(target_path).upper().startswith(drive):
+                    return jsonify({'error': f'非法的最终文件路径: {target_path}'}), 403
+
+                uploaded_file.save(target_path)
+
+            return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件上传成功'})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'处理上传时发生严重错误: {e}'}), 500
 
 
 @app.route('/api/list', methods=['GET'])
@@ -1271,52 +1321,97 @@ ngrok_url_global = None  # 👈 全局变量保存公网地址
 
 
 def start_ngrok():
+    """
+    一个更健壮的 ngrok 启动函数。
+    它会清理旧进程、轮询API状态，并在失败时提供调试信息。
+    """
     global ngrok_url_global
     print("⚙️ 正在启动 ngrok...")
 
-    # 检查ngrok是否可用
-    try:
-        # ===== 这是修改后的代码 =====
-        ngrok_proc = subprocess.Popen(
-            [NGROK_PATH, 'http', str(FLASK_PORT)]
-            # 这里不再需要 stdout 和 stderr 参数
-        )
-        time.sleep(2)
-        ngrok_url = None
+    # 确保 ngrok.exe 存在
+    if not os.path.exists(NGROK_PATH):
+        print(f"❌ ngrok.exe 未找到，路径: {NGROK_PATH}")
+        print("💡 提示：ngrok 不是必需的，程序将在本地模式下运行")
+        return None, None
 
-        for i in range(5):  # 减少重试次数
+    # 尝试终止已有的 ngrok 进程，避免冲突
+    try:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/F', '/IM', 'ngrok.exe'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(['killall', 'ngrok'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("🧹 已清理旧的 ngrok 进程。")
+    except Exception:
+        pass # 忽略错误，因为可能没有旧进程在运行
+
+    ngrok_proc = None
+    try:
+        # 启动 ngrok 进程
+        ngrok_proc = subprocess.Popen(
+            [NGROK_PATH, 'http', str(FLASK_PORT)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        ngrok_url = None
+        # 等待 ngrok API 可用 (最多等待约15秒)
+        for i in range(15):
+            time.sleep(1)
             try:
-                print(f"⌛ 尝试获取 ngrok 地址（第 {i + 1} 次）")
-                r = requests.get(
-                    'http://127.0.0.1:4040/api/tunnels',
-                    headers={"Accept": "application/json"},
-                    timeout=3  # 增加超时时间
-                ).json()
-                for t in r.get('tunnels', []):
-                    if t['proto'] == 'https':
-                        ngrok_url = t['public_url']
+                # 检查 ngrok 进程是否意外退出
+                if ngrok_proc.poll() is not None:
+                    print("❌ ngrok 进程意外终止。")
+                    break
+
+                # 尝试连接 ngrok 的本地 API
+                r = requests.get('http://127.0.0.1:4040/api/tunnels', timeout=2)
+                r.raise_for_status()
+                data = r.json()
+
+                # 解析 HTTPS 隧道地址
+                for tunnel in data.get('tunnels', []):
+                    if tunnel.get('proto') == 'https' and tunnel.get('public_url'):
+                        ngrok_url = tunnel['public_url']
                         break
                 if ngrok_url:
                     break
+            except requests.exceptions.RequestException:
+                if i < 14:
+                    print(f"⏳ ngrok API 尚未就绪，正在重试... ({i+1}/15)")
+                continue # API 还未就绪，继续等待
             except Exception as e:
-                print(f"❌ 获取地址时异常（第 {i + 1} 次）: {e}")
-                time.sleep(2)
+                print(f"❌ 获取 ngrok 地址时出错: {e}")
+                break
 
         if ngrok_url:
-            print('✅ ngrok 公网地址:', ngrok_url)
+            print(f"✅ ngrok 公网地址: {ngrok_url}")
             ngrok_url_global = ngrok_url
             return ngrok_url, ngrok_proc
         else:
-            print('❌ ngrok 启动失败，将使用本地模式运行')
-            ngrok_proc.terminate()
+            print('❌ ngrok 启动失败，无法获取公网地址。')
+            if ngrok_proc:
+                print("--- ngrok 输出日志 ---")
+                ngrok_proc.terminate() # 终止进程以释放资源
+                try:
+                    # 等待并获取所有输出
+                    stdout, _ = ngrok_proc.communicate(timeout=5)
+                    print(stdout if stdout else "(无输出)")
+                except subprocess.TimeoutExpired:
+                    print("(读取输出超时)")
+                print("--------------------")
             return None, None
 
-    except Exception as e:
-        print(f'❌ ngrok 启动失败: {e}')
-        print('💡 提示：ngrok 不是必需的，程序将在本地模式下运行')
+    except FileNotFoundError:
+        print(f"❌ ngrok 启动失败: 未找到 ngrok.exe。请确保它位于 '{NGROK_PATH}'")
         return None, None
-
-
+    except Exception as e:
+        print(f'❌ ngrok 启动时发生严重错误: {e}')
+        if ngrok_proc:
+            ngrok_proc.terminate()
+        return None, None
 # ========== 你的 Flask 路由、逻辑在这里 ==========
 
 

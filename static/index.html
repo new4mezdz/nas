@@ -409,7 +409,7 @@ console.log('PWA 状态:', {
       <div class="mb-4 flex space-x-4">
         <button @click="showChangePasswordForm" class="bg-gray-500 text-white px-3 py-1 rounded">修改密码</button>
         <button v-if="user.is_admin" @click="showUserAdmin=true" class="bg-indigo-500 text-white px-3 py-1 rounded">用户管理</button>
-        <button @click="ecDialogVisible = true" class="bg-gray-700 text-white px-4 py-2 rounded">打开纠删码配置</button>
+        <button @click="openEcDialog" class="bg-gray-700 text-white px-4 py-2 rounded">打开纠删码配置</button>
       </div>
 
       <!-- 管理员用户管理界面 -->
@@ -485,29 +485,42 @@ console.log('PWA 状态:', {
               <th class="py-2 px-1">纠删码方案</th>
             </tr>
           </thead>
-          <tbody>
-            <!-- ======= 逻辑卷（纠删码磁盘合并） ======= -->
-            <tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
-              <td class="py-1 px-1">[纠删码卷]</td>
-              <td class="py-1 px-1">--</td>
-              <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
-              <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
-              <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
-              <td class="py-1 px-1">{{ ecDiskGroup.ec_scheme }}</td>
-            </tr>
+          <!-- ... table a thead 保持不变 ... -->
+<!-- ... table a thead 保持不变 ... -->
+<tbody>
+  <!-- ======= 新增：逻辑卷（纠删码磁盘合并） ======= -->
+  <tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
+    <td class="py-1 px-1">[纠删码卷]</td>
+    <td class="py-1 px-1">--</td>
+    <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
+    <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
+    <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
+    <td class="py-1 px-1">
+      <span class="bg-yellow-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+        {{ ecDiskGroup.ec_scheme }}
+      </span>
+    </td>
+  </tr>
 
-            <!-- ======= 非纠删码磁盘列表 ======= -->
-            <tr v-for="disk in nonECDiskList" :key="disk.mount"
-                class="border-b hover:bg-gray-100 cursor-pointer"
-                @click="goDisk(disk.mount)">
-              <td class="py-1 px-1">{{ disk.mount }}</td>
-              <td class="py-1 px-1">{{ disk.fstype }}</td>
-              <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
-              <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
-              <td class="py-1 px-1">{{ disk.percent }}%</td>
-              <td class="py-1 px-1">{{ disk.ec_scheme || '-' }}</td>
-            </tr>
-          </tbody>
+  <!-- ======= 修改：只显示非纠删码的物理磁盘列表 ======= -->
+  <tr v-for="disk in nonECDiskList" :key="disk.mount"
+      class="border-b hover:bg-gray-100 cursor-pointer"
+      @click="goDisk(disk.mount)">
+    <td class="py-1 px-1">{{ disk.mount }}</td>
+    <td class="py-1 px-1">{{ disk.fstype }}</td>
+    <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
+    <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
+    <td class="py-1 px-1">{{ disk.percent }}%</td>
+    <td class="py-1 px-1">
+      <!-- 物理盘上的纠删码标记保持不变 -->
+      <span v-if="disk.ec_scheme" class="bg-indigo-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+        {{ disk.ec_scheme }}
+      </span>
+      <span v-else>-</span>
+    </td>
+  </tr>
+</tbody>
+<!-- ... </table> 结束 ... -->
         </table>
       </div>
 
@@ -710,10 +723,11 @@ console.log('PWA 状态:', {
             </div>
           </div>
 
-          <div class="flex justify-end gap-2 mt-4">
-            <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
-            <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
-          </div>
+           <div class="flex justify-end gap-2 mt-4">
+  <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
+  <button v-if="ec.config" @click="deleteEcConfig" class="bg-red-600 text-white px-4 py-2 rounded">删除配置</button>
+  <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
+           </div>
         </div>
       </div>
 

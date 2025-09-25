@@ -15,7 +15,7 @@ from common import BASE_DIRS  # 你的项目已有
 
 
 # 可按需调整：最多自动发现多少个 sim_disk 目录
-SIM_DISK_COUNT = 5
+SIM_DISK_COUNT = 0
 
 
 def _norm_abs(path: str) -> str:

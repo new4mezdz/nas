@@ -80,6 +80,8 @@ const app = Vue.createApp({
       k: 4,
       m: 2,
       selectedDisks: [],
+      ec: {             // <--- 关键：创建一个 ec 对象
+       config: null   }, // <--- 在 ec 对象内部初始化 config
 
       // 协作分享弹窗
       showCollabShareDialog: false,
@@ -92,35 +94,75 @@ const app = Vue.createApp({
   },
 
   computed: {
-    // 非纠删码磁盘列表
-    nonECDiskList() {
-      return this.disks.filter(d => !d.ec_scheme);
-    },
-
-    // 合并显示纠删码磁盘为一个逻辑卷
-    ecDiskGroup() {
-      const ecDisks = this.disks.filter(d => d.ec_scheme);
-      if (ecDisks.length === 0) return null;
-
-      const total = ecDisks.reduce((sum, d) => sum + d.total, 0);
-      const used = ecDisks.reduce((sum, d) => sum + d.used, 0);
-      const percent = Math.round((used / total) * 1000) / 10;
-
-      return {
-        total,
-        used,
-        percent,
-        ec_scheme: ecDisks[0].ec_scheme // 默认用第一个的方案名
-      };
-    },
-
-    // 文件是否全选
-    allSelected() {
-      return this.fileList.length > 0 && this.selectedFiles.length === this.fileList.length;
+     // ===== 用这个完整的块替换现有的 computed =====
+  ecDiskGroup() {
+    const ecDisks = this.disks.filter(d => d.ec_scheme);
+    if (ecDisks.length === 0) {
+      return null;
     }
+    const total = ecDisks.reduce((sum, disk) => sum + disk.total, 0);
+    const used = ecDisks.reduce((sum, disk) => sum + disk.used, 0);
+    return {
+      total,
+      used,
+      percent: total > 0 ? Math.round((used / total) * 100) : 0,
+      ec_scheme: ecDisks[0].ec_scheme
+    };
+  },
+  nonECDiskList() {
+    return this.disks.filter(d => !d.ec_scheme);
+  },
+  isAnyFileSelected() {
+    return this.selectedFiles.length > 0;
+  },
+  selectAll: {
+    get() {
+      return this.fileList.length > 0 && this.selectedFiles.length === this.fileList.length;
+    },
+    set(value) {
+      this.selectedFiles = value ? [...this.fileList] : [];
+    }
+  },
+  breadcrumbs() {
+      if (this.currentPath.startsWith('ec_volume')) {
+          const base = [{ name: '[纠删码卷]', path: 'ec_volume' }];
+          const subPath = this.currentPath.substring('ec_volume'.length).replace(/^\//, '');
+          if (!subPath) return base;
+
+          const parts = subPath.split('/').filter(p => p);
+          let path = 'ec_volume';
+          for (const part of parts) {
+              path += '/' + part;
+              base.push({ name: part, path: path });
+          }
+          return base;
+      }
+
+      if (this.currentPath === '/') return [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+      const parts = this.currentPath.split('/').filter(p => p);
+      let path = '';
+      const crumbs = [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+      for (const part of parts) {
+          path += '/' + part;
+          crumbs.push({ name: part, path: path });
+      }
+      return crumbs;
+  }
+  // ==========================
   },
 
   methods: {
+
+       // 在 methods 中添加这两个函数
+    goECVolume() {
+  // 点击纠删码卷时，加载其文件列表
+  this.loadFileList('ec_volume');
+},
+    goDisk(mount) {
+  // 点击物理磁盘时，切换当前盘符并加载根目录
+  this.currentDrive = mount;
+  this.loadFileList('/');
+},
     // 登录、注册、登出
     showLoginForm() {
       this.showRegister = false; this.errorMessage = ''; this.infoMessage = '';
@@ -296,6 +338,7 @@ const app = Vue.createApp({
       if (this._sysTimer) clearInterval(this._sysTimer);
     },
 
+
     // ========== 文件管理 ==========
     async submitSearch() {
       if (!this.searchKeyword.trim()) {
@@ -349,28 +392,47 @@ const app = Vue.createApp({
 
     loadFileList(path, callback) {
       const token = localStorage.getItem("token");
-      // 添加盘符前缀
-      const fullPath = this.currentDrive + path.replace(/^\//, '');
+      let fullPath; // 声明一个变量来存储最终路径
+
+      // [新增逻辑] 检查路径是否是纠删码卷
+      if (path.startsWith('ec_volume')) {
+        // 如果是，直接使用 'ec_volume' 或 'ec_volume/...' 作为路径
+        fullPath = path;
+      } else {
+        // 如果是普通物理磁盘路径，才拼接盘符
+        fullPath = this.currentDrive + path.replace(/^\//, '');
+      }
 
       fetch(`/api/list?path=${encodeURIComponent(fullPath)}`, {
         headers: { "Authorization": `Bearer ${token}` }
       })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) { // 新增：检查响应状态，更好地处理404等错误
+            throw new Error(`服务器错误: ${res.status} ${res.statusText}`);
+          }
+          return res.json();
+        })
         .then(data => {
           if (data.success) {
             this.fileList = data.items;
             this.currentPath = path;
 
-            // 更新用户当前目录到后端
-            this.updateCurrentDirectory(path);
+            // [新增逻辑] 只有物理磁盘路径才需要更新到后端
+            if (!path.startsWith('ec_volume')) {
+              this.updateCurrentDirectory(path);
+            }
 
             if (callback) callback();
           } else {
-            alert("❌ 加载失败：" + (data.error || ""));
+            alert("❌ 加载失败：" + (data.error || "未知错误"));
           }
+        })
+        .catch(err => {
+            // 新增：捕获 fetch 错误（包括我们自己抛出的）
+            console.error("加载文件列表时出错:", err);
+            alert("❌ 加载失败：" + err.message);
         });
     },
-
     goDir(name) {
       // 拼接新路径
       let newPath = this.currentPath;
@@ -383,9 +445,7 @@ const app = Vue.createApp({
       this.loadFileList(newPath);
     },
 
-    goECVolume() {
-      this.loadFileList('/ec_volume');  // 这个路径在后端中会映射为第一个 EC 磁盘
-    },
+
 
     formatSize(size) {
       if (!size) return "-";
@@ -530,11 +590,7 @@ const app = Vue.createApp({
         });
     },
 
-    goDisk(mountPath) {
-      // 将 Windows 的反斜杠路径转换为 URL 兼容形式
-      const path = mountPath.replace(/\\/g, '/');
-      this.loadFileList(path);
-    },
+
 
     goParent() {
       if (this.currentPath === '/' || this.currentPath === '') return;
@@ -748,23 +804,94 @@ buildFullPath(fileName) {
 
   return fullPath;
 },
+
+    // ===================================
+// 纠删码 (EC)
+// ===================================
+async openEcDialog() {
+  this.ecDialogVisible = true;
+  // 使用 this.ec.config
+  this.ec.config = null;
+  try {
+    const res = await axios.get('/api/ec_config');
+    if (res.data.success && res.data.config) {
+      // 使用 this.ec.config
+      this.ec.config = res.data.config;
+      this.ecScheme = this.ec.config.scheme;
+      this.k = this.ec.config.k;
+      this.m = this.ec.config.m;
+      this.selectedDisks = this.ec.config.disks;
+    } else {
+      // 没有配置时，重置表单为默认值
+      this.ecScheme = 'rs';
+      this.k = 4;
+      this.m = 2;
+      this.selectedDisks = [];
+    }
+  } catch (e) {
+    alert('加载纠删码配置失败: ' + (e.response?.data?.error || e.message));
+    this.ecDialogVisible = false;
+  }
+},
+async loadDisks() {
+      try {
+        // 向 /api/disk 发送GET请求
+        const res = await axios.get('/api/disk');
+        // 用返回的数据更新 disks 数组
+        this.disks = res.data;
+      } catch (e) {
+        // 如果出错，在控制台打印错误，避免干扰用户
+        console.error("加载磁盘列表失败:", e);
+        alert('无法刷新磁盘列表，请检查后端服务。');
+      }
+    },
+async deleteEcConfig() {
+  if (!confirm('您确定要删除纠删码配置吗？\n此操作不可逆！')) {
+    return;
+  }
+  try {
+    const res = await axios.delete('/api/ec_config');
+    if (res.data.success) {
+      alert('纠删码配置已删除。');
+      // 使用 this.ec.config
+      this.ec.config = null;
+      this.ecDialogVisible = false;
+      this.loadDisks();
+    } else {
+      alert('删除失败: ' + (res.data.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('删除配置时出错: ' + (e.response?.data?.error || e.message));
+  }
+},
     // ========== 纠删码 ==========
     async applyECScheme() {
+      if (this.selectedDisks.length < this.k + this.m) {
+        alert(`至少需要选择 ${this.k + this.m} 个硬盘`);
+        return;
+      }
       try {
-        const payload = {
+        const res = await axios.post('/api/ec_config', {
           scheme: this.ecScheme,
+          k: this.k,
+          m: this.m,
           disks: this.selectedDisks
-        };
+        });
+        if (res.data.success) {
+          alert('纠删码配置已应用');
 
-        if (this.ecScheme) {
-          payload.k = this.k;
-          payload.m = this.m;
+          // ===== 新增的关键代码：在成功后立即更新前端状态 =====
+          // 后端在保存成功后会返回新的配置信息，我们用它来更新 this.ec.config
+          this.ec.config = res.data.config;
+          // =================================================
+
+          this.ecDialogVisible = false;
+          this.loadDisks(); // 重新加载磁盘信息
+        } else {
+          alert('应用失败: ' + res.data.error);
         }
-
-        const res = await axios.post('/api/ec_config', payload);
-        alert(res.data.message || "配置已应用");
       } catch (e) {
-        alert(e.response?.data?.error || "配置失败");
+        alert('应用配置时出错: ' + (e.response?.data?.error || e.message));
       }
     },
 
@@ -909,7 +1036,48 @@ async createPdfPreviewSession(filePath, token) {
     }
   }
 },
-
+// ===================================
+    // 纠删码 (EC) - 新增/修改的函数
+    // ===================================
+    async openEcDialog() {
+      this.ecDialogVisible = true;
+      this.ecConfig = null; // 每次打开时重置
+      try {
+        const res = await axios.get('/api/ec_config');
+        if (res.data.success && res.data.config) {
+          this.ecConfig = res.data.config;
+          // 将服务器的现有配置填充到表单中
+          this.ecScheme = this.ecConfig.scheme;
+          this.k = this.ecConfig.k;
+          this.m = this.ecConfig.m;
+          this.selectedDisks = this.ecConfig.disks;
+        } else {
+          // 如果没有配置，确保表单是空的或使用默认值
+          this.selectedDisks = [];
+        }
+      } catch (e) {
+        alert('加载纠删码配置失败: ' + (e.response?.data?.error || e.message));
+        this.ecDialogVisible = false; // 加载失败则关闭弹窗
+      }
+    },
+    async deleteEcConfig() {
+      if (!confirm('您确定要删除纠删码配置吗？\n此操作不可逆！')) {
+        return;
+      }
+      try {
+        const res = await axios.delete('/api/ec_config');
+        if (res.data.success) {
+          alert('纠删码配置已删除。');
+          this.ecConfig = null; // 清空前端的配置
+          this.ecDialogVisible = false; // 关闭弹窗
+          this.loadDisks(); // 重新加载磁盘信息以更新状态
+        } else {
+          alert('删除失败: ' + (res.data.error || '未知错误'));
+        }
+      } catch (e) {
+        alert('删除配置时出错: ' + (e.response?.data?.error || e.message));
+      }
+    },
 
 
     // ========== 修复fetchTextContent ==========
@@ -1103,7 +1271,24 @@ closePreview() {
     alert('创建协作会话失败: ' + (error.response?.data?.error || error.message));
   }
 },
-
+async deleteEcConfig() {
+  if (!confirm('您确定要删除纠删码配置吗？\n此操作将移除服务器上的配置文件，但不会删除已有的数据分片。\n此操作不可逆！')) {
+    return;
+  }
+  try {
+    const res = await axios.delete('/api/ec_config');
+    if (res.data.success) {
+      alert('纠删码配置已成功删除。');
+      // 重置前端数据以更新UI
+      this.ec.config = null;
+      this.showEcDialog = false; // 关闭弹窗
+    } else {
+      alert('删除失败: ' + (res.data.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('删除配置时出错: ' + (e.response?.data?.error || e.message));
+  }
+},
 
     // 打开Office文档协作编辑
     async openOfficeCollabEdit(item, fullPath) {
