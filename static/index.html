@@ -531,11 +531,13 @@ console.log('PWA 状态:', {
         <!-- 盘符选择器 -->
         <div class="mb-4 flex items-center space-x-2">
           <label class="text-sm font-medium">当前盘符：</label>
-          <select v-model="currentDrive" @change="switchDrive(currentDrive)" class="border px-2 py-1 rounded">
-            <option v-for="drive in availableDrives" :key="drive.drive" :value="drive.drive">
-              {{ drive.drive }} ({{ formatSize(drive.total) }}, {{ drive.percent }}% 已用)
+          <!-- ===== 用这个新的 select 块替换旧的 ===== -->
+          <select v-model="currentDrive" @change="changeDrive" class="border rounded px-2 py-1 bg-white shadow-sm focus:ring-2 focus:ring-blue-500">
+            <option v-for="loc in navigableLocations" :key="loc.path" :value="loc.path">
+              {{ loc.name }}
             </option>
           </select>
+          <!-- ======================================== -->
           <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
         </div>
 

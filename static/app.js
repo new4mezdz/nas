@@ -94,6 +94,23 @@ const app = Vue.createApp({
   },
 
   computed: {
+    // ===== 新增：用于驱动下拉菜单的计算属性 =====
+  navigableLocations() {
+    // 先添加物理硬盘
+    const locations = this.availableDrives.map(drive => ({
+      name: `物理磁盘 (${drive})`,
+      path: drive
+    }));
+
+    // 如果纠删码卷存在，就把它加到列表的最前面
+    if (this.ecDiskGroup) {
+      locations.unshift({
+        name: '[纠删码卷]',
+        path: 'ec_volume'
+      });
+    }
+    return locations;
+  },
      // ===== 用这个完整的块替换现有的 computed =====
   ecDiskGroup() {
     const ecDisks = this.disks.filter(d => d.ec_scheme);
@@ -261,7 +278,19 @@ const app = Vue.createApp({
         this.pwMsg = err.response?.data?.error || "修改失败";
       }
     },
+ // 用这个新版本来替换
+changeDrive() {
+  // this.currentDrive 会被 v-model 自动更新
+  const selectedPath = this.currentDrive;
 
+  if (selectedPath.startsWith('ec_volume')) {
+    // 如果用户选择了纠删码卷
+    this.loadFileList('ec_volume');
+  } else {
+    // 如果用户选择的是物理硬盘，行为和以前一样
+    this.loadFileList('/');
+  }
+},
     // 更新用户当前目录
     async updateCurrentDirectory(path) {
       try {

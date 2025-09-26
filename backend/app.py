@@ -594,27 +594,38 @@ def preview_file():
         traceback.print_exc()
         return jsonify({'error': f'预览处理失败: {str(e)}'}), 500
 
+# ===== [最终修复 2/3] 重写 mkdir 函数 =====
 @app.route('/api/mkdir', methods=['POST'])
 @token_required()
 def mkdir():
     data = request.get_json()
-    parent = data.get('parent', '/')
+    parent = data.get('parent', '')
     name = data.get('name', '').strip()
-    if not name:
-        return jsonify({'error': '文件夹名不能为空'}), 400
-    # 拼接路径并校验
-    safe_parent = parent.lstrip('/\\')
-    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], safe_parent, name))
-    if not abs_path.startswith(BASE_DIRS[0]):
-        return jsonify({'error': '路径非法'}), 400
-    try:
-        os.makedirs(abs_path, exist_ok=False)
-        return jsonify({'success': True})
-    except FileExistsError:
-        return jsonify({'error': '文件夹已存在'}), 400
-    except Exception as e:
-        return jsonify({'error': '创建失败: ' + str(e)}), 500
+    if not name: return jsonify({'error': '文件夹名不能为空'}), 400
+    if not parent: return jsonify({'error': '父路径不能为空'}), 400
 
+    # --- 分支 1: 处理纠删码卷 (虚拟创建) ---
+    if _is_ec_volume(parent):
+        return jsonify({'success': True, 'message': '虚拟目录将在上传文件后自动体现'})
+
+    # --- 分支 2: 处理物理硬盘 ---
+    else:
+        try:
+            parent_abs_path = os.path.abspath(parent)
+            new_dir_abs_path = os.path.join(parent_abs_path, name)
+            allowed = False
+            for base_dir in get_available_drives():
+                if parent_abs_path.upper().startswith(os.path.abspath(base_dir).upper()):
+                    allowed = True
+                    break
+            if not allowed:
+                return jsonify({'error': '路径非法或不允许访问的磁盘'}), 403
+            os.makedirs(new_dir_abs_path, exist_ok=False)
+            return jsonify({'success': True})
+        except FileExistsError:
+            return jsonify({'error': '文件夹已存在'}), 400
+        except Exception as e:
+            return jsonify({'error': '创建失败: ' + str(e)}), 500
 
 @app.route('/api/share', methods=['POST'])
 @token_required()
@@ -1047,108 +1058,88 @@ def upload_file_with_ec():
             return jsonify({'error': f'处理上传时发生严重错误: {e}'}), 500
 
 
+# ===== [最终修复 1/3] 重写 list_files 函数 =====
 @app.route('/api/list', methods=['GET'])
 @token_required()
 def list_files():
-    requested_path = request.args.get('path', '/').lstrip('/\\')
+    full_path_from_request = request.args.get('path', '/')
     keyword = request.args.get('q', '').strip().lower()
 
-    # 逻辑盘：读索引
-    if _is_ec_volume(requested_path.strip("/")):
+    # --- 分支 1: 处理纠删码卷 (此部分逻辑正确，无需修改) ---
+    if _is_ec_volume(full_path_from_request):
         idx = _load_json(EC_IDX_PATH, {"files": {}})
         items, now_ts = [], int(time.time())
-        # 这里只返回“当前目录”的条目；若你要做层级，需按前缀过滤
+
+        norm_req_path = full_path_from_request.replace("\\", "/").strip("/")
+
+        if norm_req_path == 'ec_volume':
+            current_dir_prefix = ''
+        else:
+            current_dir_prefix = norm_req_path[len('ec_volume/'):] + '/'
+
+        sub_items = set()
         for name, meta in idx.get("files", {}).items():
-            if keyword and keyword not in name.lower():
+            if not name.startswith(current_dir_prefix):
                 continue
-            # 仅展示根层（没有 / 的）——如需子目录可扩展
-            if "/" in name:
-                # 如果你当前是 ec_volume/sub/，在此做前缀过滤再取 basename
-                pass
-            items.append({
-                "name": name,
-                "is_dir": False,
-                "size": meta.get("size", 0),
-                "mtime": meta.get("ctime", now_ts),
-                "path": f"ec_volume/{name}"
+
+            relative_to_current = name[len(current_dir_prefix):]
+            parts = relative_to_current.split('/')
+
+            if len(parts) == 1:
+                items.append({
+                    "name": parts[0], "is_dir": False, "size": meta.get("size", 0),
+                    "mtime": meta.get("ctime", now_ts), "path": name
+                })
+            else:
+                sub_items.add(parts[0])
+
+        for dir_name in sub_items:
+             items.append({
+                "name": dir_name, "is_dir": True, "size": None,
+                "mtime": now_ts, "path": current_dir_prefix + dir_name
             })
+
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
-        return jsonify({
-            "success": True,
-            "current_path": "ec_volume",
-            "drive_prefix": _load_json(EC_CFG_PATH, {}).get("disks", [BASE_DIRS[0]])[0] if os.path.exists(
-                EC_CFG_PATH) else BASE_DIRS[0],
-            "items": items
-        })
+        return jsonify({"success": True, "items": items})
 
-    # 检查是否包含盘符前缀（如 D:/path 或 D:\path）
-    drive_prefix = None
-    if ':' in requested_path:
-        # 提取盘符前缀
-        parts = requested_path.replace('\\', '/').split('/')
-        if parts[0] and ':' in parts[0]:
-            drive_prefix = parts[0] + '/'
-            # 移除盘符前缀，获取相对路径
-            requested_path = '/'.join(parts[1:]) if len(parts) > 1 else ''
+    # --- 分支 2: 处理物理硬盘 (重构此部分逻辑) ---
+    else:
+        try:
+            full_path = os.path.abspath(full_path_from_request)
+            allowed = False
+            drive_prefix = None
+            for base_dir in get_available_drives():
+                if full_path.upper().startswith(os.path.abspath(base_dir).upper()):
+                    allowed = True
+                    drive_prefix = base_dir
+                    break
+            if not allowed:
+                return jsonify({'error': '非法路径或不允许访问的磁盘'}), 403
+            if not os.path.exists(full_path) or not os.path.isdir(full_path):
+                return jsonify({'error': f'路径不存在或不是文件夹: {full_path}'}), 404
 
-    # 如果没有盘符前缀，使用默认盘符（第一个可用盘符）
-    if not drive_prefix:
-        available_drives = get_available_drives()
-        if not available_drives:
-            return jsonify({'error': '没有可用的盘符'}), 500
-        drive_prefix = available_drives[0]
+            items = []
+            # [关键修正] 计算相对于盘符根目录的路径
+            relative_path_root = os.path.relpath(full_path, drive_prefix)
+            if relative_path_root == '.':
+                relative_path_root = ''
 
-    # 检查盘符是否在允许列表中
-    if drive_prefix not in BASE_DIRS:
-        return jsonify({'error': '不支持的盘符'}), 403
+            for name in os.listdir(full_path):
+                if keyword and keyword not in name.lower(): continue
+                entry_full_path = os.path.join(full_path, name)
+                stat = os.stat(entry_full_path)
+                # [关键修正] 返回相对于盘符根目录的路径
+                relative_path = os.path.join(relative_path_root, name).replace('\\', '/')
+                items.append({
+                    'name': name, 'is_dir': os.path.isdir(entry_full_path),
+                    'size': stat.st_size if os.path.isfile(entry_full_path) else None,
+                    'mtime': stat.st_mtime, 'path': relative_path
+                })
 
-    full_path = os.path.abspath(os.path.join(drive_prefix, requested_path))
-
-    # 加载纠删码配置
-    ec_cfg = {}
-    ec_cfg_path = os.path.join(drive_prefix, 'ec_config.json')
-    if os.path.exists(ec_cfg_path):
-        with open(ec_cfg_path, 'r') as f:
-            ec_cfg = json.load(f)
-
-    # 如果请求路径是逻辑卷入口
-    if requested_path == 'ec_volume' and ec_cfg.get('disks'):
-        full_path = os.path.abspath(ec_cfg['disks'][0])  # 映射为第一个纠删码磁盘路径
-
-    allowed_paths = [drive_prefix] + ec_cfg.get('disks', []) + [d['mount'] for d in get_disk_info()]
-    if not any(full_path.startswith(os.path.abspath(p)) for p in allowed_paths):
-        return jsonify({'error': '非法路径'}), 403
-
-    if not os.path.exists(full_path) or not os.path.isdir(full_path):
-        return jsonify({'error': '路径不存在或不是文件夹'}), 404
-
-    try:
-        items = []
-        for name in os.listdir(full_path):
-            if keyword and keyword not in name.lower():
-                continue
-            path = os.path.join(full_path, name)
-            stat = os.stat(path)
-            items.append({
-                'name': name,
-                'is_dir': os.path.isdir(path),
-                'size': stat.st_size if os.path.isfile(path) else None,
-                'mtime': stat.st_mtime,
-                'path': os.path.join(requested_path, name) if requested_path else name
-            })
-
-        # 按文件夹在前，文件在后的顺序排序
-        items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
-
-        return jsonify({
-            'success': True,
-            'current_path': requested_path,
-            'drive_prefix': drive_prefix,
-            'items': items
-        })
-    except Exception as e:
-        return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
-
+            items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+            return jsonify({'success': True, 'items': items})
+        except Exception as e:
+            return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
 
 @app.route('/api/search')
 @token_required()
@@ -1195,6 +1186,7 @@ def api_search():
         return jsonify({'success': False, 'error': f'搜索失败: {str(e)}'}), 500
 
 
+# ===== [最终修复 3/3] 重写 api_download 函数 =====
 @app.route("/api/download", methods=["GET"])
 @token_required()
 def api_download():
@@ -1202,48 +1194,48 @@ def api_download():
     if not file_path:
         return jsonify({"error": "缺少 path 参数"}), 400
 
+    # --- 分支 1: 处理纠删码卷 ---
     if _is_ec_volume(file_path):
         name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
-        if not name:
-            return jsonify({"error": "无效的逻辑盘文件路径"}), 400
-
+        if not name: return jsonify({"error": "无效的逻辑盘文件路径"}), 400
         idx = _load_json(EC_IDX_PATH, {"files": {}}).get("files", {})
         entry = idx.get(name)
-        if not entry:
-            return jsonify({"error": "文件不在逻辑盘索引中"}), 404
-
+        if not entry: return jsonify({"error": "文件不在逻辑盘索引中"}), 404
         k, m, disks = entry["k"], entry["m"], entry["disks"]
         shard_dict, meta = {}, None
-
         for i, disk in enumerate(disks[:k + m]):
             enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
             blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
             if os.path.exists(blk):
-                with open(blk, "rb") as f:
-                    shard_dict[i] = f.read()
+                with open(blk, "rb") as f: shard_dict[i] = f.read()
             if not meta:
                 mj = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
-                if os.path.exists(mj):
-                    meta = json.load(open(mj, "r", encoding="utf-8"))
-
-        if not meta or len(shard_dict) < k:
-            return jsonify({"error": "可用分片不足，无法恢复"}), 409
-
+                if os.path.exists(mj): meta = json.load(open(mj, "r", encoding="utf-8"))
+        if not meta or len(shard_dict) < k: return jsonify({"error": "可用分片不足，无法恢复"}), 409
         try:
             data = _decode_from_dict(shard_dict, meta)
         except Exception as e:
             return jsonify({"error": f"解码失败: {e}"}), 500
-
         if hashlib.sha256(data).hexdigest() != meta.get("sha256"):
-            return jsonify({"error": "数据完整性校验失败（哈希不匹配）"}), 500
-
+            return jsonify({"error": "数据完整性校验失败"}), 500
         return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
 
-    # 非逻辑盘：保留你的本地下载逻辑
-    local = os.path.abspath(os.path.join(BASE_DIRS[0], file_path.lstrip("/\\")))
-    if not os.path.exists(local):
-        return jsonify({"error": "文件不存在"}), 404
-    return send_file(local, as_attachment=True, download_name=os.path.basename(local))
+    # --- 分支 2: 处理物理硬盘 ---
+    else:
+        try:
+            local = os.path.abspath(file_path)
+            allowed = False
+            for base_dir in get_available_drives():
+                if local.upper().startswith(os.path.abspath(base_dir).upper()):
+                    allowed = True
+                    break
+            if not allowed:
+                return jsonify({"error": "不允许访问该路径"}), 403
+            if not os.path.exists(local) or not os.path.isfile(local):
+                return jsonify({"error": "文件不存在或不是一个文件"}), 404
+            return send_file(local, as_attachment=True, download_name=os.path.basename(local))
+        except Exception as e:
+            return jsonify({'error': f'下载文件时出错: {e}'}), 500
 
 @app.route("/api/volume/rebuild/scan", methods=["POST"])
 @token_required()
