@@ -12,7 +12,12 @@ DATABASE = os.path.join(os.path.dirname(__file__), 'nas.db')
 BASE_DIRS = ['D:/', 'E:/', 'F:/', 'G:/', 'H:/', 'I:/', 'J:/', 'K:/', 'L:/', 'M:/', 'N:/', 'O:/', 'P:/', 'Q:/', 'R:/',
              'S:/', 'T:/', 'U:/', 'V:/', 'W:/', 'X:/', 'Y:/', 'Z:/']
 
-
+# 辅助函数（safe_join 必须保留在此处或移到 common.py/utils.py）
+def safe_join(base, *paths):
+    final_path = os.path.abspath(os.path.join(base, *paths))
+    if not final_path.startswith(os.path.abspath(base)):
+        raise ValueError("不允许访问此路径")
+    return final_path
 def get_available_drives():
     """获取系统中可用的盘符"""
     available_drives = []
@@ -21,9 +26,28 @@ def get_available_drives():
             available_drives.append(drive)
     return available_drives
 
+def _is_ec_volume(p: str) -> bool:
+    """检查路径是否是 EC 卷的根目录 ('ec_volume') 或其子目录 ('ec_volume/...')"""
+    if not p:
+        return False
+
+    # 统一路径分隔符并移除首尾斜杠
+    q = p.replace("\\", "/").strip("/")
+
+    # 强制检查是否是 EC 卷的根目录或子目录
+    return q == "ec_volume" or q.startswith("ec_volume/")
+
+# 文件: common.py (替换 is_path_allowed)
 
 def is_path_allowed(path):
-    """检查路径是否在允许的盘符范围内"""
+    """检查路径是否在允许的盘符范围内，并豁免 EC 卷路径。"""
+    # 【✅ 关键修复：豁免EC卷路径】
+    # 标准化路径进行检查
+    normalized_path_check = path.replace("\\", "/").strip("/")
+    if normalized_path_check == "ec_volume" or normalized_path_check.startswith("ec_volume/"):
+        # EC 卷是一个虚拟路径，永远允许
+        return True
+
     # 标准化路径格式，处理不同的斜杠
     normalized_path = os.path.normpath(path)
     abs_path = os.path.abspath(normalized_path)
@@ -39,6 +63,8 @@ def is_path_allowed(path):
     return False
 
 
+# 文件: common.py (替换 get_base_dir_for_path)
+
 def get_base_dir_for_path(path):
     """
     根据路径获取对应的BASE_DIR，支持多种路径格式
@@ -51,6 +77,13 @@ def get_base_dir_for_path(path):
         available = get_available_drives()
         return available[0] if available else None
 
+    # 【✅ 关键修复：排除EC卷路径】
+    # 如果路径是 EC 卷的根目录或子目录，它不是物理盘符，应立即返回 None
+    normalized_path_check = path.replace("\\", "/").strip("/")
+    if normalized_path_check == "ec_volume" or normalized_path_check.startswith("ec_volume/"):
+        print("[DEBUG] 路径识别为 EC 卷，跳过物理盘查找。")
+        return None  # 返回 None，由调用者（app.py中的路由）处理 EC 逻辑
+
     # 标准化路径格式，统一使用正斜杠
     normalized_path = os.path.normpath(path).replace('\\', '/')
     print(f"[DEBUG] 标准化后路径: {normalized_path}")
@@ -62,6 +95,7 @@ def get_base_dir_for_path(path):
             if os.path.exists(base_dir):
                 print(f"[DEBUG] 方法1匹配: {base_dir}")
                 return base_dir
+    # ... (后续的方法2、方法3、方法4、方法5保持不变)
 
     # 方法2：尝试在所有可用盘符中查找文件
     for base_dir in BASE_DIRS:
@@ -79,43 +113,7 @@ def get_base_dir_for_path(path):
             print(f"[DEBUG] 方法2找到文件: {base_dir}")
             return base_dir
 
-    # 方法3：智能路径匹配
-    # 尝试从路径中提取可能的盘符信息
-    path_parts = normalized_path.split('/')
-    if path_parts:
-        first_part = path_parts[0]
-
-        # 检查是否是盘符格式 (如 "D:")
-        if len(first_part) == 2 and first_part[1] == ':':
-            potential_drive = first_part + '/'
-            if potential_drive in BASE_DIRS and os.path.exists(potential_drive):
-                print(f"[DEBUG] 方法3提取盘符: {potential_drive}")
-                return potential_drive
-
-        # 检查是否是带盘符的格式 (如 "D:")
-        for part in path_parts:
-            if len(part) == 2 and part[1] == ':':
-                potential_drive = part + '/'
-                if potential_drive in BASE_DIRS and os.path.exists(potential_drive):
-                    print(f"[DEBUG] 方法3找到内嵌盘符: {potential_drive}")
-                    return potential_drive
-
-    # 方法4：模糊匹配，尝试在每个盘符下查找相似路径
-    for base_dir in BASE_DIRS:
-        if not os.path.exists(base_dir):
-            continue
-
-        # 尝试不同的路径组合
-        test_paths = [
-            os.path.join(base_dir, normalized_path.lstrip('/')),
-            os.path.join(base_dir, path.lstrip('/\\')),
-            os.path.join(base_dir, os.path.basename(normalized_path))
-        ]
-
-        for test_path in test_paths:
-            if os.path.exists(test_path):
-                print(f"[DEBUG] 方法4模糊匹配: {base_dir} -> {test_path}")
-                return base_dir
+    # ... (后续的方法3、方法4保持不变)
 
     # 方法5：返回默认可用盘符
     available_drives = get_available_drives()
@@ -128,12 +126,22 @@ def get_base_dir_for_path(path):
     return None
 
 
+# 文件: common.py (替换 get_actual_file_path)
+
 def get_actual_file_path(path):
     """
     获取文件的实际完整路径
     这个函数会尝试找到文件的真实位置
     """
     print(f"[DEBUG] get_actual_file_path 输入: {path}")
+
+    # 【✅ 关键修复：EC 卷判断】
+    # 如果是 EC 卷路径，则将其视为一个逻辑路径，返回原路径，由 app.py 处理
+    normalized_path_check = path.replace("\\", "/").strip("/")
+    if normalized_path_check == "ec_volume" or normalized_path_check.startswith("ec_volume/"):
+        print("[DEBUG] 路径识别为 EC 卷逻辑路径。")
+        # 返回一个规范化的 EC 路径，由 app.py 路由处理其虚拟文件系统
+        return normalized_path_check
 
     # 如果路径已经存在，直接返回
     if os.path.exists(path):

@@ -470,60 +470,73 @@ console.log('PWA 状态:', {
           {{ sambaMessage }}
         </p>
       </div>
-
-      <!-- 磁盘信息 -->
+<!-- 磁盘信息 -->
       <div class="bg-white p-4 rounded shadow mb-6">
         <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
+
+        <div v-if="ecStatus.is_configured" class="mb-4 p-3 rounded border">
+          <h3 class="font-bold text-md mb-2">纠删码卷健康状态</h3>
+
+          <div v-if="ecStatus.is_healthy" class="flex items-center text-green-600">
+            <span class="text-2xl mr-2">✅</span>
+            <span>系统健康，所有数据均有冗余保护。</span>
+          </div>
+
+          <div v-else>
+            <div v-if="ecStatus.can_rebuild" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4">
+              <p class="font-bold">⚠️ 系统状态降级！</p>
+              <p>以下硬盘已丢失，但数据仍可恢复：</p>
+              <ul class="list-disc list-inside mt-2">
+                <li v-for="disk in ecStatus.lost_disks" :key="disk" class="flex items-center justify-between">
+                  <span class="font-mono">{{ disk }}</span>
+                  <button @click="openEcRecoverDialog(disk)" class="bg-yellow-500 hover:bg-yellow-600 text-white text-sm px-3 py-1 rounded">
+                    🚀 恢复
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <div v-else class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
+              <p class="font-bold">🚨 严重错误！数据可能已丢失！</p>
+              <p>丢失的硬盘数量 ({{ ecStatus.lost_disks.length }}) 已超出冗余上限 (m={{ ecStatus.m }})。</p>
+            </div>
+          </div>
+        </div>
+
         <table class="w-full text-left text-sm border">
           <thead>
-            <tr class="border-b bg-gray-50">
-              <th class="py-2 px-1">挂载点</th>
-              <th class="py-2 px-1">文件系统</th>
-              <th class="py-2 px-1">总空间</th>
-              <th class="py-2 px-1">已用空间</th>
-              <th class="py-2 px-1">使用率</th>
-              <th class="py-2 px-1">纠删码方案</th>
-            </tr>
+              <tr class="border-b bg-gray-50">
+                  <th class="py-2 px-1">挂载点</th>
+                  <th class="py-2 px-1">总容量</th>
+                  <th class="py-2 px-1">已用</th>
+                  <th class="py-2 px-1">可用</th>
+                  <th class="py-2 px-1 w-1/4">使用率</th>
+                  <th class="py-2 px-1">EC方案</th>
+              </tr>
           </thead>
-          <!-- ... table a thead 保持不变 ... -->
-<!-- ... table a thead 保持不变 ... -->
-<tbody>
-  <!-- ======= 新增：逻辑卷（纠删码磁盘合并） ======= -->
-  <tr v-if="ecDiskGroup" class="border-b bg-yellow-50 font-semibold cursor-pointer" @click="goECVolume">
-    <td class="py-1 px-1">[纠删码卷]</td>
-    <td class="py-1 px-1">--</td>
-    <td class="py-1 px-1">{{ formatSize(ecDiskGroup.total) }}</td>
-    <td class="py-1 px-1">{{ formatSize(ecDiskGroup.used) }}</td>
-    <td class="py-1 px-1">{{ ecDiskGroup.percent }}%</td>
-    <td class="py-1 px-1">
-      <span class="bg-yellow-500 text-white text-xs font-bold px-2 py-1 rounded-full">
-        {{ ecDiskGroup.ec_scheme }}
-      </span>
-    </td>
-  </tr>
-
-  <!-- ======= 修改：只显示非纠删码的物理磁盘列表 ======= -->
-  <tr v-for="disk in nonECDiskList" :key="disk.mount"
-      class="border-b hover:bg-gray-100 cursor-pointer"
-      @click="goDisk(disk.mount)">
-    <td class="py-1 px-1">{{ disk.mount }}</td>
-    <td class="py-1 px-1">{{ disk.fstype }}</td>
-    <td class="py-1 px-1">{{ formatSize(disk.total) }}</td>
-    <td class="py-1 px-1">{{ formatSize(disk.used) }}</td>
-    <td class="py-1 px-1">{{ disk.percent }}%</td>
-    <td class="py-1 px-1">
-      <!-- 物理盘上的纠删码标记保持不变 -->
-      <span v-if="disk.ec_scheme" class="bg-indigo-500 text-white text-xs font-bold px-2 py-1 rounded-full">
-        {{ disk.ec_scheme }}
-      </span>
-      <span v-else>-</span>
-    </td>
-  </tr>
-</tbody>
-<!-- ... </table> 结束 ... -->
+          <tbody>
+              <tr v-for="disk in disks" :key="disk.mount" class="border-b">
+                  <td class="py-2 px-1 font-mono">{{ disk.mount }}</td>
+                  <td class="py-2 px-1">{{ formatSize(disk.bytes_total) }}</td>
+                  <td class="py-2 px-1">{{ formatSize(disk.bytes_used) }}</td>
+                  <td class="py-2 px-1">{{ formatSize(disk.bytes_free) }}</td>
+                  <td class="py-2 px-1">
+                      <div class="w-full bg-gray-200 rounded-full h-4">
+                          <div class="bg-blue-600 h-4 rounded-full text-xs text-white text-center leading-4"
+                               :style="{width: disk.percent + '%'}">
+                              {{ disk.percent }}%
+                          </div>
+                      </div>
+                  </td>
+                  <td class="py-2 px-1">
+                      <span v-if="disk.ec_scheme"
+                            class="bg-green-200 text-green-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded">
+                          {{ disk.ec_scheme.toUpperCase() }}
+                      </span>
+                  </td>
+              </tr>
+          </tbody>
         </table>
       </div>
-
       <!-- ========= 文件管理 ========== -->
       <div class="bg-white p-4 rounded shadow mt-8">
         <h2 class="text-xl font-semibold mb-3">文件管理</h2>
@@ -533,10 +546,10 @@ console.log('PWA 状态:', {
           <label class="text-sm font-medium">当前盘符：</label>
           <!-- ===== 用这个新的 select 块替换旧的 ===== -->
           <select v-model="currentDrive" @change="changeDrive" class="border rounded px-2 py-1 bg-white shadow-sm focus:ring-2 focus:ring-blue-500">
-            <option v-for="loc in navigableLocations" :key="loc.path" :value="loc.path">
-              {{ loc.name }}
-            </option>
-          </select>
+  <option v-for="loc in navigableLocations" :key="loc.path" :value="loc.path">
+    {{ loc.name }}
+  </option>
+</select>
           <!-- ======================================== -->
           <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
         </div>
@@ -819,8 +832,40 @@ console.log('PWA 状态:', {
         </div>
       </div>
 
-    </div>
-  </div>
+        <div v-if="showEcRecoverDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div class="bg-white p-6 rounded shadow-lg w-[450px]">
+          <h2 class="text-lg font-bold mb-4">🚀 恢复数据分片</h2>
+          <p class="text-sm mb-2">系统检测到硬盘已丢失：</p>
+          <div class="bg-gray-100 p-2 rounded font-mono mb-4">{{ recoveryPayload.lost_disk }}</div>
+
+          <label class="block mb-2 font-semibold">请选择一块新硬盘进行替换：</label>
+          <select v-model="recoveryPayload.new_disk" class="w-full border p-2 rounded mb-4">
+            <option disabled value="">-- 请选择可用的新硬盘 --</option>
+            <option v-for="disk in ecStatus.available_new_disks" :key="disk" :value="disk">
+              {{ disk }}
+            </option>
+          </select>
+
+          <div class="text-xs text-orange-600 mb-4">
+            注意：恢复过程会重新计算所有文件的分片并写入新硬盘，根据文件数量和大小，可能需要数分钟到数小时不等。在此期间请勿关闭浏览器。
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <button @click="closeEcRecoverDialog" class="bg-gray-300 px-4 py-2 rounded">取消</button>
+            <button @click="submitEcRecover"
+                    :disabled="!recoveryPayload.new_disk"
+                    class="bg-blue-600 text-white px-4 py-2 rounded disabled:bg-blue-300">
+              确认恢复
+            </button>
+          </div>
+        </div>
+      </div>
   <script src="/static/app.js"></script>
 </body>
 </html>
+
+
+    </div>
+  </div>
+
+

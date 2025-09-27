@@ -24,9 +24,9 @@ from utils import get_disk_info, _norm_abs
 # ===== Project / Local =====
 from common import (
     BASE_DIRS, get_db, get_available_drives,
-    is_path_allowed, get_base_dir_for_path, convert  # 你项目里的 convert
+    is_path_allowed, get_base_dir_for_path, convert, _is_ec_volume # <-- 添加 _is_ec_volume
 )
-from filemanager import safe_join
+
 from utils import get_disk_info
 
 # RS 系统码引擎（存储型纠删码）
@@ -40,7 +40,7 @@ from ec_engine.ec_error import ECError
 from collaboration import CollaborationManager
 from collaboration_v2 import CollaborationV2
 from onlyoffice import OnlyOfficeManager
-
+from encryption import EncryptionManager, NotUnlockedError
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
@@ -62,7 +62,8 @@ preview_sessions = {}
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 EC_CFG_PATH = os.path.join(BACKEND_DIR, "ec_config.json")
 EC_IDX_PATH = os.path.join(BACKEND_DIR, "ec_index.json")
-
+ENCRYPTION_CFG_PATH = os.path.join(BACKEND_DIR, "encryption_config.json")
+encryption_manager = EncryptionManager(config_path=ENCRYPTION_CFG_PATH)
 def _load_json(path: str, default):
     try:
         if os.path.exists(path):
@@ -77,19 +78,44 @@ def _save_json(path: str, obj):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
-def _is_ec_volume(p: str) -> bool:
-    if not p: return False
-    q = p.replace("\\", "/").strip("/")
-    return q == "ec_volume" or q.startswith("ec_volume/")
 
+# 文件: app.py (替换原有的 _is_ec_volume)
+
+
+# 文件: app.py (确保此函数存在于全局区域)
+
+# app.py -> 找到并替换这个函数
+
+# app.py -> 找到并替换这个函数
+
+# V5 修正版 (正确的)
 def _decode_from_dict(shard_dict: dict, meta: dict) -> bytes:
+    """
+    一个更健壮的解码器，可以处理索引中缺少 'shard_size' 和 'original_size' 的情况。
+    """
     k, m = meta["k"], meta["m"]
-    shard_size, original_size = meta["shard_size"], meta["original_size"]
+
+    # 使用 .get() 并提供备用值
+    # 如果 "original_size" 不存在，就使用 "size"
+    original_size = meta.get("original_size") or meta.get("size")
+    if original_size is None:
+        raise ECError("文件元数据中缺少 'original_size' 或 'size' 键")
+
+    # 如果 "shard_size" 不存在，就根据原始大小和k值进行计算
+    shard_size = meta.get("shard_size")
+    if shard_size is None:
+        shard_size = (original_size + k - 1) // k
+
     shard_list = [None] * (k + m)
-    for i, buf in shard_dict.items():
+    # 使用 .items() 遍历字典
+    for i_str, buf in shard_dict.items():
+        i = int(i_str)
         if 0 <= i < k + m:
             shard_list[i] = buf
+
+    # 依赖 rs_decode (来自 ec_engine.rs_systematic)
     return rs_decode(shard_list, k, m, shard_size, original_size)
+
 def _capacity_estimate(disks: list, k: int):
     """基于最小盘估算卷容量，并输出每盘容量信息与不均衡比例"""
     info_map = {d["mount"]: d for d in get_disk_info()}
@@ -363,11 +389,32 @@ def api_system():
     return jsonify(get_sys_info())
 
 
+# 文件: app.py
+
 @app.route('/api/disk', methods=['GET'])
 @token_required()
 def api_disk():
+    """
+    获取磁盘信息，并排除系统盘（C:\ 或 /）
+    """
     # 1. 获取基础磁盘信息
     disk_info = get_disk_info()
+
+    # [✅ 新增/修改] 排除系统盘的逻辑
+    filtered_disk_info = []
+
+    for disk in disk_info:
+        mount_point = disk.get("mount", "").upper().replace("\\", "/")
+
+        # 排除逻辑：
+        # - Windows 上的 C:\ 盘符
+        # - Linux/macOS 上的 / 根目录 (通常是系统分区)
+        # 注意：这里我们保留所有其他挂载点，即使是 /mnt/ 或 /media/
+        if mount_point == "C:/" or mount_point == "/":
+            print(f"[DEBUG] 排除系统盘: {disk.get('mount')}")
+            continue
+
+        filtered_disk_info.append(disk)
 
     # 2. 读取纠删码配置
     ec_cfg = _load_json(EC_CFG_PATH, {})
@@ -379,8 +426,8 @@ def api_disk():
         ec_disks = set(_norm_abs(d) for d in ec_cfg.get("disks", []))
         ec_scheme_name = ec_cfg.get("scheme", "rs").upper()
 
-    # 3. 遍历磁盘信息，为参与纠删码的硬盘添加标记
-    for disk in disk_info:
+    # 3. 遍历【已过滤的】磁盘信息，为参与纠删码的硬盘添加标记
+    for disk in filtered_disk_info:
         # 规范化当前磁盘的挂载点
         normalized_mount = _norm_abs(disk.get("mount", ""))
         if normalized_mount in ec_disks:
@@ -388,7 +435,8 @@ def api_disk():
         else:
             disk['ec_scheme'] = None
 
-    return jsonify(disk_info)
+    # 4. 返回过滤并处理后的列表
+    return jsonify(filtered_disk_info)
 
 
 # 获取可用盘符
@@ -423,10 +471,6 @@ def get_drives():
     return jsonify(drives_info)
 
 
-# ===== 注册文件管理蓝图 =====
-from filemanager import file_bp
-
-app.register_blueprint(file_bp)
 
 
 # ===== 静态页面路由 =====
@@ -474,6 +518,114 @@ def admin_reset_password():
     return jsonify({"success": True})
 
 
+# 文件: app.py (添加一个新的删除路由，用于单文件删除)
+
+# 文件: app.py (新增 /api/rename 路由)
+
+# 文件: app.py (替换 @app.route('/api/rename') 路由)
+
+@app.route('/api/rename', methods=['POST'])
+@token_required()
+# 💡 修改函数名为 api_rename_entry
+def api_rename_entry():
+    data = request.get_json()
+    path = data.get('path')
+    new_name = data.get('new_name')
+
+    print(f"[DEBUG] 重命名请求 - 原始路径: {path}")
+
+    if not path or not new_name:
+        return jsonify({"error": "参数缺失"}), 400
+
+    if '..' in new_name or '/' in new_name or '\\' in new_name:
+        return jsonify({"error": "文件名包含非法字符"}), 400
+
+    # 1. 优先处理 EC 卷
+    if _is_ec_volume(path):
+        # ⚠️ EC 卷重命名逻辑待实现
+        return jsonify({"error": "EC卷重命名功能暂不支持"}), 501
+
+    # 2. 物理盘重命名
+    else:
+        try:
+            from common import get_actual_file_path, is_path_allowed
+            actual_path = get_actual_file_path(path)
+
+            if not actual_path or not os.path.exists(actual_path):
+                return jsonify({"error": "源文件不存在"}), 404
+
+            if not is_path_allowed(actual_path):
+                return jsonify({"error": "路径不在允许的目录中"}), 403
+
+            parent_dir = os.path.dirname(actual_path)
+            new_actual_path = os.path.join(parent_dir, new_name)
+
+            if os.path.exists(new_actual_path):
+                return jsonify({"error": "目标文件名已存在"}), 400
+
+            os.rename(actual_path, new_actual_path)
+            return jsonify({"success": True})
+
+        except Exception as e:
+            return jsonify({"error": f"重命名失败: {str(e)}"}), 500
+
+@app.route('/api/delete', methods=['POST'])
+@token_required()
+def delete_entry():
+    data = request.get_json()
+    path = data.get('path')
+    if not path:
+        return jsonify({'error': '缺少路径参数'}), 400
+
+    # 1. 优先处理 EC 卷删除
+    if _is_ec_volume(path):
+        # EC 卷只允许删除文件，不允许删除目录
+        if path.endswith('/'):  # 简单的目录判断
+            return jsonify({"error": "EC卷暂不支持删除虚拟目录"}), 400
+
+        # 从索引中删除文件
+        idx = _load_json(EC_IDX_PATH, {"files": {}})
+        logical_name = path.replace("\\", "/").strip("/")
+
+        if logical_name in idx.get("files", {}):
+            # 记录磁盘位置
+            disks_to_clean = idx["files"][logical_name]["disks"]
+
+            # 1. 从索引中移除
+            del idx["files"][logical_name]
+            _save_json(EC_IDX_PATH, idx)
+
+            # 2. 移除物理分片
+            base = os.path.basename(logical_name)
+            for disk in disks_to_clean:
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
+                for file_ext in [f"{base}.blk_*", f"{base}.meta.json"]:
+                    for f in glob.glob(os.path.join(enc_dir, file_ext)):
+                        os.remove(f)
+
+            return jsonify({"success": True, "message": "EC卷文件已删除"})
+        else:
+            return jsonify({"error": "EC卷文件不存在"}), 404
+
+    # 2. 物理盘删除
+    else:
+        from common import get_actual_file_path, is_path_allowed
+        actual_path = get_actual_file_path(path)
+
+        if not actual_path:
+            return jsonify({'error': '文件或目录不存在'}), 404
+
+        if not is_path_allowed(actual_path):
+            return jsonify({"error": "路径不在允许的目录中"}), 403
+
+        try:
+            if os.path.isdir(actual_path):
+                shutil.rmtree(actual_path)
+            else:
+                os.remove(actual_path)
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'error': f'删除失败: {str(e)}'}), 500
 @app.route('/api/batch_delete', methods=['POST'])
 @token_required(admin_only=True)  # 或普通用户，按你的需求改
 def batch_delete():
@@ -499,101 +651,123 @@ def batch_delete():
 
 # ========== 在 app.py 中修复预览API ==========
 
+# 文件: app.py -> @app.route('/api/preview')
+
+# 文件: app.py -> @app.route('/api/preview')
+
 @app.route('/api/preview')
 @token_required()
 def preview_file():
-    path = request.args.get('path', '').lstrip('/\\')
-
-    print(f"[DEBUG] 预览请求 - 原始路径: {path}")
-    print(f"[DEBUG] 预览请求 - 用户ID: {g.user}")
-    print(f"[DEBUG] 预览请求 - 所有参数: {dict(request.args)}")
-
+    path = request.args.get('path', '').strip()
     if not path:
         return jsonify({'error': '未指定文件路径'}), 400
 
-    # 使用增强的路径处理函数
-    from common import get_actual_file_path
-    actual_path = get_actual_file_path(path)
+    print(f"[DEBUG] 预览请求 - 原始路径: {path}")
 
-    print(f"[DEBUG] 预览请求 - 解析后路径: {actual_path}")
+    # 1. 优先处理 EC 卷
+    if _is_ec_volume(path):
+        from common import get_actual_file_path
 
-    if not actual_path or not os.path.exists(actual_path):
-        print(f"[DEBUG] 预览文件不存在: {actual_path}")
-        return jsonify({'error': '文件不存在'}), 404
+        logical_path = get_actual_file_path(path)
+        index_key = logical_path.replace('ec_volume/', '', 1).strip('/')
 
-    if not os.path.isfile(actual_path):
-        return jsonify({'error': '不是文件'}), 400
+        if not index_key:
+            return jsonify({'error': 'EC 卷路径无效'}), 400
 
-    try:
-        ext = os.path.splitext(actual_path)[1].lower()
-        print(f"[DEBUG] 文件类型: {ext}")
+        # 从索引中获取文件元数据
+        idx = _load_json(EC_IDX_PATH, {"files": {}})
+        entry = idx.get("files", {}).get(index_key)
 
-        # ===== PDF文件处理 =====
-        if ext == '.pdf':
-            # 检查是否是内嵌预览请求
-            if request.args.get('inline') == 'true':
-                print(f"[DEBUG] 返回PDF文件内容: {actual_path}")
+        print(f"[DEBUG] 查找 EC 索引键: {index_key}")
+
+        if not entry:
+            return jsonify({'error': 'EC 卷文件不存在'}), 404
+
+        k, m, disks = entry["k"], entry["m"], entry["disks"]
+        shard_dict, meta = {}, None
+        base_filename = os.path.basename(index_key)
+
+        # 读取分片和元数据
+        for i, disk in enumerate(disks[:k + m]):
+            enc_dir = os.path.join(disk, "encoded", os.path.dirname(index_key))
+            blk = os.path.join(enc_dir, f"{base_filename}.blk_{i}")
+
+            if os.path.exists(blk):
+                with open(blk, "rb") as f:
+                    shard_dict[i] = f.read()
+            if not meta:
+                mj = os.path.join(enc_dir, f"{base_filename}.meta.json")
+                if os.path.exists(mj):
+                    with open(mj, "r", encoding="utf-8") as mf:
+                        meta = json.load(mf)
+
+        # 检查是否可恢复
+        if not meta or len(shard_dict) < k:
+            return jsonify({'error': '可用分片不足，无法恢复'}), 409
+
+        # 🚨 语法修正开始 🚨
+        data = None  # 确保在 try 块外部初始化
+        try:
+            # 执行解码
+            data = _decode_from_dict(shard_dict, meta)
+        except Exception as e: # ⬅️ 确保 except 与 try 对齐
+            import traceback
+            traceback.print_exc()
+            print(f"[ERROR] EC 预览解码失败: {e}")
+            return jsonify({'error': f'EC 卷文件解码失败: {e}'}), 500
+
+        # 确保 data 已赋值
+        if data is None:
+            return jsonify({'error': '文件解码失败或返回空数据'}), 500
+
+        # 返回文件流
+        mime = mimetypes.guess_type(index_key)[0] or 'application/octet-stream'
+        return send_file(io.BytesIO(data), mimetype=mime)
+
+    # 2. 处理物理硬盘 (物理盘逻辑保持不变)
+    else:
+        # ... (物理盘逻辑保持不变) ...
+        try:
+            from common import get_actual_file_path, is_path_allowed
+            actual_path = get_actual_file_path(path)
+
+            print(f"[DEBUG] 预览请求 - 解析后物理路径: {actual_path}")
+
+            if not actual_path:
+                return jsonify({'error': '文件不存在或路径无效'}), 404
+
+            # 最终安全检查
+            if not is_path_allowed(actual_path):
+                print(f"[DEBUG] 预览失败 - 路径不允许: {actual_path}")
+                return jsonify({'error': '路径不在允许的目录中'}), 403
+
+            if not os.path.exists(actual_path) or not os.path.isfile(actual_path):
+                return jsonify({'error': '文件不存在或不是文件'}), 404
+
+            # ===== 文本类文件 =====
+            ext = os.path.splitext(actual_path)[1].lower()
+            if ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css', '.csv']:
+                # 假设文本读取逻辑已在外部定义
                 try:
-                    response = send_file(actual_path, mimetype='application/pdf')
-                    response.headers['Content-Disposition'] = 'inline'
-                    # 添加CORS头，避免跨域问题
-                    response.headers['Access-Control-Allow-Origin'] = '*'
-                    response.headers['Access-Control-Allow-Methods'] = 'GET'
-                    response.headers['Access-Control-Allow-Headers'] = 'Authorization'
-                    return response
-                except Exception as e:
-                    print(f"[DEBUG] PDF文件发送失败: {e}")
-                    return jsonify({'error': f'PDF文件读取失败: {str(e)}'}), 500
-            else:
-                # 返回HTML页面（不推荐，因为会有token问题）
+                    with open(actual_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+                except Exception:
+                    return jsonify({'error': '文本读取失败'}), 500
+
+            # ===== PDF文件处理 =====
+            elif ext == '.pdf':
                 return jsonify({'error': '请使用inline=true参数'}), 400
 
-        # ===== 文本类文件 =====
-        elif ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css', '.csv']:
-            try:
-                # 多编码支持
-                encodings = ['utf-8', 'utf-16-le', 'utf-16-be', 'gbk', 'gb2312', 'big5', 'latin-1']
-                content = None
+            # ===== 其他文件类型 =====
+            else:
+                mime = mimetypes.guess_type(actual_path)[0] or 'application/octet-stream'
+                return send_file(actual_path, mimetype=mime)
 
-                with open(actual_path, 'rb') as f:
-                    raw_content = f.read()
-
-                # 尝试不同编码
-                for encoding in encodings:
-                    try:
-                        content = raw_content.decode(encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
-
-                if content is None:
-                    content = raw_content.decode('utf-8', errors='replace')
-
-                print(f"[DEBUG] 文本文件读取成功")
-                return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-            except Exception as e:
-                print(f"[DEBUG] 文本文件读取失败: {e}")
-                return jsonify({'error': f'无法读取文本内容: {str(e)}'}), 500
-
-        # ===== DOCX文件 =====
-        elif ext == '.docx':
-            return send_file(actual_path,
-                             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-
-        # ===== 其他文件类型 =====
-        else:
-            import mimetypes
-            mime = mimetypes.guess_type(actual_path)[0] or 'application/octet-stream'
-            print(f"[DEBUG] 返回文件，MIME类型: {mime}")
-            return send_file(actual_path, mimetype=mime)
-
-    except Exception as e:
-        print(f"[DEBUG] 预览处理异常: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'预览处理失败: {str(e)}'}), 500
-
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'预览处理失败: {str(e)}'}), 500
 # ===== [最终修复 2/3] 重写 mkdir 函数 =====
 @app.route('/api/mkdir', methods=['POST'])
 @token_required()
@@ -627,6 +801,139 @@ def mkdir():
         except Exception as e:
             return jsonify({'error': '创建失败: ' + str(e)}), 500
 
+# app.py -> 替换 @app.route('/api/share', methods=['POST'])
+
+@app.route('/api/ec_status', methods=['GET'])
+@token_required(admin_only=True)
+def get_ec_status():
+    """
+    获取纠删码卷的健康状况.
+    """
+    cfg = _load_json(EC_CFG_PATH, {})
+    if not cfg:
+        return jsonify({"is_configured": False})
+
+    k = cfg.get("k", 0)
+    m = cfg.get("m", 0)
+    config_disks = set(cfg.get("disks", []))
+
+    # 获取当前系统中所有可用的、非系统盘的挂载点
+    from utils import get_disk_info
+    available_disks = set()
+    for disk in get_disk_info():
+        mount_point = disk.get("mount", "").upper().replace("\\", "/")
+        if not (mount_point == "C:/" or mount_point == "/"):
+            available_disks.add(_norm_abs(disk.get("mount")))
+
+    lost_disks = [d for d in config_disks if _norm_abs(d) not in available_disks]
+
+    is_healthy = not bool(lost_disks)
+    can_rebuild = 0 < len(lost_disks) <= m
+
+    return jsonify({
+        "is_configured": True,
+        "is_healthy": is_healthy,
+        "k": k,
+        "m": m,
+        "config_disks": list(config_disks),
+        "lost_disks": lost_disks,
+        "can_rebuild": can_rebuild,
+        # "available_new_disks" 列出可用于替换的、未被EC卷占用的新硬盘
+        "available_new_disks": [d for d in available_disks if d not in config_disks]
+    })
+
+
+
+
+# V5 测试版 (正确的)
+@app.route('/api/ec_recover', methods=['POST'])
+@token_required
+def ec_recover_disk():
+    # =================================================================
+    # V5 - 最终返回值测试版
+    # =================================================================
+    print("\n\n" + "=" * 50)
+    print("==> V5 RECOVERY FUNCTION IS RUNNING! <==")
+    print(f"==> Time: {datetime.now()} <==")
+    print("=" * 50 + "\n")
+
+    data = request.get_json()
+    lost_disk_raw = data.get('lost_disk', '')
+    new_disk_raw = data.get('new_disk', '')
+    lost_disk_path = _norm_abs(lost_disk_raw)
+    new_disk_path = _norm_abs(new_disk_raw)
+
+    cfg = _load_json(EC_CFG_PATH, {})
+    if not cfg: return jsonify({"error": "未配置纠删码"}), 400
+
+    config_disks_raw = cfg.get("disks", [])
+    config_disks_normalized = [_norm_abs(d) for d in config_disks_raw]
+    if lost_disk_path not in config_disks_normalized:
+        return jsonify({"error": "丢失的硬盘不在全局配置中"}), 400
+    new_config_disks_raw = [new_disk_raw if _norm_abs(d) == lost_disk_path else d for d in config_disks_raw]
+    cfg["disks"] = new_config_disks_raw
+    _save_json(EC_CFG_PATH, cfg)
+
+    idx = _load_json(EC_IDX_PATH, {"files": {}})
+    files_to_rebuild = list(idx.get("files", {}).items())
+    rebuilt_count = 0
+    failed_files = []
+
+    for name, meta in files_to_rebuild:
+        k, m = meta["k"], meta["m"]
+        file_disks_raw = meta.get("disks", [])
+        if not file_disks_raw:
+            failed_files.append(name)
+            continue
+        file_disks_normalized = [_norm_abs(d) for d in file_disks_raw]
+
+        try:
+            lost_shard_index = file_disks_normalized.index(lost_disk_path)
+        except ValueError:
+            continue
+
+        shard_dict = {}
+        for i, disk_raw in enumerate(file_disks_raw):
+            if _norm_abs(disk_raw) == lost_disk_path: continue
+            enc_dir = os.path.join(disk_raw, "encoded", os.path.dirname(name))
+            blk_path = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+            if os.path.exists(blk_path):
+                with open(blk_path, "rb") as f: shard_dict[i] = f.read()
+
+        if len(shard_dict) < k:
+            failed_files.append(name)
+            continue
+
+        try:
+            reconstructed_data = _decode_from_dict(shard_dict, meta)
+            all_new_shards = rs_encode(reconstructed_data, k, m)
+            shard_to_write = all_new_shards[lost_shard_index]
+            new_shard_dir = os.path.join(new_disk_raw, "encoded", os.path.dirname(name))
+            os.makedirs(new_shard_dir, exist_ok=True)
+            new_shard_path = os.path.join(new_shard_dir, f"{os.path.basename(name)}.blk_{lost_shard_index}")
+            with open(new_shard_path, "wb") as f:
+                f.write(shard_to_write)
+
+            idx["files"][name]["disks"] = new_config_disks_raw
+            rebuilt_count += 1
+        except Exception as e:
+            print(f"ERROR: Exception during recovery for {name}: {e}")
+            failed_files.append(name)
+            continue
+
+    _save_json(EC_IDX_PATH, idx)
+
+    final_message = f"V5-FINAL-TEST :: 恢复完成。共重建 {rebuilt_count} 个文件。"
+    print("\n" + "=" * 50)
+    print(f"SENDING RESPONSE TO FRONTEND: '{final_message}'")
+    print("=" * 50 + "\n")
+
+    return jsonify({
+        "success": True,
+        "message": final_message,
+        "failed_files": failed_files
+    })
+
 @app.route('/api/share', methods=['POST'])
 @token_required()
 def create_share():
@@ -635,12 +942,31 @@ def create_share():
     expire_hours = int(data.get('expire_hours', 24))
     password = data.get('password', '')
 
-    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], file_path.lstrip('/\\')))
-    base_dir = os.path.abspath(BASE_DIRS[0])
+    # [✅ 核心修正区域]
+    file_exists = False
+    # --- 分支 1: 检查纠删码卷文件是否存在 ---
+    if _is_ec_volume(file_path):
+        # 从 "ec_volume/path/to/file.jpg" 提取 "path/to/file.jpg"
+        logical_name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+        if logical_name:
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+            # 在索引中检查文件是否存在
+            if logical_name in idx.get("files", {}):
+                file_exists = True
 
-    if not abs_path.startswith(base_dir) or not os.path.exists(abs_path):
+    # --- 分支 2: 检查物理硬盘文件是否存在 ---
+    else:
+        # 使用我们已有的、更可靠的函数来获取和验证物理路径
+        from common import get_actual_file_path, is_path_allowed
+        actual_path = get_actual_file_path(file_path)
+        if actual_path and is_path_allowed(actual_path) and os.path.exists(actual_path):
+            file_exists = True
+
+    # --- 统一处理 ---
+    if not file_exists:
         return jsonify({'error': '文件不存在'}), 404
 
+    # 文件验证通过，继续创建分享链接
     token = secrets.token_urlsafe(16)
     expire_at = datetime.now() + timedelta(hours=expire_hours)
     db = get_db()
@@ -650,13 +976,13 @@ def create_share():
     )
     db.commit()
 
-    # 返回外链地址（相对地址 + ngrok 公网完整地址）
+    # 返回外链地址
+    # 注意：ngrok_url_global 需要在您的代码中正确设置
     return jsonify({
         'success': True,
-        'share_url': f'/share/{token}',  # 相对地址
-        'full_url': f'{ngrok_url_global}/share/{token}' if ngrok_url_global else None  # 公网地址
+        'share_url': f'/share/{token}',
+        'full_url': f'{ngrok_url_global}/share/{token}' if 'ngrok_url_global' in globals() and ngrok_url_global else None
     })
-
 # ===== PWA 支持路由 =====
 # 将以下代码添加到您的 app.py 文件中，放在其他 @app.route 附近
 # 在 backend/app.py 中添加或修改这些PWA路由
@@ -743,6 +1069,8 @@ def test_pwa():
 
     return jsonify(result)
 
+# app.py
+
 @app.route('/share/<token>', methods=['GET', 'POST'])
 def access_share(token):
     db = get_db()
@@ -752,6 +1080,8 @@ def access_share(token):
 
     # 检查过期
     if row['expire_at'] and datetime.strptime(row['expire_at'], '%Y-%m-%d %H:%M:%S') < datetime.now():
+        db.execute("DELETE FROM share_links WHERE token=?", (token,))
+        db.commit()
         return "链接已过期", 403
 
     # 校验密码
@@ -763,17 +1093,71 @@ def access_share(token):
         else:
             # GET: 显示密码输入表单
             return '''
+                <style>body { font-family: sans-serif; text-align: center; padding-top: 50px; }</style>
                 <form method="post">
-                  请输入分享密码：<input name="password" type="password"/>
-                  <button type="submit">提交</button>
+                  <h3>请输入分享密码</h3>
+                  <input name="password" type="password" style="padding: 8px;"/>
+                  <button type="submit" style="padding: 8px 12px;">提交</button>
                 </form>
             '''
-    # 密码通过，返回文件
-    abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], row['file_path'].lstrip('/\\')))
-    if not abs_path.startswith(BASE_DIRS[0]) or not os.path.exists(abs_path):
-        return "文件不存在", 404
-    return send_file(abs_path, as_attachment=True)
 
+    # [✅ 核心修正区域]
+    # 密码通过后，根据文件路径类型（EC卷或物理盘）返回文件
+    file_path = row['file_path']
+
+    # --- 分支 1: 处理纠删码卷文件 ---
+    if _is_ec_volume(file_path):
+        name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+        if not name:
+            return "无效的逻辑盘文件路径", 400
+
+        idx = _load_json(EC_IDX_PATH, {"files": {}}).get("files", {})
+        entry = idx.get(name)
+        if not entry:
+            return "分享的文件已在逻辑盘中被删除或移动", 404
+
+        k, m, disks = entry["k"], entry["m"], entry["disks"]
+        shard_dict, meta = {}, None
+
+        # 从各磁盘读取分片和元数据
+        for i, disk in enumerate(disks[:k + m]):
+            enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
+            blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+            if os.path.exists(blk):
+                with open(blk, "rb") as f:
+                    shard_dict[i] = f.read()
+            if not meta:
+                mj = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
+                if os.path.exists(mj):
+                    with open(mj, "r", encoding="utf-8") as mf:
+                        meta = json.load(mf)
+
+        if not meta or len(shard_dict) < k:
+            return "文件分片损坏或不足，暂时无法访问", 409
+
+        try:
+            # 解码重组文件
+            data = _decode_from_dict(shard_dict, meta)
+        except Exception as e:
+            print(f"[ERROR] Share link decode failed for {name}: {e}")
+            return "文件解码失败，请检查后台日志", 500
+
+        # （可选）完整性校验
+        if meta.get("sha256") and hashlib.sha256(data).hexdigest() != meta.get("sha256"):
+            return "文件完整性校验失败，文件可能已损坏", 500
+
+        # 将解码后的文件内容作为内存中的字节流发送出去
+        return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
+
+    # --- 分支 2: 处理物理硬盘文件 (保持并优化原有逻辑) ---
+    else:
+        from common import get_actual_file_path, is_path_allowed
+        actual_path = get_actual_file_path(file_path)
+
+        if not actual_path or not is_path_allowed(actual_path) or not os.path.exists(actual_path):
+            return "分享的文件不存在或已被移动", 404
+
+        return send_file(actual_path, as_attachment=True)
 
 @app.route('/api/ngrok-url')
 def api_ngrok_url():
@@ -959,16 +1343,18 @@ def api_encode():
         return jsonify({'error': f'内部错误: {e}'}), 500
 
 
+# 文件: app.py
+
 @app.route('/api/upload', methods=['POST'])
 @token_required()
 def upload_file_with_ec():
     uploaded_files = request.files.getlist('file')
     upload_path = request.form.get('path', '/')
-
+    print(f"[DEBUG] 上传请求接收路径: {upload_path}")
     if not uploaded_files or not all(f.filename for f in uploaded_files):
         return jsonify({'error': '未提供文件'}), 400
 
-    # 逻辑盘：自动 RS (此部分逻辑是正确的，无需修改)
+    # 逻辑盘：自动 RS
     if _is_ec_volume(upload_path):
         ec_cfg = _load_json(EC_CFG_PATH, {})
         if not ec_cfg or ec_cfg.get("scheme", "").lower() != "rs":
@@ -993,35 +1379,50 @@ def upload_file_with_ec():
             shard_size = len(shards[0]) if shards else 0
             file_sha = hashlib.sha256(data).hexdigest()
 
+            # --- ✅ 关键修复区域开始 ---
             norm_path = upload_path.replace("\\", "/").strip("/")
-            rel_in_volume = '' if norm_path == 'ec_volume' else norm_path[len('ec_volume/'):]
-            logical_name = os.path.join(rel_in_volume, uploaded_file.filename).replace("\\", "/")
+
+            # 获取文件在EC卷中的相对路径（如：dirA/dirB）
+            if norm_path == 'ec_volume':
+                rel_in_volume_dir = ''  # 根目录
+            else:
+                rel_in_volume_dir = norm_path[len('ec_volume/'):]  # 子目录
+
+            # 文件的逻辑全名 (例如: dirA/dirB/fileName.ext)
+            logical_name = os.path.join(rel_in_volume_dir, uploaded_file.filename).replace("\\", "/")
+            # --- 关键修复区域结束 ---
+
             meta = {"k": k, "m": m, "shard_size": shard_size, "original_size": len(data), "sha256": file_sha}
 
             try:
                 for i, disk in enumerate(disks[:k + m]):
-                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
+                    # 拼接各盘下的 encoded/ + 相对路径 (rel_in_volume_dir)
+                    enc_dir = os.path.join(disk, "encoded", rel_in_volume_dir)
                     os.makedirs(enc_dir, exist_ok=True)
-                    with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.blk_{i}"), "wb") as f:
+
+                    # 分片名只使用文件名（不含EC卷内的目录结构）
+                    base_filename = os.path.basename(uploaded_file.filename)
+
+                    with open(os.path.join(enc_dir, f"{base_filename}.blk_{i}"), "wb") as f:
                         f.write(shards[i])
-                    with open(os.path.join(enc_dir, f"{os.path.basename(logical_name)}.meta.json"), "w",
+
+                    with open(os.path.join(enc_dir, f"{base_filename}.meta.json"), "w",
                               encoding="utf-8") as mf:
                         json.dump(meta, mf, ensure_ascii=False)
             except Exception as e:
                 return jsonify({'error': f'写入分片失败: {e}'}), 500
 
             idx = _load_json(EC_IDX_PATH, {"files": {}})
+            # 索引中存储的是 logical_name (EC卷内相对全路径)
             idx["files"][logical_name] = {"size": len(data), "k": k, "m": m, "sha256": file_sha, "disks": disks,
                                           "ctime": int(time.time())}
             _save_json(EC_IDX_PATH, idx)
 
         return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件已写入逻辑盘并完成RS编码'})
 
-    # 普通目录：原样保存
+    # 普通目录：原样保存 (此部分逻辑在前端修正后已正确)
     else:
         try:
-            # [最终修复] 直接使用前端发送的完整路径，并进行安全校验
-
             # 1. 验证路径中是否包含盘符
             drive, _ = os.path.splitdrive(upload_path)
             if not drive:
@@ -1058,6 +1459,7 @@ def upload_file_with_ec():
             return jsonify({'error': f'处理上传时发生严重错误: {e}'}), 500
 
 
+# ===== [最终修复 1/3] 重写 list_files 函数 =====
 # ===== [最终修复 1/3] 重写 list_files 函数 =====
 @app.route('/api/list', methods=['GET'])
 @token_required()
@@ -1186,7 +1588,8 @@ def api_search():
         return jsonify({'success': False, 'error': f'搜索失败: {str(e)}'}), 500
 
 
-# ===== [最终修复 3/3] 重写 api_download 函数 =====
+# 文件: app.py -> @app.route("/api/download", methods=["GET"])
+
 @app.route("/api/download", methods=["GET"])
 @token_required()
 def api_download():
@@ -1194,7 +1597,7 @@ def api_download():
     if not file_path:
         return jsonify({"error": "缺少 path 参数"}), 400
 
-    # --- 分支 1: 处理纠删码卷 ---
+    # 1. 优先处理 EC 卷
     if _is_ec_volume(file_path):
         name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
         if not name: return jsonify({"error": "无效的逻辑盘文件路径"}), 400
@@ -1203,6 +1606,7 @@ def api_download():
         if not entry: return jsonify({"error": "文件不在逻辑盘索引中"}), 404
         k, m, disks = entry["k"], entry["m"], entry["disks"]
         shard_dict, meta = {}, None
+        # ... (EC 逻辑保持不变) ...
         for i, disk in enumerate(disks[:k + m]):
             enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
             blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
@@ -1220,20 +1624,27 @@ def api_download():
             return jsonify({"error": "数据完整性校验失败"}), 500
         return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
 
-    # --- 分支 2: 处理物理硬盘 ---
+    # 2. 处理物理硬盘 (✅ 修复：使用 get_actual_file_path 统一路径解析和安全检查)
     else:
         try:
-            local = os.path.abspath(file_path)
-            allowed = False
-            for base_dir in get_available_drives():
-                if local.upper().startswith(os.path.abspath(base_dir).upper()):
-                    allowed = True
-                    break
-            if not allowed:
+            from common import get_actual_file_path
+
+            # 使用 get_actual_file_path 获取绝对路径。
+            # 此函数会尝试在可用盘符中找到文件，并返回绝对路径。
+            actual_path = get_actual_file_path(file_path)
+
+            if not actual_path:
+                return jsonify({"error": "文件不存在或路径无效"}), 404
+
+            # 再次进行最终的安全检查，确保路径在 BASE_DIRS 范围内。
+            from common import is_path_allowed
+            if not is_path_allowed(actual_path):
                 return jsonify({"error": "不允许访问该路径"}), 403
-            if not os.path.exists(local) or not os.path.isfile(local):
+
+            if not os.path.exists(actual_path) or not os.path.isfile(actual_path):
                 return jsonify({"error": "文件不存在或不是一个文件"}), 404
-            return send_file(local, as_attachment=True, download_name=os.path.basename(local))
+
+            return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
         except Exception as e:
             return jsonify({'error': f'下载文件时出错: {e}'}), 500
 
@@ -1531,6 +1942,47 @@ def ec_import():
 
     _save_json(EC_IDX_PATH, idx)
     return jsonify({"success": True, "imported": imported, "failed": failed, "skipped": skipped})
+
+
+# app.py (添加新的路由)
+
+# ======================================================
+#                 加密驱动器 API
+# ======================================================
+@app.route('/api/encryption/status', methods=['GET'])
+@token_required(admin_only=True)
+def encryption_status():
+    """获取加密驱动器的状态"""
+    return jsonify({
+        'is_configured': bool(encryption_manager.encrypted_drives),
+        'is_unlocked': encryption_manager.is_unlocked,
+        'encrypted_drives': list(encryption_manager.encrypted_drives)
+    })
+
+
+@app.route('/api/encryption/unlock', methods=['POST'])
+@token_required(admin_only=True)
+def encryption_unlock():
+    """使用密码解锁加密驱动器"""
+    data = request.get_json()
+    password = data.get('password', '')
+    if not password:
+        return jsonify({'error': '需要提供密码'}), 400
+
+    success = encryption_manager.unlock(password)
+    if success:
+        return jsonify({'success': True, 'message': '加密驱动器已解锁'})
+    else:
+        return jsonify({'error': '密码错误，解锁失败'}), 403
+
+
+@app.route('/api/encryption/lock', methods=['POST'])
+@token_required(admin_only=True)
+def encryption_lock():
+    """手动锁定加密驱动器"""
+    encryption_manager.lock()
+    return jsonify({'success': True, 'message': '加密驱动器已锁定'})
+
 
 @app.route('/api/documents', methods=['POST'])
 @token_required()
@@ -2237,6 +2689,10 @@ def start_cleanup_thread():
 
 # 在应用启动时调用
 start_cleanup_thread()
+# ===== 注册文件管理蓝图 =====
+from filemanager import file_bp
+
+app.register_blueprint(file_bp)
 
 # ===== 主启动入口 =====
 if __name__ == '__main__':

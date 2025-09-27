@@ -83,6 +83,19 @@ const app = Vue.createApp({
       ec: {             // <--- 关键：创建一个 ec 对象
        config: null   }, // <--- 在 ec 对象内部初始化 config
 
+      // ========== 新增：纠删码健康状态与恢复 ==========
+      ecStatus: {
+        is_configured: false,
+        is_healthy: true,
+        lost_disks: [],
+        available_new_disks: [],
+        can_rebuild: false
+      },
+      showEcRecoverDialog: false,
+      recoveryPayload: {
+        lost_disk: '',
+        new_disk: ''
+      },
       // 协作分享弹窗
       showCollabShareDialog: false,
       collabShareFile: null,
@@ -94,24 +107,50 @@ const app = Vue.createApp({
   },
 
   computed: {
-    // ===== 新增：用于驱动下拉菜单的计算属性 =====
-  navigableLocations() {
-    // 先添加物理硬盘
-    const locations = this.availableDrives.map(drive => ({
-      name: `物理磁盘 (${drive})`,
-      path: drive
-    }));
+     // 文件: app.js -> computed
 
-    // 如果纠删码卷存在，就把它加到列表的最前面
-    if (this.ecDiskGroup) {
-      locations.unshift({
-        name: '[纠删码卷]',
-        path: 'ec_volume'
+navigableLocations() {
+  // 1. 获取所有参与了纠删码的磁盘挂载点，并对路径进行归一化
+  const ecDisks = this.disks.filter(d => d.ec_scheme);
+  // 关键：Set 中存储归一化后的路径，用于快速查找
+  const ecDiskMounts = new Set(ecDisks.map(d => this.normalizePath(d.mount)));
+
+  // 2. 如果存在纠删码配置（即 EC 盘符集合非空）...
+  if (ecDiskMounts.size > 0) {
+    const locations = [];
+
+    // a. 始终添加 '[纠删码卷]' 选项
+    locations.push({
+      name: '[纠删码卷]',
+      path: 'ec_volume'
+    });
+
+    // b. 筛选未参与纠删码的物理磁盘
+    const nonEcDrives = this.availableDrives.filter(driveObj => {
+      // 对 availableDrives 中的路径也进行归一化后再进行查找
+      return !ecDiskMounts.has(this.normalizePath(driveObj.drive));
+    });
+
+    // c. 将非 EC 物理磁盘添加到列表中
+    nonEcDrives.forEach(driveObj => {
+      locations.push({
+        name: `物理磁盘 (${driveObj.drive})`,
+        path: driveObj.drive
       });
-    }
+    });
+
     return locations;
-  },
-     // ===== 用这个完整的块替换现有的 computed =====
+  }
+  // 3. 如果不存在纠删码配置，则显示所有物理磁盘。
+  else {
+    return this.availableDrives.map(driveObj => ({
+      name: `物理磁盘 (${driveObj.drive})`,
+      path: driveObj.drive
+    }));
+  }
+},
+
+  // ===== 其他既有的计算属性保持不变 =====
   ecDiskGroup() {
     const ecDisks = this.disks.filter(d => d.ec_scheme);
     if (ecDisks.length === 0) {
@@ -141,35 +180,53 @@ const app = Vue.createApp({
     }
   },
   breadcrumbs() {
-      if (this.currentPath.startsWith('ec_volume')) {
-          const base = [{ name: '[纠删码卷]', path: 'ec_volume' }];
-          const subPath = this.currentPath.substring('ec_volume'.length).replace(/^\//, '');
-          if (!subPath) return base;
+    if (this.currentPath.startsWith('ec_volume')) {
+        const base = [{ name: '[纠删码卷]', path: 'ec_volume' }];
+        const subPath = this.currentPath.substring('ec_volume'.length).replace(/^\//, '');
+        if (!subPath) return base;
 
-          const parts = subPath.split('/').filter(p => p);
-          let path = 'ec_volume';
-          for (const part of parts) {
-              path += '/' + part;
-              base.push({ name: part, path: path });
-          }
-          return base;
-      }
+        const parts = subPath.split('/').filter(p => p);
+        let path = 'ec_volume';
+        for (const part of parts) {
+            path += '/' + part;
+            base.push({ name: part, path: path });
+        }
+        return base;
+    }
 
-      if (this.currentPath === '/') return [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
-      const parts = this.currentPath.split('/').filter(p => p);
-      let path = '';
-      const crumbs = [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
-      for (const part of parts) {
-          path += '/' + part;
-          crumbs.push({ name: part, path: path });
-      }
-      return crumbs;
+    if (this.currentPath === '/') return [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+    const parts = this.currentPath.split('/').filter(p => p);
+    let path = '';
+    const crumbs = [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+    for (const part of parts) {
+        path += '/' + part;
+        crumbs.push({ name: part, path: path });
+    }
+    return crumbs;
   }
   // ==========================
   },
 
   methods: {
+    // 文件: app.js -> methods (在您已有的方法中找个位置添加)
 
+// ...
+// ========== 新增路径归一化辅助方法 ==========
+normalizePath(p) {
+  if (!p) return '';
+  // 统一转大写、反斜杠转正斜杠、去除末尾斜杠
+  return p.toUpperCase().replace(/\\/g, '/').replace(/\/$/, '');
+},
+// ===================================
+// ...
+
+    // ========== 停止系统信息定时刷新 ==========
+    stopSysTimer() {
+      if (this._sysTimer) {
+        clearInterval(this._sysTimer);
+        this._sysTimer = null;
+      }
+    },
        // 在 methods 中添加这两个函数
     goECVolume() {
   // 点击纠删码卷时，加载其文件列表
@@ -279,15 +336,77 @@ const app = Vue.createApp({
       }
     },
  // 用这个新版本来替换
+// 修改changeDrive方法
+// 文件: app.js -> methods
+// 文件: app.js -> methods
+
+// ========== 新增辅助方法：构建完整路径 (优化版) ==========
+// 文件: app.js -> methods
+
+// ========== 修正版：构建完整路径 (重点修复EC卷根目录拼接) ==========
+// 文件: app.js -> methods -> buildFullPath (最终修正版)
+
+// 文件: app.js -> methods -> buildFullPath (最鲁棒版本)
+
+buildFullPath(fileName) {
+  // 1. 如果当前盘符是 EC 卷
+  if (this.currentDrive === 'ec_volume') {
+    let path = this.currentPath.replace(/\\/g, '/');
+
+    // --- 关键清理步骤 ---
+    // 目标: 移除所有 'ec_volume' 前缀、开头的 '/' 和末尾的 '/'
+    path = path.replace(/^ec_volume\/?/, ''); // 移除 'ec_volume' 或 'ec_volume/'
+    path = path.replace(/^\//, '');          // 移除开头的 '/'
+    path = path.replace(/\/$/, '');          // 移除末尾的 '/'
+
+    // 最终拼接：
+    if (path === '') {
+      // 根目录：ec_volume/fileName
+      return `ec_volume/${fileName}`;
+    }
+
+    // 子目录：ec_volume/dirA/fileName
+    return `ec_volume/${path}/${fileName}`;
+  }
+
+  // 2. 处理物理硬盘路径 (原逻辑，确保它是正确的绝对路径)
+  let cleanPath = this.currentPath;
+
+  if (cleanPath.startsWith('/')) {
+    cleanPath = cleanPath.substring(1);
+  }
+
+  let fullPath;
+  if (cleanPath === '' || cleanPath === '/') {
+    // 根目录情况 (例如 D:/fileName)
+    fullPath = this.currentDrive + fileName;
+  } else {
+    // 子目录情况 (例如 D:/dirA/fileName)
+    fullPath = this.currentDrive + cleanPath + '/' + fileName;
+  }
+
+  // 标准化路径分隔符
+  return fullPath.replace(/\\/g, '/');
+},
+// ===================================
+initializeCurrentDrive() {
+  const ecDisks = this.disks.filter(d => d.ec_scheme);
+
+  if (ecDisks.length > 0) {
+    // 默认选择纠删码卷
+    this.currentDrive = 'ec_volume';
+  } else if (this.availableDrives.length > 0) {
+    // 否则选择第一个物理盘
+    this.currentDrive = this.availableDrives[0].drive;
+  }
+},
+
 changeDrive() {
-  // this.currentDrive 会被 v-model 自动更新
   const selectedPath = this.currentDrive;
 
-  if (selectedPath.startsWith('ec_volume')) {
-    // 如果用户选择了纠删码卷
+  if (selectedPath === 'ec_volume') {
     this.loadFileList('ec_volume');
   } else {
-    // 如果用户选择的是物理硬盘，行为和以前一样
     this.loadFileList('/');
   }
 },
@@ -342,6 +461,19 @@ changeDrive() {
       this.resetPwMsg = '';
     },
 
+async loadMainPanel() {
+  await Promise.all([
+    this.fetchSystemInfo(),
+    this.fetchDiskInfo(),
+    this.fetchAvailableDrives(),
+    this.fetchEcStatus() // <--- 在这里添加调用
+  ]);
+
+  // 初始化驱动器选择
+  this.initializeCurrentDrive();
+  await this.loadFileList(this.currentDrive === 'ec_volume' ? 'ec_volume' : '/');
+  this.startSysTimer();
+},
     // ========== 系统/磁盘信息，动态刷新 ==========
     async fetchSystemInfo() {
       try {
@@ -351,21 +483,35 @@ changeDrive() {
         this.logout();
       }
     },
-    async fetchDiskInfo() {
-      try {
-        const res = await axios.get('/api/disk');
-        this.disks = res.data;
-      } catch (e) {}
-    },
-    startSysTimer() {
-      this.stopSysTimer();
-      this._sysTimer = setInterval(() => {
-        if (this.loggedIn) this.fetchSystemInfo();
-      }, 10000);
-    },
-    stopSysTimer() {
-      if (this._sysTimer) clearInterval(this._sysTimer);
-    },
+    // 文件: app.js -> methods
+async fetchDiskInfo() {
+  try {
+    const res = await axios.get('/api/disk');
+    this.disks = res.data;
+  } catch (e) {
+    // 增加日志，方便未来调试
+    console.error("刷新磁盘信息失败:", e);
+
+    // 关键：检查错误是否是 401 (未授权)，如果是，说明Token失效
+    if (e.response && e.response.status === 401) {
+      // 立刻执行登出操作，停止所有定时器并返回登录界面
+      this.logout();
+    }
+  }
+},
+    // 文件: app.js -> methods
+// app.js -> methods -> startSysTimer
+
+startSysTimer() {
+  this.stopSysTimer();
+  this._sysTimer = setInterval(() => {
+    if (this.loggedIn) {
+      this.fetchSystemInfo();
+      this.fetchDiskInfo();
+      this.fetchEcStatus(); // <--- 在这里添加调用
+    }
+  }, 10000); // 10秒刷新一次
+},
 
 
     // ========== 文件管理 ==========
@@ -400,23 +546,15 @@ changeDrive() {
       }
     },
 
+    // ===== [最终修复] 重写 goToFile 函数 =====
     goToFile(file) {
-      this.showSearchDialog = false;
-      alert(`✅ 搜索成功，正在定位文件 ${file.name}`);
-
-      this.loadFileList(file.directory, () => {
-        // ⏬ 高亮目标文件
-        this.$nextTick(() => {
-          const rows = document.querySelectorAll(".file-list tr");
-          rows.forEach(row => {
-            if (row.innerText.includes(file.name)) {
-              row.scrollIntoView({ behavior: "smooth", block: "center" });
-              row.classList.add("highlight");
-              setTimeout(() => row.classList.remove("highlight"), 2000);
-            }
-          });
-        });
-      });
+      if (file.is_dir) {
+        // 后端返回的 file.path 已经是我们需要的、相对于盘符的路径了
+        // 例如 'folder' 或 'folder/subfolder'
+        this.loadFileList(file.path);
+      } else {
+        this.previewFile(file);
+      }
     },
 
     loadFileList(path, callback) {
@@ -547,43 +685,85 @@ changeDrive() {
       }
     },
 
-    async uploadDraggedFiles() {
-      if (!this.uploadFiles.length) return;
+    // 文件: app.js -> methods
 
-      const path = this.currentPath;
-      const token = localStorage.getItem("token");
+// 文件: app.js -> methods
 
-      for (const file of this.uploadFiles) {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("path", path);
+async uploadDraggedFiles() {
+  if (!this.uploadFiles.length) return;
 
-        try {
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            headers: {
-              Authorization: "Bearer " + token,
-            },
-            body: formData,
-          });
-          const data = await res.json();
-          if (data.success) {
-            this.uploadStatus = `✅ ${file.name} 上传成功`;
-            this.loadFileList(this.currentPath);
-          } else {
-            this.uploadStatus = `❌ ${file.name} 上传失败：${data.error}`;
-          }
-        } catch (err) {
-          this.uploadStatus = `❌ ${file.name} 上传异常：${err.message}`;
-        }
+  // 【✅ 核心修复：确定正确的上传目标路径】
+  let uploadPath;
+  const currentPathNorm = this.currentPath.replace(/\\/g, '/');
+
+  if (this.currentDrive === 'ec_volume') {
+      // 纠删码卷：
+      if (currentPathNorm === '/' || currentPathNorm === '') {
+          // 在EC根目录，目标路径就是 'ec_volume'
+          uploadPath = 'ec_volume';
+      } else if (currentPathNorm.startsWith('ec_volume')) {
+          // 在EC子目录，目标路径就是 'ec_volume/dirA/dirB'
+          uploadPath = currentPathNorm;
+      } else {
+          // 如果 currentPath 是 '/dirA' 这样的相对路径，我们将其视为 EC 卷下的子目录
+          uploadPath = 'ec_volume' + currentPathNorm;
       }
 
-      setTimeout(() => {
-        this.uploadStatus = '';
-        this.uploadFiles = [];
-        this.showUploadDialog = false;
-      }, 1200);
-    },
+  } else {
+      // 物理盘：
+      if (currentPathNorm === '/' || currentPathNorm === '') {
+          // 物理盘根目录，发送盘符本身，例如 'D:/'
+          uploadPath = this.currentDrive;
+      } else {
+          // 物理盘子目录，发送完整的绝对路径，例如 'D:/dirA/dirB'
+          // 注意：this.currentDrive 已经是 D:/，currentPathNorm 是 /dirA/dirB
+          uploadPath = this.currentDrive + currentPathNorm;
+      }
+  }
+
+  // 确保路径不为空
+  if (!uploadPath) {
+      this.uploadStatus = '❌ 错误：无法确定上传路径';
+      return;
+  }
+  // 确保路径中的分隔符正确（统一使用 /）
+  uploadPath = uploadPath.replace(/\\/g, '/').replace(/\/{2,}/g, '/'); // 防止双斜杠
+
+  const token = localStorage.getItem("token");
+
+  for (const file of this.uploadFiles) {
+    const formData = new FormData();
+    formData.append("file", file);
+    // 【关键】将修正后的路径发送给后端
+    formData.append("path", uploadPath);
+
+    try {
+      // ... (fetch 和后续处理逻辑保持不变) ...
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+        },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.uploadStatus = `✅ ${file.name} 上传成功`;
+        this.loadFileList(this.currentPath);
+      } else {
+        this.uploadStatus = `❌ ${file.name} 上传失败：${data.error}`;
+      }
+    } catch (err) {
+      this.uploadStatus = `❌ ${file.name} 上传异常：${err.message}`;
+    }
+  }
+
+  setTimeout(() => {
+    this.uploadStatus = '';
+    this.uploadFiles = [];
+    this.showUploadDialog = false;
+  }, 1200);
+},
 
     uploadFile() {
       const file = this.$refs.uploadFileInput.files[0];
@@ -789,51 +969,66 @@ changeDrive() {
     alert(e?.response?.data?.error || "分享失败");
   }
 },
-// ========== 新增辅助方法：构建完整路径 ==========
-buildFullPath(fileName) {
-  /**
-   * 构建包含盘符的完整文件路径
-   * @param {string} fileName - 文件名
-   * @returns {string} 完整路径
-   */
+// ========== 新增辅助方法：构建完整路径 =========
+// app.js -> methods
 
-  // 处理当前路径，确保格式正确
-  let cleanPath = this.currentPath;
+    // ========== 新增：纠删码恢复相关方法 ==========
 
-  // 移除开头的斜杠
-  if (cleanPath.startsWith('/')) {
-    cleanPath = cleanPath.substring(1);
-  }
+    // 1. 获取EC卷的健康状况
+    async fetchEcStatus() {
+      try {
+        const res = await axios.get('/api/ec_status');
+        this.ecStatus = res.data;
+      } catch (e) {
+        console.error("获取纠删码状态失败:", e);
+        // 如果API失败，重置为默认安全状态
+        this.ecStatus.is_configured = false;
+      }
+    },
 
-  // 移除结尾的斜杠
-  if (cleanPath.endsWith('/')) {
-    cleanPath = cleanPath.slice(0, -1);
-  }
+    // 2. 打开恢复对话框
+    openEcRecoverDialog(lostDisk) {
+      this.recoveryPayload.lost_disk = lostDisk;
+      this.recoveryPayload.new_disk = ''; // 重置下拉选择
+      this.showEcRecoverDialog = true;
+    },
 
-  // 构建完整路径
-  let fullPath;
-  if (cleanPath === '' || cleanPath === '/') {
-    // 根目录情况
-    fullPath = this.currentDrive + fileName;
-  } else {
-    // 子目录情况
-    fullPath = this.currentDrive + cleanPath + '/' + fileName;
-  }
+    // 3. 关闭恢复对话框
+    closeEcRecoverDialog() {
+      this.showEcRecoverDialog = false;
+      this.recoveryPayload.lost_disk = '';
+      this.recoveryPayload.new_disk = '';
+    },
 
-  // 标准化路径分隔符（统一使用正斜杠）
-  fullPath = fullPath.replace(/\\/g, '/');
+    // 4. 提交恢复请求
+    async submitEcRecover() {
+      if (!this.recoveryPayload.new_disk) {
+        alert('请选择一块新硬盘用于替换！');
+        return;
+      }
+      if (!confirm(`确认要使用新硬盘 ${this.recoveryPayload.new_disk} 来恢复 ${this.recoveryPayload.lost_disk} 上的数据吗？\n这个过程可能需要很长时间。`)) {
+        return;
+      }
 
-  console.log('构建路径详情:', {
-    currentDrive: this.currentDrive,
-    currentPath: this.currentPath,
-    cleanPath: cleanPath,
-    fileName: fileName,
-    fullPath: fullPath
-  });
+      this.infoMessage = '正在开始恢复，请勿关闭页面...';
+      try {
+        const res = await axios.post('/api/ec_recover', this.recoveryPayload);
+        if (res.data.success) {
+          alert('✅ 恢复成功！\n' + res.data.message);
+          this.infoMessage = '';
+          this.closeEcRecoverDialog();
+          // 立即刷新状态
+          this.fetchEcStatus();
+          this.fetchDiskInfo();
+        } else {
+          throw new Error(res.data.error || '未知错误');
+        }
+      } catch (e) {
+        this.errorMessage = '恢复失败: ' + (e.response?.data?.error || e.message);
+      }
+    },
 
-  return fullPath;
-},
-
+    // ==========================================
     // ===================================
 // 纠删码 (EC)
 // ===================================
@@ -874,25 +1069,7 @@ async loadDisks() {
         alert('无法刷新磁盘列表，请检查后端服务。');
       }
     },
-async deleteEcConfig() {
-  if (!confirm('您确定要删除纠删码配置吗？\n此操作不可逆！')) {
-    return;
-  }
-  try {
-    const res = await axios.delete('/api/ec_config');
-    if (res.data.success) {
-      alert('纠删码配置已删除。');
-      // 使用 this.ec.config
-      this.ec.config = null;
-      this.ecDialogVisible = false;
-      this.loadDisks();
-    } else {
-      alert('删除失败: ' + (res.data.error || '未知错误'));
-    }
-  } catch (e) {
-    alert('删除配置时出错: ' + (e.response?.data?.error || e.message));
-  }
-},
+
     // ========== 纠删码 ==========
     async applyECScheme() {
       if (this.selectedDisks.length < this.k + this.m) {
@@ -1068,27 +1245,7 @@ async createPdfPreviewSession(filePath, token) {
 // ===================================
     // 纠删码 (EC) - 新增/修改的函数
     // ===================================
-    async openEcDialog() {
-      this.ecDialogVisible = true;
-      this.ecConfig = null; // 每次打开时重置
-      try {
-        const res = await axios.get('/api/ec_config');
-        if (res.data.success && res.data.config) {
-          this.ecConfig = res.data.config;
-          // 将服务器的现有配置填充到表单中
-          this.ecScheme = this.ecConfig.scheme;
-          this.k = this.ecConfig.k;
-          this.m = this.ecConfig.m;
-          this.selectedDisks = this.ecConfig.disks;
-        } else {
-          // 如果没有配置，确保表单是空的或使用默认值
-          this.selectedDisks = [];
-        }
-      } catch (e) {
-        alert('加载纠删码配置失败: ' + (e.response?.data?.error || e.message));
-        this.ecDialogVisible = false; // 加载失败则关闭弹窗
-      }
-    },
+
     async deleteEcConfig() {
       if (!confirm('您确定要删除纠删码配置吗？\n此操作不可逆！')) {
         return;
@@ -1193,15 +1350,7 @@ closePreview() {
     },
 
     // ========== 面板导航 ==========
-    async loadMainPanel() {
-      await Promise.all([
-        this.fetchSystemInfo(),
-        this.fetchDiskInfo(),
-        this.fetchAvailableDrives(),
-        this.loadFileList("/")
-      ]);
-      this.startSysTimer();
-    },
+
 
     // 获取可用盘符
     async fetchAvailableDrives() {
@@ -1298,24 +1447,6 @@ closePreview() {
   } catch (error) {
     console.error('创建协作会话失败:', error);
     alert('创建协作会话失败: ' + (error.response?.data?.error || error.message));
-  }
-},
-async deleteEcConfig() {
-  if (!confirm('您确定要删除纠删码配置吗？\n此操作将移除服务器上的配置文件，但不会删除已有的数据分片。\n此操作不可逆！')) {
-    return;
-  }
-  try {
-    const res = await axios.delete('/api/ec_config');
-    if (res.data.success) {
-      alert('纠删码配置已成功删除。');
-      // 重置前端数据以更新UI
-      this.ec.config = null;
-      this.showEcDialog = false; // 关闭弹窗
-    } else {
-      alert('删除失败: ' + (res.data.error || '未知错误'));
-    }
-  } catch (e) {
-    alert('删除配置时出错: ' + (e.response?.data?.error || e.message));
   }
 },
 
