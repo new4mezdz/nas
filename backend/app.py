@@ -655,119 +655,100 @@ def batch_delete():
 
 # 文件: app.py -> @app.route('/api/preview')
 
+# app.py -> 完整替換 @app.route('/api/preview', ...)
+
 @app.route('/api/preview')
 @token_required()
 def preview_file():
     path = request.args.get('path', '').strip()
     if not path:
-        return jsonify({'error': '未指定文件路径'}), 400
+        return jsonify({'error': '未指定文件路徑'}), 400
 
-    print(f"[DEBUG] 预览请求 - 原始路径: {path}")
+    print(f"[DEBUG] 預覽請求 - 原始路徑: {path}")
 
-    # 1. 优先处理 EC 卷
+    # --- 分支 1: 處理糾刪碼卷 (邏輯保持不變) ---
     if _is_ec_volume(path):
         from common import get_actual_file_path
-
         logical_path = get_actual_file_path(path)
         index_key = logical_path.replace('ec_volume/', '', 1).strip('/')
-
-        if not index_key:
-            return jsonify({'error': 'EC 卷路径无效'}), 400
-
-        # 从索引中获取文件元数据
+        if not index_key: return jsonify({'error': 'EC 卷路徑無效'}), 400
         idx = _load_json(EC_IDX_PATH, {"files": {}})
         entry = idx.get("files", {}).get(index_key)
-
-        print(f"[DEBUG] 查找 EC 索引键: {index_key}")
-
-        if not entry:
-            return jsonify({'error': 'EC 卷文件不存在'}), 404
-
+        if not entry: return jsonify({'error': 'EC 卷文件不存在'}), 404
         k, m, disks = entry["k"], entry["m"], entry["disks"]
         shard_dict, meta = {}, None
         base_filename = os.path.basename(index_key)
-
-        # 读取分片和元数据
         for i, disk in enumerate(disks[:k + m]):
             enc_dir = os.path.join(disk, "encoded", os.path.dirname(index_key))
             blk = os.path.join(enc_dir, f"{base_filename}.blk_{i}")
-
             if os.path.exists(blk):
-                with open(blk, "rb") as f:
-                    shard_dict[i] = f.read()
+                with open(blk, "rb") as f: shard_dict[i] = f.read()
             if not meta:
                 mj = os.path.join(enc_dir, f"{base_filename}.meta.json")
                 if os.path.exists(mj):
-                    with open(mj, "r", encoding="utf-8") as mf:
-                        meta = json.load(mf)
-
-        # 检查是否可恢复
-        if not meta or len(shard_dict) < k:
-            return jsonify({'error': '可用分片不足，无法恢复'}), 409
-
-        # 🚨 语法修正开始 🚨
-        data = None  # 确保在 try 块外部初始化
+                    with open(mj, "r", encoding="utf-8") as mf: meta = json.load(mf)
+        if not meta or len(shard_dict) < k: return jsonify({'error': '可用分片不足，無法恢復'}), 409
         try:
-            # 执行解码
             data = _decode_from_dict(shard_dict, meta)
-        except Exception as e: # ⬅️ 确保 except 与 try 对齐
-            import traceback
-            traceback.print_exc()
-            print(f"[ERROR] EC 预览解码失败: {e}")
-            return jsonify({'error': f'EC 卷文件解码失败: {e}'}), 500
-
-        # 确保 data 已赋值
-        if data is None:
-            return jsonify({'error': '文件解码失败或返回空数据'}), 500
-
-        # 返回文件流
+        except Exception as e:
+            print(f"[ERROR] EC 預覽解碼失敗: {e}")
+            return jsonify({'error': f'EC 卷文件解碼失敗: {e}'}), 500
         mime = mimetypes.guess_type(index_key)[0] or 'application/octet-stream'
         return send_file(io.BytesIO(data), mimetype=mime)
 
-    # 2. 处理物理硬盘 (物理盘逻辑保持不变)
+    # --- 分支 2: 處理物理磁碟 (✅ 整合加密邏輯) ---
     else:
-        # ... (物理盘逻辑保持不变) ...
         try:
             from common import get_actual_file_path, is_path_allowed
             actual_path = get_actual_file_path(path)
 
-            print(f"[DEBUG] 预览请求 - 解析后物理路径: {actual_path}")
-
-            if not actual_path:
-                return jsonify({'error': '文件不存在或路径无效'}), 404
-
-            # 最终安全检查
+            if not actual_path or not os.path.exists(actual_path):
+                return jsonify({'error': '文件不存在或路徑無效'}), 404
             if not is_path_allowed(actual_path):
-                print(f"[DEBUG] 预览失败 - 路径不允许: {actual_path}")
-                return jsonify({'error': '路径不在允许的目录中'}), 403
+                return jsonify({'error': '路徑不在允許的目錄中'}), 403
 
-            if not os.path.exists(actual_path) or not os.path.isfile(actual_path):
-                return jsonify({'error': '文件不存在或不是文件'}), 404
-
-            # ===== 文本类文件 =====
-            ext = os.path.splitext(actual_path)[1].lower()
-            if ext in ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css', '.csv']:
-                # 假设文本读取逻辑已在外部定义
+            # [✅ 加密邏輯整合]
+            decrypted_data = None
+            if encryption_manager.is_path_encrypted(actual_path):
                 try:
-                    with open(actual_path, 'r', encoding='utf-8') as f:
+                    # 如果是加密盤，則讀取並解密文件內容
+                    decrypted_data = encryption_manager.read_encrypted_file(actual_path)
+                except NotUnlockedError as e:
+                    return jsonify({'error': str(e)}), 403
+                except Exception as e:
+                    return jsonify({'error': f'文件解密失敗: {e}'}), 500
+
+            # 根據是否解密來決定後續的數據來源
+            ext = os.path.splitext(actual_path)[1].lower()
+            text_exts = ['.txt', '.log', '.md', '.py', '.js', '.html', '.json', '.css']
+
+            if ext in text_exts:
+                # 如果是文本文件
+                if decrypted_data is not None:
+                    # 使用解密後的數據
+                    content = decrypted_data.decode('utf-8', errors='ignore')
+                else:
+                    # 直接從硬碟讀取
+                    with open(actual_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
-                    return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-                except Exception:
-                    return jsonify({'error': '文本读取失败'}), 500
-
-            # ===== PDF文件处理 =====
-            elif ext == '.pdf':
-                return jsonify({'error': '请使用inline=true参数'}), 400
-
-            # ===== 其他文件类型 =====
+                return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
             else:
+                # 如果是二進制文件 (圖片、影片等)
+                if decrypted_data is not None:
+                    # 使用解密後的數據創建一個內存中的文件流
+                    data_source = io.BytesIO(decrypted_data)
+                else:
+                    # 直接使用硬碟上的文件路徑
+                    data_source = actual_path
+
                 mime = mimetypes.guess_type(actual_path)[0] or 'application/octet-stream'
-                return send_file(actual_path, mimetype=mime)
+                return send_file(data_source, mimetype=mime)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return jsonify({'error': f'预览处理失败: {str(e)}'}), 500
+            return jsonify({'error': f'預覽處理失敗: {str(e)}'}), 500
+
 # ===== [最终修复 2/3] 重写 mkdir 函数 =====
 @app.route('/api/mkdir', methods=['POST'])
 @token_required()
@@ -1149,15 +1130,27 @@ def access_share(token):
         # 将解码后的文件内容作为内存中的字节流发送出去
         return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
 
-    # --- 分支 2: 处理物理硬盘文件 (保持并优化原有逻辑) ---
+        # --- 分支 2: 處理物理硬碟文件 (✅ 整合加密邏輯) ---
     else:
         from common import get_actual_file_path, is_path_allowed
         actual_path = get_actual_file_path(file_path)
 
         if not actual_path or not is_path_allowed(actual_path) or not os.path.exists(actual_path):
-            return "分享的文件不存在或已被移动", 404
+            return "分享的文件不存在或已被移動", 404
 
-        return send_file(actual_path, as_attachment=True)
+        # [✅ 加密邏輯整合]
+        if encryption_manager.is_path_encrypted(actual_path):
+            try:
+                decrypted_data = encryption_manager.read_encrypted_file(actual_path)
+                return send_file(io.BytesIO(decrypted_data), as_attachment=True,
+                                 download_name=os.path.basename(actual_path))
+            except NotUnlockedError:
+                return "磁碟已鎖定，暫時無法訪問分享內容", 503
+            except Exception:
+                return "分享文件解密失敗", 500
+        else:
+            # 非加密盤，正常下載
+            return send_file(actual_path, as_attachment=True)
 
 @app.route('/api/ngrok-url')
 def api_ngrok_url():
@@ -1345,121 +1338,97 @@ def api_encode():
 
 # 文件: app.py
 
+# app.py -> 完整替換 @app.route('/api/upload', ...)
+
+# app.py -> 完整替換 @app.route('/api/upload', ...)
+
 @app.route('/api/upload', methods=['POST'])
 @token_required()
 def upload_file_with_ec():
     uploaded_files = request.files.getlist('file')
     upload_path = request.form.get('path', '/')
-    print(f"[DEBUG] 上传请求接收路径: {upload_path}")
+    print(f"[DEBUG] 上傳請求接收路徑: {upload_path}")
     if not uploaded_files or not all(f.filename for f in uploaded_files):
         return jsonify({'error': '未提供文件'}), 400
 
-    # 逻辑盘：自动 RS
+    # 分支 1: 邏輯盤：自動 RS (保持不變)
     if _is_ec_volume(upload_path):
+        # ... (這部分的 EC 邏輯和您原來的一樣，無需改動) ...
+        # ... (為節省篇幅，此處省略，請保留您原有的EC上傳程式碼) ...
         ec_cfg = _load_json(EC_CFG_PATH, {})
-        if not ec_cfg or ec_cfg.get("scheme", "").lower() != "rs":
-            return jsonify({'error': '未配置或未启用RS纠删码'}), 400
-
-        k = int(ec_cfg.get("k", 0))
-        m = int(ec_cfg.get("m", 0))
-        disks = ec_cfg.get("disks", [])
-
-        if k <= 0: return jsonify({'error': 'RS参数无效：k值必须大于0'}), 400
-        if m <= 0: return jsonify({'error': 'RS参数无效：m值必须大于0'}), 400
-        if len(disks) < k + m: return jsonify(
-            {'error': f'RS参数无效：磁盘数量 ({len(disks)}) 不足，需要至少 k+m ({k + m}) 个'}), 400
-
+        if not ec_cfg or ec_cfg.get("scheme", "").lower() != "rs": return jsonify(
+            {'error': '未配置或未啟用RS糾刪碼'}), 400
+        k, m, disks = int(ec_cfg.get("k", 0)), int(ec_cfg.get("m", 0)), ec_cfg.get("disks", [])
+        if k <= 0 or m <= 0 or len(disks) < k + m: return jsonify({'error': 'RS參數無效或磁碟數量不足'}), 400
         for uploaded_file in uploaded_files:
             data = uploaded_file.read()
-            try:
-                shards = rs_encode(data, k, m)
-            except Exception as e:
-                return jsonify({'error': f'文件 {uploaded_file.filename} 纠删码编码失败: {e}'}), 500
-
+            shards = rs_encode(data, k, m)
             shard_size = len(shards[0]) if shards else 0
             file_sha = hashlib.sha256(data).hexdigest()
-
-            # --- ✅ 关键修复区域开始 ---
             norm_path = upload_path.replace("\\", "/").strip("/")
-
-            # 获取文件在EC卷中的相对路径（如：dirA/dirB）
-            if norm_path == 'ec_volume':
-                rel_in_volume_dir = ''  # 根目录
-            else:
-                rel_in_volume_dir = norm_path[len('ec_volume/'):]  # 子目录
-
-            # 文件的逻辑全名 (例如: dirA/dirB/fileName.ext)
+            rel_in_volume_dir = '' if norm_path == 'ec_volume' else norm_path[len('ec_volume/'):]
             logical_name = os.path.join(rel_in_volume_dir, uploaded_file.filename).replace("\\", "/")
-            # --- 关键修复区域结束 ---
-
             meta = {"k": k, "m": m, "shard_size": shard_size, "original_size": len(data), "sha256": file_sha}
-
             try:
                 for i, disk in enumerate(disks[:k + m]):
-                    # 拼接各盘下的 encoded/ + 相对路径 (rel_in_volume_dir)
                     enc_dir = os.path.join(disk, "encoded", rel_in_volume_dir)
                     os.makedirs(enc_dir, exist_ok=True)
-
-                    # 分片名只使用文件名（不含EC卷内的目录结构）
                     base_filename = os.path.basename(uploaded_file.filename)
-
-                    with open(os.path.join(enc_dir, f"{base_filename}.blk_{i}"), "wb") as f:
-                        f.write(shards[i])
-
+                    with open(os.path.join(enc_dir, f"{base_filename}.blk_{i}"), "wb") as f: f.write(shards[i])
                     with open(os.path.join(enc_dir, f"{base_filename}.meta.json"), "w",
-                              encoding="utf-8") as mf:
-                        json.dump(meta, mf, ensure_ascii=False)
+                              encoding="utf-8") as mf: json.dump(meta, mf, ensure_ascii=False)
             except Exception as e:
-                return jsonify({'error': f'写入分片失败: {e}'}), 500
-
+                return jsonify({'error': f'寫入分片失敗: {e}'}), 500
             idx = _load_json(EC_IDX_PATH, {"files": {}})
-            # 索引中存储的是 logical_name (EC卷内相对全路径)
             idx["files"][logical_name] = {"size": len(data), "k": k, "m": m, "sha256": file_sha, "disks": disks,
                                           "ctime": int(time.time())}
             _save_json(EC_IDX_PATH, idx)
+        return jsonify({'success': True, 'message': f'{len(uploaded_files)}個文件已寫入邏輯盤並完成RS編碼'})
 
-        return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件已写入逻辑盘并完成RS编码'})
-
-    # 普通目录：原样保存 (此部分逻辑在前端修正后已正确)
+    # 分支 2: 物理磁碟：整合加密邏輯
     else:
         try:
-            # 1. 验证路径中是否包含盘符
             drive, _ = os.path.splitdrive(upload_path)
-            if not drive:
-                return jsonify({'error': '上传路径格式错误，缺少盘符'}), 400
-
+            if not drive: return jsonify({'error': '上傳路徑格式錯誤，缺少盤符'}), 400
             drive = drive.upper().replace('\\', '/')
-            if not os.path.exists(drive):
-                return jsonify({'error': f'磁盘 {drive} 不存在'}), 404
+            if not os.path.exists(drive): return jsonify({'error': f'磁碟 {drive} 不存在'}), 404
 
-            # 2. 将前端路径直接转换为绝对路径，作为目标目录
             target_dir = os.path.abspath(upload_path)
+            if not target_dir.upper().startswith(drive): return jsonify({'error': f'非法上傳路徑: {target_dir}'}), 403
 
-            # 3. 安全检查：确保目标目录在我们期望的盘符下
-            if not target_dir.upper().startswith(drive):
-                return jsonify({'error': f'非法上传路径: {target_dir}'}), 403
-
-            # 4. 创建目标目录
             os.makedirs(target_dir, exist_ok=True)
 
             for uploaded_file in uploaded_files:
                 filename = uploaded_file.filename
                 target_path = os.path.join(target_dir, filename)
 
-                # 最终的安全检查
                 if not os.path.abspath(target_path).upper().startswith(drive):
-                    return jsonify({'error': f'非法的最终文件路径: {target_path}'}), 403
+                    return jsonify({'error': f'非法的最終文件路徑: {target_path}'}), 403
 
-                uploaded_file.save(target_path)
+                # [✅ 核心修正]
+                # 1. 先將文件完整讀入記憶體
+                data_bytes = uploaded_file.read()
 
-            return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件上传成功'})
+                # 2. 判斷是否需要加密
+                if encryption_manager.is_path_encrypted(target_path):
+                    try:
+                        # 如果是加密盤，則通過加密管理器寫入
+                        encryption_manager.write_encrypted_file(target_path, data_bytes)
+                        print(f"DEBUG: 已將 {filename} 加密寫入到 {target_path}")
+                    except NotUnlockedError as e:
+                        # 捕獲“未解鎖”的特定異常
+                        return jsonify({'error': str(e)}), 403
+                else:
+                    # 如果不是加密盤，則正常寫入
+                    with open(target_path, "wb") as f:
+                        f.write(data_bytes)
+
+            return jsonify({'success': True, 'message': f'{len(uploaded_files)}個文件上傳成功'})
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return jsonify({'error': f'处理上传时发生严重错误: {e}'}), 500
+            return jsonify({'error': f'處理上傳時發生嚴重錯誤: {e}'}), 500
 
-
-# ===== [最终修复 1/3] 重写 list_files 函数 =====
 # ===== [最终修复 1/3] 重写 list_files 函数 =====
 @app.route('/api/list', methods=['GET'])
 @token_required()
@@ -1590,23 +1559,24 @@ def api_search():
 
 # 文件: app.py -> @app.route("/api/download", methods=["GET"])
 
+# app.py -> 完整替換 @app.route("/api/download", ...)
+
 @app.route("/api/download", methods=["GET"])
 @token_required()
 def api_download():
     file_path = request.args.get("path", "").strip()
     if not file_path:
-        return jsonify({"error": "缺少 path 参数"}), 400
+        return jsonify({"error": "缺少 path 參數"}), 400
 
-    # 1. 优先处理 EC 卷
+    # --- 分支 1: 處理糾刪碼卷 (邏輯保持不變) ---
     if _is_ec_volume(file_path):
         name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
-        if not name: return jsonify({"error": "无效的逻辑盘文件路径"}), 400
+        if not name: return jsonify({"error": "無效的邏輯盤文件路徑"}), 400
         idx = _load_json(EC_IDX_PATH, {"files": {}}).get("files", {})
         entry = idx.get(name)
-        if not entry: return jsonify({"error": "文件不在逻辑盘索引中"}), 404
+        if not entry: return jsonify({"error": "文件不在邏輯盤索引中"}), 404
         k, m, disks = entry["k"], entry["m"], entry["disks"]
         shard_dict, meta = {}, None
-        # ... (EC 逻辑保持不变) ...
         for i, disk in enumerate(disks[:k + m]):
             enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
             blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
@@ -1615,38 +1585,44 @@ def api_download():
             if not meta:
                 mj = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
                 if os.path.exists(mj): meta = json.load(open(mj, "r", encoding="utf-8"))
-        if not meta or len(shard_dict) < k: return jsonify({"error": "可用分片不足，无法恢复"}), 409
+        if not meta or len(shard_dict) < k: return jsonify({"error": "可用分片不足，無法恢復"}), 409
         try:
             data = _decode_from_dict(shard_dict, meta)
         except Exception as e:
-            return jsonify({"error": f"解码失败: {e}"}), 500
+            return jsonify({"error": f"解碼失敗: {e}"}), 500
         if hashlib.sha256(data).hexdigest() != meta.get("sha256"):
-            return jsonify({"error": "数据完整性校验失败"}), 500
+            return jsonify({"error": "數據完整性校驗失敗"}), 500
         return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
 
-    # 2. 处理物理硬盘 (✅ 修复：使用 get_actual_file_path 统一路径解析和安全检查)
+    # --- 分支 2: 處理物理磁碟 (✅ 整合加密邏輯) ---
     else:
         try:
-            from common import get_actual_file_path
-
-            # 使用 get_actual_file_path 获取绝对路径。
-            # 此函数会尝试在可用盘符中找到文件，并返回绝对路径。
+            from common import get_actual_file_path, is_path_allowed
             actual_path = get_actual_file_path(file_path)
 
-            if not actual_path:
-                return jsonify({"error": "文件不存在或路径无效"}), 404
-
-            # 再次进行最终的安全检查，确保路径在 BASE_DIRS 范围内。
-            from common import is_path_allowed
+            if not actual_path or not os.path.exists(actual_path):
+                return jsonify({"error": "文件不存在或路徑無效"}), 404
             if not is_path_allowed(actual_path):
-                return jsonify({"error": "不允许访问该路径"}), 403
+                return jsonify({"error": "不允許訪問該路徑"}), 403
 
-            if not os.path.exists(actual_path) or not os.path.isfile(actual_path):
-                return jsonify({"error": "文件不存在或不是一个文件"}), 404
+            # [✅ 加密邏輯整合]
+            if encryption_manager.is_path_encrypted(actual_path):
+                try:
+                    # 從加密層讀取並解密文件
+                    decrypted_data = encryption_manager.read_encrypted_file(actual_path)
+                    # 將解密後的數據作為內存文件發送
+                    return send_file(io.BytesIO(decrypted_data), as_attachment=True,
+                                     download_name=os.path.basename(actual_path))
+                except NotUnlockedError as e:
+                    return jsonify({'error': str(e)}), 403
+                except Exception as e:
+                    return jsonify({'error': f'文件解密失敗: {e}'}), 500
+            else:
+                # 非加密盤，沿用舊邏輯，正常下載
+                return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
 
-            return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
         except Exception as e:
-            return jsonify({'error': f'下载文件时出错: {e}'}), 500
+            return jsonify({'error': f'下載文件時出錯: {e}'}), 500
 
 @app.route("/api/volume/rebuild/scan", methods=["POST"])
 @token_required()
@@ -1949,40 +1925,104 @@ def ec_import():
 # ======================================================
 #                 加密驱动器 API
 # ======================================================
+# app.py
+
 @app.route('/api/encryption/status', methods=['GET'])
 @token_required(admin_only=True)
 def encryption_status():
-    """获取加密驱动器的状态"""
-    return jsonify({
-        'is_configured': bool(encryption_manager.encrypted_drives),
-        'is_unlocked': encryption_manager.is_unlocked,
-        'encrypted_drives': list(encryption_manager.encrypted_drives)
-    })
+    """获取所有物理磁盘及其加密/锁定状态"""
+    all_drives = get_available_drives()
+    enc_status = encryption_manager.get_disk_status()
+
+    response = []
+    for drive_path in all_drives:
+        norm_path = _norm_abs(drive_path)
+        status = enc_status.get(norm_path, {
+            "is_configured": False,
+            "is_unlocked": False
+        })
+        response.append({
+            "drive": drive_path,
+            "is_configured": status["is_configured"],
+            "is_unlocked": status["is_unlocked"]
+        })
+    return jsonify(response)
 
 
 @app.route('/api/encryption/unlock', methods=['POST'])
 @token_required(admin_only=True)
 def encryption_unlock():
-    """使用密码解锁加密驱动器"""
+    """解锁单个磁盘"""
     data = request.get_json()
+    drive = data.get('drive')
     password = data.get('password', '')
-    if not password:
-        return jsonify({'error': '需要提供密码'}), 400
+    if not drive or not password:
+        return jsonify({'error': '需要提供磁盘和密码'}), 400
 
-    success = encryption_manager.unlock(password)
+    success = encryption_manager.unlock(drive, password)
     if success:
-        return jsonify({'success': True, 'message': '加密驱动器已解锁'})
+        return jsonify({'success': True, 'message': f'磁盘 {drive} 已解锁'})
     else:
-        return jsonify({'error': '密码错误，解锁失败'}), 403
+        return jsonify({'error': '密码错误或磁盘未配置加密'}), 403
 
 
 @app.route('/api/encryption/lock', methods=['POST'])
 @token_required(admin_only=True)
 def encryption_lock():
-    """手动锁定加密驱动器"""
-    encryption_manager.lock()
-    return jsonify({'success': True, 'message': '加密驱动器已锁定'})
+    """锁定单个磁盘"""
+    data = request.get_json()
+    drive = data.get('drive')
+    if not drive:
+        return jsonify({'error': '需要提供磁盘'}), 400
+    encryption_manager.lock(drive)
+    return jsonify({'success': True, 'message': f'磁盘 {drive} 已锁定'})
 
+
+# 文件: app.py -> 再次替换 set_encryption_password 函数
+
+@app.route('/api/encryption/set-password', methods=['POST'])
+@token_required(admin_only=True)
+def set_encryption_password():
+    """为单个或多个磁盘设定/变更密码"""
+    data = request.get_json()
+    drives = data.get('drives', [])
+    old_password = data.get('old_password')
+    new_password = data.get('new_password')
+
+    if not drives or not new_password:
+        return jsonify({'error': '需要提供磁盘列表和新密码'}), 400
+
+    config = _load_json(encryption_manager.config_path, {"disks": {}})
+
+    # [✅ 关键修复] 在循环之前，就确保 'disks' 键一定存在且是一个字典。
+    # 这样可以安全地处理空的或格式不完整的配置文件。
+    if "disks" not in config or not isinstance(config.get("disks"), dict):
+        config["disks"] = {}
+
+    for drive_path in drives:
+        norm_drive = _norm_abs(drive_path)
+
+        # 经过上面的修复，现在这一行是绝对安全的了
+        if norm_drive in config["disks"] and config["disks"][norm_drive].get("password_hash"):
+            if not old_password:
+                return jsonify({'error': f'磁盘 {drive_path} 已有密码，需要提供旧密码才能变更'}), 403
+
+            temp_manager = EncryptionManager(encryption_manager.config_path)
+            if not temp_manager.unlock(drive_path, old_password):
+                return jsonify({'error': f'磁盘 {drive_path} 的旧密码不正确'}), 403
+
+        new_salt = os.urandom(16)
+        new_hash = hashlib.pbkdf2_hmac('sha256', new_password.encode('utf-8'), new_salt, 100000)
+
+        config["disks"][norm_drive] = {
+            "password_salt": new_salt.hex(),
+            "password_hash": new_hash.hex()
+        }
+
+    _save_json(encryption_manager.config_path, config)
+    encryption_manager.load_config()
+
+    return jsonify({'success': True, 'message': '密码设定成功'})
 
 @app.route('/api/documents', methods=['POST'])
 @token_required()
@@ -2136,67 +2176,72 @@ def get_document_version(doc_id, version_id):
 import os
 
 
+# app.py -> 完整替換 @app.route('/api/collab/load')
+
 @app.route('/api/collab/load')
 def collab_load():
     file = request.args.get('file', '').strip()
     path = request.args.get('path', '').strip()
-    # 修正 path 为根目录时的情况
     if path in ('', '/'): path = ''
     if not file:
         return jsonify({'success': False, 'error': '缺少文件名'}), 400
-    # 只允许在BASE_DIRS[0]及其子目录下操作
+
     full_path = os.path.abspath(os.path.join(BASE_DIRS[0], path, file))
     if not full_path.startswith(os.path.abspath(BASE_DIRS[0])):
-        return jsonify({'success': False, 'error': '非法路径'}), 403
+        return jsonify({'success': False, 'error': '非法路徑'}), 403
     if not os.path.exists(full_path):
         return jsonify({'success': False, 'error': '文件不存在'}), 404
+
     try:
+        content_bytes = None
+
+        # [✅ 核心加密邏輯整合]
+        if encryption_manager.is_path_encrypted(full_path):
+            try:
+                # 如果是加密盤，讀取解密後的二進制數據
+                content_bytes = encryption_manager.read_encrypted_file(full_path)
+            except NotUnlockedError as e:
+                return jsonify({'success': False, 'error': str(e)}), 403
+            except Exception as e:
+                return jsonify({'success': False, 'error': f'文件解密失敗: {e}'}), 500
+        else:
+            # 如果不是加密盤，正常讀取二進制數據
+            with open(full_path, 'rb') as f:
+                content_bytes = f.read()
+
+        # 後續處理 (DOCX 或 普通文本)
+        content = ''
         if file.lower().endswith('.docx'):
-            doc = Document(full_path)
+            # 將二進制數據放入內存流中，讓 docx 庫讀取
+            doc_stream = io.BytesIO(content_bytes)
+            doc = Document(doc_stream)
             content = '\n'.join([p.text for p in doc.paragraphs])
         else:
-            # 尝试多种编码方式读取文件
-            encodings = ['utf-8', 'utf-16', 'utf-16le', 'utf-16be', 'gbk', 'gb2312', 'latin1']
-            content = None
-
+            # 嘗試多種編碼方式將二進制數據解碼為文本
+            encodings = ['utf-8', 'gbk', 'latin1']
+            decoded = False
             for encoding in encodings:
                 try:
-                    with open(full_path, 'r', encoding=encoding) as f:
-                        content = f.read()
+                    content = content_bytes.decode(encoding)
+                    decoded = True
                     break
                 except UnicodeDecodeError:
                     continue
-                except Exception as e:
-                    continue
+            if not decoded:
+                return jsonify({'success': False, 'error': '無法識別的文件編碼'}), 500
 
-            if content is None:
-                # 如果所有编码都失败，尝试二进制读取并解码
-                try:
-                    with open(full_path, 'rb') as f:
-                        raw_content = f.read()
-
-                    # 尝试检测UTF-16 BOM
-                    if raw_content.startswith(b'\xff\xfe'):
-                        content = raw_content.decode('utf-16le')
-                    elif raw_content.startswith(b'\xfe\xff'):
-                        content = raw_content.decode('utf-16be')
-                    elif raw_content.startswith(b'\xef\xbb\xbf'):
-                        content = raw_content.decode('utf-8')
-                    else:
-                        # 最后尝试用 latin1 编码（不会抛出异常）
-                        content = raw_content.decode('latin1')
-                except Exception as e:
-                    return jsonify({'success': False, 'error': f'无法读取文件，编码问题: {str(e)}'}), 500
-
-        # 检查内容长度，如果太长则截断
+        # 截斷過長文件
         max_length = 1024 * 1024  # 1MB
         if len(content) > max_length:
-            content = content[:max_length] + f'\n\n... (文件过长，已截断，总长度: {len(content)} 字符)'
+            content = content[:max_length] + f'\n\n... (文件過長，已截斷)'
 
         return jsonify({'success': True, 'content': content})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
 
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'加載協作文件時出錯: {str(e)}'})
+
+
+# app.py -> 完整替換 @app.route('/api/collab/save', ...)
 
 @app.route('/api/collab/save', methods=['POST'])
 @token_required()
@@ -2207,16 +2252,30 @@ def collab_save():
     content = data.get('content', '')
     if not file:
         return jsonify({'success': False, 'error': '缺少文件名'}), 400
+
     full_path = os.path.abspath(os.path.join(BASE_DIRS[0], path, file))
     if not full_path.startswith(os.path.abspath(BASE_DIRS[0])):
-        return jsonify({'success': False, 'error': '非法路径'}), 403
+        return jsonify({'success': False, 'error': '非法路徑'}), 403
+
     try:
-        with open(full_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+        # [✅ 核心加密邏輯整合]
+        if encryption_manager.is_path_encrypted(full_path):
+            try:
+                # 如果是加密盤，將文本轉為bytes，再進行加密寫入
+                content_bytes = content.encode('utf-8')
+                encryption_manager.write_encrypted_file(full_path, content_bytes)
+            except NotUnlockedError as e:
+                return jsonify({'success': False, 'error': str(e)}), 403
+            except Exception as e:
+                return jsonify({'success': False, 'error': f'文件加密保存失敗: {e}'}), 500
+        else:
+            # 如果不是加密盤，正常寫入文本
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
+        return jsonify({'success': False, 'error': f'保存協作文件時出錯: {str(e)}'})
 
 # 协作分享链接表（可用sqlite或内存，先用内存实现）
 collab_shares = {}
@@ -2258,6 +2317,36 @@ def collab_validate():
     return jsonify({'success': True, 'file': info['file'], 'path': info['path']})
 
 
+
+
+
+# app.py
+
+@app.route('/api/encryption/add-drive', methods=['POST'])
+@token_required(admin_only=True)
+def add_encrypted_drive():
+    data = request.get_json()
+    drive_path = data.get('drive')
+    if not drive_path:
+        return jsonify({'error': '缺少磁碟路徑'}), 400
+
+    config = encryption_manager._load_json(encryption_manager.config_path, {})
+
+    encrypted_drives = config.get("encrypted_drives", [])
+    normalized_drive = _norm_abs(drive_path)
+
+    if normalized_drive not in encrypted_drives:
+        encrypted_drives.append(normalized_drive)
+        config["encrypted_drives"] = encrypted_drives
+
+        with open(encryption_manager.config_path, "w") as f:
+            json.dump(config, f, indent=2)
+
+        # 重新加載配置
+        encryption_manager.load_config()
+        return jsonify({'success': True, 'message': f'磁碟 {drive_path} 已添加到加密列表'})
+    else:
+        return jsonify({'error': '該磁碟已在加密列表中'}), 409
 @app.route('/collab-edit.html')
 def collab_edit_page():
     return app.send_static_file('collab-edit.html')

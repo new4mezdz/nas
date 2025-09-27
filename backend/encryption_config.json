@@ -1,6 +1,13 @@
 {
   "encrypted_drives": [
     "E:\\",
-
-  ]
+    "e:\\",
+    "g:\\"
+  ],
+  "disks": {
+    "e:\\": {
+      "password_salt": "f9ba71a4ea3774a29f541a5d1c92d612",
+      "password_hash": "a1643598b9fb6dd6e11e7b7a0f4033cdbbad196211c82a338e24f17123ea014b"
+    }
+  }
 }

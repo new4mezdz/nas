@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -315,9 +314,9 @@ if (isPWAMode()) {
 
 // 网络状态监听
 window.addEventListener('online', () => {
-  console.log('🌐 网络已连接');
+  console.log('🌍 网络已连接');
   if (window.app && window.app.infoMessage !== undefined) {
-    window.app.infoMessage = '🌐 网络已恢复';
+    window.app.infoMessage = '🌍 网络已恢复';
     setTimeout(() => {
       window.app.infoMessage = '';
     }, 2000);
@@ -342,6 +341,7 @@ console.log('PWA 状态:', {
   '可安装': deferredPrompt !== null
 });
 </script>
+
 <body class="bg-gray-100 min-h-screen">
   <div id="app" class="max-w-5xl mx-auto p-6">
 
@@ -410,6 +410,7 @@ console.log('PWA 状态:', {
         <button @click="showChangePasswordForm" class="bg-gray-500 text-white px-3 py-1 rounded">修改密码</button>
         <button v-if="user.is_admin" @click="showUserAdmin=true" class="bg-indigo-500 text-white px-3 py-1 rounded">用户管理</button>
         <button @click="openEcDialog" class="bg-gray-700 text-white px-4 py-2 rounded">打开纠删码配置</button>
+        <button v-if="user.is_admin" @click="openEncryptionDialog" class="bg-purple-600 text-white px-4 py-2 rounded">🔒 加密磁盘管理</button>
       </div>
 
       <!-- 管理员用户管理界面 -->
@@ -470,12 +471,13 @@ console.log('PWA 状态:', {
           {{ sambaMessage }}
         </p>
       </div>
-<!-- 磁盘信息 -->
+
+      <!-- 磁盘信息 -->
       <div class="bg-white p-4 rounded shadow mb-6">
         <h2 class="text-xl font-semibold mb-3">磁盘信息</h2>
 
         <div v-if="ecStatus.is_configured" class="mb-4 p-3 rounded border">
-          <h3 class="font-bold text-md mb-2">纠删码卷健康状态</h3>
+          <h3 class="font-bold text-md mb-2">纠删码阵列健康状态</h3>
 
           <div v-if="ecStatus.is_healthy" class="flex items-center text-green-600">
             <span class="text-2xl mr-2">✅</span>
@@ -537,6 +539,75 @@ console.log('PWA 状态:', {
           </tbody>
         </table>
       </div>
+
+      <!-- 加密磁盘管理 -->
+      <div v-if="showEncryptionDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+  <div class="bg-white p-6 rounded shadow-lg w-[700px] relative">
+    <button @click="closeEncryptionDialog" class="absolute right-4 top-4 text-gray-400 hover:text-gray-700 text-2xl font-bold">×</button>
+    <h2 class="text-xl font-semibold mb-4">加密磁盘管理</h2>
+
+    <div class="max-h-[60vh] overflow-y-auto border rounded">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="p-2 w-10"><input type="checkbox" @change="toggleSelectAllDrives($event)"></th>
+            <th class="p-2 text-left">磁盘</th>
+            <th class="p-2 text-left">状态</th>
+            <th class="p-2 text-left w-2/5">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="disk in encryptionStatus" :key="disk.drive" class="border-b">
+            <td class="p-2 text-center"><input type="checkbox" v-model="selectedDrivesForPasswordSet" :value="disk.drive"></td>
+            <td class="p-2 font-mono">{{ disk.drive }}</td>
+            <td class="p-2">
+              <span v-if="disk.is_configured && disk.is_unlocked" class="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">✅ 已解锁</span>
+              <span v-else-if="disk.is_configured && !disk.is_unlocked" class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">🔒 已锁定</span>
+            </td>
+            <td class="p-2">
+              <div v-if="disk.is_configured && !disk.is_unlocked" class="flex items-center space-x-1">
+                <input type="password" v-model="unlockPasswords[disk.drive]" @keyup.enter="unlockSingleDrive(disk.drive)" class="flex-grow border rounded px-2 py-1 text-xs" placeholder="请输入密码">
+                <button @click="unlockSingleDrive(disk.drive)" class="bg-indigo-500 text-white px-2 py-1 rounded text-xs hover:bg-indigo-600">解锁</button>
+              </div>
+              <div v-if="disk.is_configured && disk.is_unlocked">
+                <button @click="lockSingleDrive(disk.drive)" class="bg-red-500 text-white px-2 py-1 rounded text-xs hover:bg-red-600">上锁</button>
+              </div>
+            </td>
+          </tr>
+          <tr v-for="disk in unconfiguredDrives" :key="disk.mount" class="border-b bg-gray-50">
+            <td class="p-2 text-center"><input type="checkbox" v-model="selectedDrivesForPasswordSet" :value="disk.mount"></td>
+            <td class="p-2 font-mono">{{ disk.mount }}</td>
+            <td class="p-2"><span class="text-gray-500 text-xs">未加密</span></td>
+            <td class="p-2"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="mt-4 flex justify-end">
+      <button @click="openPasswordSetDialog" :disabled="selectedDrivesForPasswordSet.length === 0" class="bg-purple-600 text-white px-4 py-2 rounded disabled:bg-purple-300 disabled:cursor-not-allowed">
+        为选中的 ({{ selectedDrivesForPasswordSet.length }}) 个磁盘设定/变更密码
+      </button>
+    </div>
+  </div>
+</div>
+
+<div v-if="showPasswordSetDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60">
+  <div class="bg-white p-6 rounded shadow-lg w-[450px] animate-fade-in-up">
+    <h3 class="text-lg font-medium mb-2 text-gray-800">设定/变更密码</h3>
+    <p class="text-sm text-gray-600 mb-3">将为以下磁盘设置新密码： <span class="font-mono text-indigo-600">{{ selectedDrivesForPasswordSet.join(', ') }}</span></p>
+    <div class="space-y-3">
+      <input v-model="passwordSetForm.old_password" type="password" placeholder="（如果是变更已有密码）请输入旧密码" class="w-full border rounded px-3 py-2">
+      <input v-model="passwordSetForm.new_password" type="password" placeholder="请输入新密码 (至少6位)" class="w-full border rounded px-3 py-2">
+      <input v-model="passwordSetForm.confirm" type="password" placeholder="请确认新密码" class="w-full border rounded px-3 py-2">
+    </div>
+    <div class="mt-4 flex justify-end gap-2">
+       <button @click="closePasswordSetDialog" class="bg-gray-300 px-4 py-2 rounded">取消</button>
+       <button @click="submitPasswordSet" class="bg-green-600 text-white px-4 py-2 rounded">确认</button>
+    </div>
+  </div>
+</div>
+
       <!-- ========= 文件管理 ========== -->
       <div class="bg-white p-4 rounded shadow mt-8">
         <h2 class="text-xl font-semibold mb-3">文件管理</h2>
@@ -544,13 +615,11 @@ console.log('PWA 状态:', {
         <!-- 盘符选择器 -->
         <div class="mb-4 flex items-center space-x-2">
           <label class="text-sm font-medium">当前盘符：</label>
-          <!-- ===== 用这个新的 select 块替换旧的 ===== -->
           <select v-model="currentDrive" @change="changeDrive" class="border rounded px-2 py-1 bg-white shadow-sm focus:ring-2 focus:ring-blue-500">
-  <option v-for="loc in navigableLocations" :key="loc.path" :value="loc.path">
-    {{ loc.name }}
-  </option>
-</select>
-          <!-- ======================================== -->
+            <option v-for="loc in navigableLocations" :key="loc.path" :value="loc.path">
+              {{ loc.name }}
+            </option>
+          </select>
           <span class="text-sm text-gray-600">当前路径：{{ currentPath }}</span>
         </div>
 
@@ -566,7 +635,7 @@ console.log('PWA 状态:', {
         <div class="mb-2 flex items-center space-x-2">
           <button v-if="currentPath !== '/'" @click="goParent" class="text-blue-600">返回上一级</button>
 
-          <!-- 新建文件夹（不要用div包，直接写input和button） -->
+          <!-- 新建文件夹 -->
           <input v-model="newDirName" placeholder="新建文件夹名" class="border px-2 py-1 rounded" />
           <button @click="mkdir" class="bg-green-600 text-white px-3 py-1 rounded">新建文件夹</button>
           <span class="text-red-600">{{ adminOnlyMsg }}</span>
@@ -601,7 +670,7 @@ console.log('PWA 状态:', {
               <td class="text-center">
                 <input type="checkbox" v-model="selectedFiles" :value="item.name" />
               </td>
-              <!-- ========== 修复后的文件名显示（支持重命名） ========== -->
+              <!-- 修复后的文件名显示（支持重命名） -->
               <td>
                 <!-- 重命名模式：显示输入框 -->
                 <div v-if="renaming === item.name" class="flex items-center space-x-2">
@@ -739,9 +808,9 @@ console.log('PWA 状态:', {
           </div>
 
            <div class="flex justify-end gap-2 mt-4">
-  <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
-  <button v-if="ec.config" @click="deleteEcConfig" class="bg-red-600 text-white px-4 py-2 rounded">删除配置</button>
-  <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
+            <button @click="ecDialogVisible = false" class="px-4 py-2 rounded border">取消</button>
+            <button v-if="ec.config" @click="deleteEcConfig" class="bg-red-600 text-white px-4 py-2 rounded">删除配置</button>
+            <button @click="applyECScheme" class="bg-blue-600 text-white px-4 py-2 rounded">应用配置</button>
            </div>
         </div>
       </div>
@@ -832,7 +901,7 @@ console.log('PWA 状态:', {
         </div>
       </div>
 
-        <div v-if="showEcRecoverDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div v-if="showEcRecoverDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
         <div class="bg-white p-6 rounded shadow-lg w-[450px]">
           <h2 class="text-lg font-bold mb-4">🚀 恢复数据分片</h2>
           <p class="text-sm mb-2">系统检测到硬盘已丢失：</p>
@@ -860,12 +929,10 @@ console.log('PWA 状态:', {
           </div>
         </div>
       </div>
-  <script src="/static/app.js"></script>
-</body>
-</html>
-
 
     </div>
   </div>
 
-
+  <script src="/static/app.js"></script>
+</body>
+</html>

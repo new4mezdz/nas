@@ -1,215 +1,262 @@
 const app = Vue.createApp({
   data() {
-    return {
-      // 登录/注册
-      showRegister: false,
-      loggedIn: false,
-      loginForm: { username: '', password: '' },
-      registerForm: { username: '', password: '', confirm: '' },
-      user: { username: '', is_admin: false },
+  return {
+    // =============================================
+    //           用户与认证 (User & Auth)
+    // =============================================
+    loggedIn: false,
+    user: { username: '', is_admin: false },
 
-      // 系统/磁盘信息
-      systemInfo: { hostname: '', os: '', cpu_percent: 0, memory_total: 0, memory_used: 0, uptime: 0 },
-      disks: [],
+    // --- 登录/注册 ---
+    showRegister: false,
+    loginForm: { username: '', password: '' },
+    registerForm: { username: '', password: '', confirm: '' },
 
-      // 文件管理
-      currentPath: '/',
-      currentDrive: 'D:/', // 当前盘符
-      availableDrives: [], // 可用盘符列表
-      fileList: [],
-      newDirName: '',
-      uploadTargetDir: '/',
-      allDirs: ['/'],
-      uploadInfo: '',
-      selectedFiles: [],
+    // --- 用户管理 ---
+    showUserAdmin: false,
+    userList: [],
 
-      // 上传
-      showUploadDialog: false,
-      uploadFiles: [],
-      dragOver: false,
-      uploadStatus: '',
+    // --- 修改/重置密码 ---
+    showChangePw: false,
+    pwForm: { old_password: '', new_password: '', confirm: '' },
+    pwMsg: '',
+    resetUser: null,
+    resetPwForm: { new_password: '', confirm: '' },
+    resetPwMsg: '',
 
-      // 文件操作 - 重命名相关
-      renaming: null,
-      renameTo: '',
-      adminOnlyMsg: '',
+    // =============================================
+    //           系统与磁盘 (System & Disks)
+    // =============================================
+    systemInfo: { hostname: '', os: '', cpu_percent: 0, memory_total: 0, memory_used: 0, uptime: 0 },
+    disks: [],
+    availableDrives: [],
 
-      // 用户管理
-      userList: [],
-      showUserAdmin: false,
+    // =============================================
+    //           文件管理 (File Management)
+    // =============================================
+    currentDrive: 'D:/',
+    currentPath: '/',
+    fileList: [],
+    selectedFiles: [],
+    newDirName: '',
+    renaming: null,
+    renameTo: '',
 
-      // 修改密码弹窗
-      showChangePw: false,
-      pwForm: { old_password: '', new_password: '', confirm: '' },
-      pwMsg: '',
+    // =============================================
+    //           纠删码 (Erasure Coding)
+    // =============================================
+    ecDialogVisible: false,
+    ecScheme: 'rs',
+    k: 4,
+    m: 2,
+    selectedDisks: [],
+    ec: { config: null },
 
-      // 管理员重置密码弹窗
-      resetUser: null,
-      resetPwForm: { new_password: '', confirm: '' },
-      resetPwMsg: '',
+    ecStatus: {
+      is_configured: false,
+      is_healthy: true,
+      lost_disks: [],
+      available_new_disks: [],
+      can_rebuild: false
+    },
+    showEcRecoverDialog: false,
+    recoveryPayload: {
+      lost_disk: '',
+      new_disk: ''
+    },
 
-      // 错误/提示
-      errorMessage: '',
-      infoMessage: '',
-      sambaMessage: '',
+    // =============================================
+    //           磁盘加密 (Encryption)
+    // =============================================
+    showEncryptionDialog: false,
+    activeTab: 'status', // 默认标签页: 'status', 'add', 'password'
+    encryptionStatus: [],
+    unlockPasswords: {}, // 用于按盘解锁，格式: { 'E:/': 'pwd1' }
+    selectedDrivesForPasswordSet: [],
+    disksToAddForEncryption: [],
+    showPasswordSetDialog: false,
+    passwordSetForm: {
+      old_password: '',
+      new_password: '',
+      confirm: ''
+    },
 
-      // 搜索
-      searchTimer: null,
-      showSearchDialog: false,
-      searchKeyword: '',
-      searchScope: 'current', // or 'all'
-      searchResults: [],
+    // =============================================
+    //       UI 状态 - 弹窗与操作 (UI State)
+    // =============================================
 
-      // 预览
-      showPreview: false,
-      previewingFile: null,
-      previewUrl: '',
-      previewType: '',
-      textContent: '',
+    // --- 上传 ---
+    showUploadDialog: false,
+    uploadFiles: [],
+    dragOver: false,
+    uploadStatus: '',
+    uploadInfo: '', // 旧版上传信息，可考虑合并
 
-      // 分享
-      shareDialogVisible: false,
-      shareFile: null,
-      shareExpire: 24,
-      sharePassword: '',
-      shareUrl: '',
+    // --- 搜索 ---
+    showSearchDialog: false,
+    searchKeyword: '',
+    searchScope: 'current',
+    searchResults: [],
+    searchTimer: null,
 
-      // 纠删码
-      ecDialogVisible: false,
-      ecScheme: 'rs',
-      k: 4,
-      m: 2,
-      selectedDisks: [],
-      ec: {             // <--- 关键：创建一个 ec 对象
-       config: null   }, // <--- 在 ec 对象内部初始化 config
+    // --- 预览 ---
+    showPreview: false,
+    previewingFile: null,
+    previewUrl: '',
+    previewType: '',
+    textContent: '',
 
-      // ========== 新增：纠删码健康状态与恢复 ==========
-      ecStatus: {
-        is_configured: false,
-        is_healthy: true,
-        lost_disks: [],
-        available_new_disks: [],
-        can_rebuild: false
-      },
-      showEcRecoverDialog: false,
-      recoveryPayload: {
-        lost_disk: '',
-        new_disk: ''
-      },
-      // 协作分享弹窗
-      showCollabShareDialog: false,
-      collabShareFile: null,
-      collabSharePassword: '',
-      collabShareExpire: 24,
-      collabShareUrl: '',
-      collabShareError: '',
-    }
-  },
+    // --- 分享 ---
+    shareDialogVisible: false,
+    shareFile: null,
+    shareExpire: 24,
+    sharePassword: '',
+    shareUrl: '',
 
-  computed: {
-     // 文件: app.js -> computed
+    // --- 协作分享 ---
+    showCollabShareDialog: false,
+    collabShareFile: null,
+    collabSharePassword: '',
+    collabShareExpire: 24,
+    collabShareUrl: '',
+    collabShareError: '',
 
-navigableLocations() {
-  // 1. 获取所有参与了纠删码的磁盘挂载点，并对路径进行归一化
-  const ecDisks = this.disks.filter(d => d.ec_scheme);
-  // 关键：Set 中存储归一化后的路径，用于快速查找
-  const ecDiskMounts = new Set(ecDisks.map(d => this.normalizePath(d.mount)));
-
-  // 2. 如果存在纠删码配置（即 EC 盘符集合非空）...
-  if (ecDiskMounts.size > 0) {
-    const locations = [];
-
-    // a. 始终添加 '[纠删码卷]' 选项
-    locations.push({
-      name: '[纠删码卷]',
-      path: 'ec_volume'
-    });
-
-    // b. 筛选未参与纠删码的物理磁盘
-    const nonEcDrives = this.availableDrives.filter(driveObj => {
-      // 对 availableDrives 中的路径也进行归一化后再进行查找
-      return !ecDiskMounts.has(this.normalizePath(driveObj.drive));
-    });
-
-    // c. 将非 EC 物理磁盘添加到列表中
-    nonEcDrives.forEach(driveObj => {
-      locations.push({
-        name: `物理磁盘 (${driveObj.drive})`,
-        path: driveObj.drive
-      });
-    });
-
-    return locations;
-  }
-  // 3. 如果不存在纠删码配置，则显示所有物理磁盘。
-  else {
-    return this.availableDrives.map(driveObj => ({
-      name: `物理磁盘 (${driveObj.drive})`,
-      path: driveObj.drive
-    }));
+    // =============================================
+    //           通用消息 (Global Messages)
+    // =============================================
+    errorMessage: '',
+    infoMessage: '',
+    sambaMessage: '',
+    adminOnlyMsg: '',
   }
 },
+  computed: {
+    // ===================================
+    //           加密相关 (Encryption)
+    // ===================================
 
-  // ===== 其他既有的计算属性保持不变 =====
-  ecDiskGroup() {
-    const ecDisks = this.disks.filter(d => d.ec_scheme);
-    if (ecDisks.length === 0) {
-      return null;
-    }
-    const total = ecDisks.reduce((sum, disk) => sum + disk.total, 0);
-    const used = ecDisks.reduce((sum, disk) => sum + disk.used, 0);
-    return {
-      total,
-      used,
-      percent: total > 0 ? Math.round((used / total) * 100) : 0,
-      ec_scheme: ecDisks[0].ec_scheme
-    };
-  },
-  nonECDiskList() {
-    return this.disks.filter(d => !d.ec_scheme);
-  },
-  isAnyFileSelected() {
-    return this.selectedFiles.length > 0;
-  },
-  selectAll: {
-    get() {
-      return this.fileList.length > 0 && this.selectedFiles.length === this.fileList.length;
+    /**
+     * [V2 正确版本]
+     * 计算出所有尚未被设置为“加密”的物理磁盘列表。
+     * 用于“加密磁盘管理”弹窗中，显示可以被初始化为加密盘的选项。
+     */
+    unconfiguredDrives() {
+      // 确保依赖的数据已加载，避免初始渲染错误
+      if (!this.encryptionStatus || !this.disks) {
+        return [];
+      }
+      // 创建一个包含所有已配置加密的磁盘路径的集合，用于快速查找
+      const configuredDrives = new Set(this.encryptionStatus.filter(d => d.is_configured).map(d => this.normalizePath(d.drive)));
+
+      // 过滤出所有物理磁盘中，不存在于加密列表里的那些
+      return this.disks.filter(d => !configuredDrives.has(this.normalizePath(d.mount)));
     },
-    set(value) {
-      this.selectedFiles = value ? [...this.fileList] : [];
-    }
-  },
-  breadcrumbs() {
-    if (this.currentPath.startsWith('ec_volume')) {
-        const base = [{ name: '[纠删码卷]', path: 'ec_volume' }];
-        const subPath = this.currentPath.substring('ec_volume'.length).replace(/^\//, '');
-        if (!subPath) return base;
 
-        const parts = subPath.split('/').filter(p => p);
-        let path = 'ec_volume';
-        for (const part of parts) {
-            path += '/' + part;
-            base.push({ name: part, path: path });
-        }
-        return base;
-    }
+    // ===================================
+    //         导航与显示 (Navigation & Display)
+    // ===================================
 
-    if (this.currentPath === '/') return [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
-    const parts = this.currentPath.split('/').filter(p => p);
-    let path = '';
-    const crumbs = [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
-    for (const part of parts) {
-        path += '/' + part;
-        crumbs.push({ name: part, path: path });
-    }
-    return crumbs;
-  }
-  // ==========================
+    /**
+     * 动态生成文件管理顶部的驱动器下拉列表。
+     * 如果配置了纠删码，会显示“[纠删码卷]”和未参与纠删码的物理磁盘。
+     * 如果未配置，则显示所有物理磁盘。
+     */
+    navigableLocations() {
+      const ecDisks = this.disks.filter(d => d.ec_scheme);
+      const ecDiskMounts = new Set(ecDisks.map(d => this.normalizePath(d.mount)));
+
+      if (ecDiskMounts.size > 0) {
+        const locations = [{ name: '[纠删码卷]', path: 'ec_volume' }];
+        const nonEcDrives = this.availableDrives.filter(driveObj => {
+          return !ecDiskMounts.has(this.normalizePath(driveObj.drive));
+        });
+        nonEcDrives.forEach(driveObj => {
+          locations.push({ name: `物理磁盘 (${driveObj.drive})`, path: driveObj.drive });
+        });
+        return locations;
+      } else {
+        return this.availableDrives.map(driveObj => ({
+          name: `物理磁盘 (${driveObj.drive})`,
+          path: driveObj.drive
+        }));
+      }
+    },
+
+    /**
+     * 生成文件路径的面包屑导航。
+     */
+    breadcrumbs() {
+      if (this.currentPath.startsWith('ec_volume')) {
+          const base = [{ name: '[纠删码卷]', path: 'ec_volume' }];
+          const subPath = this.currentPath.substring('ec_volume'.length).replace(/^\//, '');
+          if (!subPath) return base;
+
+          const parts = subPath.split('/').filter(p => p);
+          let path = 'ec_volume';
+          for (const part of parts) {
+              path += '/' + part;
+              base.push({ name: part, path: path });
+          }
+          return base;
+      }
+
+      if (this.currentPath === '/') return [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+      const parts = this.currentPath.split('/').filter(p => p);
+      let path = '';
+      const crumbs = [{ name: `根目录 (${this.currentDrive})`, path: '/' }];
+      for (const part of parts) {
+          path += '/' + part;
+          crumbs.push({ name: part, path: path });
+      }
+      return crumbs;
+    },
+
+    // ===================================
+    //        文件列表选择 (File Selection)
+    // ===================================
+    isAnyFileSelected() {
+      return this.selectedFiles.length > 0;
+    },
+    selectAll: {
+      get() {
+        return this.fileList.length > 0 && this.selectedFiles.length === this.fileList.length;
+      },
+      set(value) {
+        this.selectedFiles = value ? this.fileList.map(f => f.name) : [];
+      }
+    },
   },
 
   methods: {
     // 文件: app.js -> methods (在您已有的方法中找个位置添加)
+async addDriveToEncryption() {
+      if (this.disksToAddForEncryption.length === 0) {
+        alert('请至少选择一个要进行加密初始化的磁盘。');
+        return;
+      }
 
+      const driveList = this.disksToAddForEncryption.join(', ');
+      // 弹出极其严重的警告，防止用户误操作
+      if (!confirm(`【严重警告】\n\n您确定要将磁盘 [${driveList}] 加入加密列表吗？\n\n这是一个准备步骤，未来所有写入这些磁盘的新文件都将被加密。\n\n我们强烈建议您仅对【空磁盘】或【已备份好数据】的磁盘执行此操作！`)) {
+        return;
+      }
+
+      for (const drivePath of this.disksToAddForEncryption) {
+        try {
+          const res = await axios.post('/api/encryption/add-drive', { drive: drivePath });
+          if (res.data.success) {
+            alert(`✅ 磁盘 ${drivePath} 已成功添加到加密列表！`);
+          }
+        } catch (e) {
+          alert(`❌ 添加磁盘 ${drivePath} 失败: ` + (e.response?.data?.error || e.message));
+        }
+      }
+
+      // 操作完成后清空选择，并刷新状态
+      this.disksToAddForEncryption = [];
+      await this.fetchEncryptionStatus();
+      await this.fetchDiskInfo(); // 刷新磁盘信息，让它们在其他地方也更新状态
+    },
 // ...
 // ========== 新增路径归一化辅助方法 ==========
 normalizePath(p) {
@@ -335,18 +382,110 @@ normalizePath(p) {
         this.pwMsg = err.response?.data?.error || "修改失败";
       }
     },
- // 用这个新版本来替换
-// 修改changeDrive方法
-// 文件: app.js -> methods
-// 文件: app.js -> methods
+// app.js -> methods
 
-// ========== 新增辅助方法：构建完整路径 (优化版) ==========
-// 文件: app.js -> methods
+   // 打开主弹窗
+    openEncryptionDialog() {
+      this.fetchEncryptionStatus();
+      this.showEncryptionDialog = true;
+    },
 
-// ========== 修正版：构建完整路径 (重点修复EC卷根目录拼接) ==========
-// 文件: app.js -> methods -> buildFullPath (最终修正版)
+    // 关闭主弹窗
+    closeEncryptionDialog() {
+      this.showEncryptionDialog = false;
+      this.selectedDrivesForPasswordSet = []; // 清空选择
+    },
 
-// 文件: app.js -> methods -> buildFullPath (最鲁棒版本)
+    // [修改] 获取状态 (现在获取的是列表)
+    async fetchEncryptionStatus() {
+      try {
+        const res = await axios.get('/api/encryption/status');
+        this.encryptionStatus = res.data;
+        // 初始化密码输入框的数据结构
+        this.encryptionStatus.forEach(disk => {
+          if (!this.unlockPasswords[disk.drive]) {
+            this.unlockPasswords[disk.drive] = '';
+          }
+        });
+      } catch (e) {
+        console.error("获取加密状态失败:", e);
+      }
+    },
+
+    // [新增] 解锁单个磁盘
+    async unlockSingleDrive(drivePath) {
+      const password = this.unlockPasswords[drivePath];
+      if (!password) {
+        alert(`请输入磁盘 ${drivePath} 的解锁密码！`);
+        return;
+      }
+      try {
+        await axios.post('/api/encryption/unlock', { drive: drivePath, password: password });
+        this.unlockPasswords[drivePath] = ''; // 成功后清空
+        await this.fetchEncryptionStatus();
+      } catch (e) {
+        alert(`❌ 解锁磁盘 ${drivePath} 失败: ` + (e.response?.data?.error || e.message));
+      }
+    },
+
+    // [新增] 锁定单个磁盘
+    async lockSingleDrive(drivePath) {
+      if (!confirm(`您确定要锁定磁盘 ${drivePath} 吗？`)) return;
+      try {
+        await axios.post('/api/encryption/lock', { drive: drivePath });
+        await this.fetchEncryptionStatus();
+      } catch (e) {
+        alert(`❌ 锁定磁盘 ${drivePath} 失败: ` + (e.response?.data?.error || e.message));
+      }
+    },
+
+    // [新增] 打开“设置密码”的弹窗
+    openPasswordSetDialog() {
+      if (this.selectedDrivesForPasswordSet.length === 0) {
+        alert('请至少选择一个磁盘！');
+        return;
+      }
+      this.passwordSetForm = { old_password: '', new_password: '', confirm: '' };
+      this.showPasswordSetDialog = true;
+    },
+
+    // [新增] 关闭“设置密码”的弹窗
+    closePasswordSetDialog() {
+      this.showPasswordSetDialog = false;
+    },
+
+    // [新增] 提交“设置/变更密码”的请求
+    async submitPasswordSet() {
+      const form = this.passwordSetForm;
+      if (!form.new_password || !form.confirm) {
+        alert('新密码和确认密码不能为空！');
+        return;
+      }
+      if (form.new_password !== form.confirm) {
+        alert('两次输入的新密码不一致！');
+        return;
+      }
+      if (form.new_password.length < 6) {
+        alert('为了安全，新密码长度至少需要6位。');
+        return;
+      }
+
+      try {
+        const res = await axios.post('/api/encryption/set-password', {
+          drives: this.selectedDrivesForPasswordSet,
+          old_password: form.old_password,
+          new_password: form.new_password
+        });
+        if (res.data.success) {
+          alert('✅ ' + res.data.message);
+          this.closePasswordSetDialog();
+          this.selectedDrivesForPasswordSet = []; // 清空选择
+          await this.fetchEncryptionStatus(); // 刷新状态
+        }
+      } catch (e) {
+        alert('❌ 操作失败: ' + (e.response?.data?.error || e.message));
+      }
+    },
 
 buildFullPath(fileName) {
   // 1. 如果当前盘符是 EC 卷
@@ -461,15 +600,18 @@ changeDrive() {
       this.resetPwMsg = '';
     },
 
+// app.js -> 替換現有的 loadMainPanel 函數
+
 async loadMainPanel() {
   await Promise.all([
     this.fetchSystemInfo(),
     this.fetchDiskInfo(),
     this.fetchAvailableDrives(),
-    this.fetchEcStatus() // <--- 在这里添加调用
+    this.fetchEcStatus(),
+    this.fetchEncryptionStatus() // <--- [✅ 已新增] 確保在這裡調用加密狀態獲取
   ]);
 
-  // 初始化驱动器选择
+  // 初始化驅動器選擇
   this.initializeCurrentDrive();
   await this.loadFileList(this.currentDrive === 'ec_volume' ? 'ec_volume' : '/');
   this.startSysTimer();
@@ -502,13 +644,16 @@ async fetchDiskInfo() {
     // 文件: app.js -> methods
 // app.js -> methods -> startSysTimer
 
+// app.js -> methods -> startSysTimer
+
 startSysTimer() {
   this.stopSysTimer();
   this._sysTimer = setInterval(() => {
     if (this.loggedIn) {
       this.fetchSystemInfo();
       this.fetchDiskInfo();
-      this.fetchEcStatus(); // <--- 在这里添加调用
+      this.fetchEcStatus();
+      this.fetchEncryptionStatus(); // <--- 在這裡添加調用
     }
   }, 10000); // 10秒刷新一次
 },
