@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NAS Web Desktop</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* 桌面背景 */
+    .desktop {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      position: relative;
+      user-select: none;
+    }
+
+    /* 桌面图标 */
+    .desktop-icon {
+      width: 90px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .desktop-icon:hover {
+      transform: translateY(-2px);
+    }
+
+    .desktop-icon.selected {
+      background: rgba(255,255,255,0.2);
+      border-radius: 8px;
+    }
+
+    /* 窗口系统 */
+    .window {
+      position: absolute;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+      min-width: 400px;
+      min-height: 300px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .window.maximized {
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: calc(100vh - 50px) !important;
+      border-radius: 0;
+    }
+
+    .window-header {
+      background: linear-gradient(180deg, #f7f7f7 0%, #e8e8e8 100%);
+      padding: 12px 16px;
+      cursor: move;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .window-controls button {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: none;
+      margin-left: 8px;
+      cursor: pointer;
+    }
+
+    .window-controls .close { background: #ff5f57; }
+    .window-controls .minimize { background: #ffbd2e; }
+    .window-controls .maximize { background: #28ca42; }
+
+    .window-content {
+      flex: 1;
+      overflow: auto;
+      padding: 20px;
+    }
+
+    /* 任务栏 */
+    .taskbar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 50px;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      z-index: 1000;
+    }
+
+    .taskbar-item {
+      height: 40px;
+      padding: 0 16px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
+      margin-right: 8px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: white;
+    }
+
+    .taskbar-item:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .taskbar-item.active {
+      background: rgba(255,255,255,0.3);
+    }
+
+    /* 右键菜单 */
+    .context-menu {
+      position: fixed;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      min-width: 200px;
+      overflow: hidden;
+      z-index: 2000;
+    }
+
+    .context-menu-item {
+      padding: 10px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: background 0.15s;
+    }
+
+    .context-menu-item:hover {
+      background: #f0f0f0;
+    }
+
+    .context-menu-separator {
+      height: 1px;
+      background: #e0e0e0;
+      margin: 4px 0;
+    }
+
+    /* 网格视图 */
+    .icon-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 90px);
+      gap: 20px;
+      padding: 20px;
+    }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+
+    /* 动画 */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.9); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .window {
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    /* 开始菜单 */
+    .start-menu {
+      position: fixed;
+      bottom: 60px;
+      left: 20px;
+      width: 350px;
+      background: rgba(30, 30, 30, 0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      color: white;
+      overflow: hidden;
+      z-index: 1500;
+    }
+
+    .start-menu-header {
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .start-menu-items {
+      padding: 10px;
+    }
+
+    .start-menu-item {
+      padding: 12px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: background 0.15s;
+    }
+
+    .start-menu-item:hover {
+      background: rgba(255,255,255,0.1);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 登录界面 -->
+    <div v-if="!loggedIn" class="fixed inset-0 flex items-center justify-center"
+         style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+      <div class="bg-white/90 backdrop-blur-xl p-8 rounded-2xl shadow-2xl w-96">
+        <h1 class="text-3xl font-bold text-center mb-6 bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
+          NAS Desktop
+        </h1>
+        <div v-if="!showRegister">
+          <input v-model="loginForm.username"
+                 type="text"
+                 placeholder="用户名"
+                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
+          <input v-model="loginForm.password"
+                 type="password"
+                 placeholder="密码"
+                 @keyup.enter="login"
+                 class="w-full px-4 py-3 mb-4 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
+          <button @click="login"
+                  class="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition">
+            登录
+          </button>
+          <p class="text-center mt-4 text-sm">
+            没有账号? <a href="#" @click.prevent="showRegister=true" class="text-purple-600 font-semibold">注册</a>
+          </p>
+        </div>
+        <div v-else>
+          <input v-model="registerForm.username" type="text" placeholder="用户名"
+                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
+          <input v-model="registerForm.password" type="password" placeholder="密码"
+                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
+          <input v-model="registerForm.confirm" type="password" placeholder="确认密码"
+                 @keyup.enter="register"
+                 class="w-full px-4 py-3 mb-4 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
+          <button @click="register"
+                  class="w-full bg-gradient-to-r from-green-600 to-teal-600 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition">
+            注册
+          </button>
+          <p class="text-center mt-4 text-sm">
+            已有账号? <a href="#" @click.prevent="showRegister=false" class="text-purple-600 font-semibold">登录</a>
+          </p>
+        </div>
+        <p v-if="errorMessage" class="mt-4 text-center text-red-600 text-sm">{{ errorMessage }}</p>
+        <p v-if="infoMessage" class="mt-4 text-center text-green-600 text-sm">{{ infoMessage }}</p>
+      </div>
+    </div>
+
+    <!-- 桌面环境 -->
+    <div v-else>
+      <!-- 桌面 -->
+      <div class="desktop fixed inset-0"
+           @contextmenu.prevent="showDesktopMenu"
+           @click="closeContextMenu">
+
+        <!-- 桌面图标区域 -->
+        <div class="icon-grid p-8">
+          <!-- 磁盘图标 -->
+          <div v-for="drive in availableDrives"
+               :key="drive.drive"
+               class="desktop-icon"
+               @dblclick="openFilesWindow(drive.drive)"
+               @contextmenu.prevent.stop="showFileMenu($event, drive)">
+            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+              💾
+            </div>
+            <div class="text-white text-xs font-semibold drop-shadow-lg">{{ drive.drive }}</div>
+          </div>
+
+          <!-- 纠删码卷图标 -->
+          <div v-if="ecStatus.is_configured"
+               class="desktop-icon"
+               @dblclick="openFilesWindow('ec_volume')"
+               @contextmenu.prevent.stop="showECMenu">
+            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+              🛡️
+            </div>
+            <div class="text-white text-xs font-semibold drop-shadow-lg">纠删码卷</div>
+          </div>
+
+          <!-- 系统信息图标 -->
+          <div class="desktop-icon"
+               @dblclick="openSystemWindow">
+            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+              📊
+            </div>
+            <div class="text-white text-xs font-semibold drop-shadow-lg">系统信息</div>
+          </div>
+
+          <!-- 磁盘管理图标 -->
+          <div class="desktop-icon"
+               @dblclick="openDiskWindow">
+            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+              💿
+            </div>
+            <div class="text-white text-xs font-semibold drop-shadow-lg">磁盘管理</div>
+          </div>
+        </div>
+
+        <!-- 窗口容器 -->
+        <div v-for="window in windows"
+             :key="window.id"
+             :class="['window', { maximized: window.maximized }]"
+             :style="window.maximized ? {} : {
+               top: window.y + 'px',
+               left: window.x + 'px',
+               width: window.width + 'px',
+               height: window.height + 'px',
+               zIndex: window.zIndex
+             }"
+             @mousedown="focusWindow(window.id)">
+
+          <!-- 窗口标题栏 -->
+          <div class="window-header" @mousedown="startDrag($event, window)">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">{{ window.icon }}</span>
+              <span class="font-semibold text-sm">{{ window.title }}</span>
+            </div>
+            <div class="window-controls flex">
+              <button class="minimize" @click.stop="minimizeWindow(window.id)"></button>
+              <button class="maximize" @click.stop="toggleMaximize(window.id)"></button>
+              <button class="close" @click.stop="closeWindow(window.id)"></button>
+            </div>
+          </div>
+
+          <!-- 窗口内容 -->
+          <div class="window-content">
+            <!-- 文件管理器 -->
+            <div v-if="window.type === 'files'">
+              <div class="mb-4 flex items-center gap-2">
+                <button @click="goBack(window)"
+                        :disabled="window.history.length <= 1"
+                        class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50">
+                  ← 返回
+                </button>
+                <div class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono">
+                  {{ window.currentPath }}
+                </div>
+                <button @click="refreshFiles(window)"
+                        class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
+                  🔄
+                </button>
+              </div>
+
+              <!-- 工具栏 -->
+              <div class="mb-4 flex gap-2">
+                <button @click="showUploadDialog = true"
+                        class="px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+                  📤 上传
+                </button>
+                <button @click="showNewFolderDialog(window)"
+                        class="px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                  📁 新建文件夹
+                </button>
+              </div>
+
+              <!-- 文件图标网格 -->
+              <div class="grid grid-cols-4 gap-4">
+                <div v-for="file in window.files"
+                     :key="file.name"
+                     class="flex flex-col items-center p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition"
+                     @dblclick="openFile(window, file)"
+                     @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
+                  <div class="text-5xl mb-2">
+                    {{ file.is_dir ? '📁' : getFileIcon(file.name) }}
+                  </div>
+                  <div class="text-sm text-center break-all">{{ file.name }}</div>
+                  <div class="text-xs text-gray-500">{{ file.is_dir ? '' : formatSize(file.size) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 系统信息 -->
+            <div v-if="window.type === 'system'" class="space-y-4">
+              <h3 class="text-lg font-bold mb-4">系统信息</h3>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-gray-50 p-4 rounded-lg">
+                  <div class="text-sm text-gray-600">主机名</div>
+                  <div class="font-semibold">{{ systemInfo.hostname }}</div>
+                </div>
+                <div class="bg-gray-50 p-4 rounded-lg">
+                  <div class="text-sm text-gray-600">操作系统</div>
+                  <div class="font-semibold">{{ systemInfo.os }}</div>
+                </div>
+                <div class="bg-gray-50 p-4 rounded-lg">
+                  <div class="text-sm text-gray-600">CPU使用率</div>
+                  <div class="font-semibold">{{ systemInfo.cpu_percent }}%</div>
+                </div>
+                <div class="bg-gray-50 p-4 rounded-lg">
+                  <div class="text-sm text-gray-600">内存使用</div>
+                  <div class="font-semibold">
+                    {{ (systemInfo.memory_used / (1024*1024)).toFixed(1) }} /
+                    {{ (systemInfo.memory_total / (1024*1024)).toFixed(1) }} MB
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 磁盘管理 -->
+            <div v-if="window.type === 'disks'" class="space-y-4">
+              <h3 class="text-lg font-bold mb-4">磁盘管理</h3>
+              <div v-for="disk in disks" :key="disk.mount"
+                   class="bg-gray-50 p-4 rounded-lg">
+                <div class="flex justify-between items-center mb-2">
+                  <span class="font-mono font-bold">{{ disk.mount }}</span>
+                  <span class="text-sm text-gray-600">{{ formatSize(disk.bytes_total) }}</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                  <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-full transition-all"
+                       :style="{ width: disk.percent + '%' }"></div>
+                </div>
+                <div class="mt-2 text-xs text-gray-600">
+                  已用 {{ formatSize(disk.bytes_used) }} / 可用 {{ formatSize(disk.bytes_free) }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右键菜单 -->
+        <div v-if="contextMenu.show"
+             class="context-menu"
+             :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
+          <div v-for="item in contextMenu.items" :key="item.label">
+            <div v-if="item.separator" class="context-menu-separator"></div>
+            <div v-else
+                 class="context-menu-item"
+                 @click="item.action">
+              <span>{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 任务栏 -->
+      <div class="taskbar">
+        <!-- 开始按钮 -->
+        <button @click="toggleStartMenu"
+                class="taskbar-item"
+                :class="{ active: showStartMenu }">
+          <span class="text-xl">🚀</span>
+          <span class="ml-2 font-semibold">开始</span>
+        </button>
+
+        <!-- 窗口列表 -->
+        <div v-for="window in windows"
+             :key="window.id"
+             class="taskbar-item"
+             :class="{ active: window.zIndex === maxZIndex }"
+             @click="focusWindow(window.id)">
+          <span>{{ window.icon }}</span>
+          <span class="ml-2">{{ window.title }}</span>
+        </div>
+
+        <!-- 右侧信息 -->
+        <div class="ml-auto flex items-center gap-4 text-white text-sm">
+          <span>👤 {{ user.username }}</span>
+          <span>{{ currentTime }}</span>
+        </div>
+      </div>
+
+      <!-- 开始菜单 -->
+      <div v-if="showStartMenu" class="start-menu">
+        <div class="start-menu-header">
+          <div class="text-xl font-bold">{{ user.username }}</div>
+          <div class="text-sm opacity-80">{{ user.is_admin ? '管理员' : '普通用户' }}</div>
+        </div>
+        <div class="start-menu-items">
+          <div class="start-menu-item" @click="openSystemWindow">
+            <span class="text-xl">📊</span>
+            <span>系统信息</span>
+          </div>
+          <div class="start-menu-item" @click="openDiskWindow">
+            <span class="text-xl">💿</span>
+            <span>磁盘管理</span>
+          </div>
+          <div class="start-menu-item" @click="openECConfig">
+            <span class="text-xl">⚙️</span>
+            <span>纠删码配置</span>
+          </div>
+          <div v-if="user.is_admin" class="start-menu-item" @click="openUserManagement">
+            <span class="text-xl">👥</span>
+            <span>用户管理</span>
+          </div>
+          <div class="h-px bg-white/20 my-2"></div>
+          <div class="start-menu-item" @click="logout">
+            <span class="text-xl">🚪</span>
+            <span>退出登录</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          loggedIn: false,
+          user: { username: '', is_admin: false },
+          showRegister: false,
+          loginForm: { username: '', password: '' },
+          registerForm: { username: '', password: '', confirm: '' },
+          errorMessage: '',
+          infoMessage: '',
+
+          // 桌面系统
+          windows: [],
+          nextWindowId: 1,
+          maxZIndex: 100,
+          dragging: null,
+
+          // 任务栏
+          showStartMenu: false,
+          currentTime: '',
+
+          // 右键菜单
+          contextMenu: {
+            show: false,
+            x: 0,
+            y: 0,
+            items: []
+          },
+
+          // 数据
+          systemInfo: {},
+          disks: [],
+          availableDrives: [],
+          ecStatus: { is_configured: false },
+
+          // 对话框
+          showUploadDialog: false
+        }
+      },
+
+      methods: {
+        // 模拟登录
+        login() {
+          if (this.loginForm.username && this.loginForm.password) {
+            this.loggedIn = true;
+            this.user = { username: this.loginForm.username, is_admin: true };
+            this.loadData();
+          } else {
+            this.errorMessage = '请输入用户名和密码';
+          }
+        },
+
+        register() {
+          if (this.registerForm.password !== this.registerForm.confirm) {
+            this.errorMessage = '两次密码输入不一致';
+            return;
+          }
+          this.infoMessage = '注册成功,请登录';
+          this.showRegister = false;
+        },
+
+        logout() {
+          this.loggedIn = false;
+          this.windows = [];
+          this.showStartMenu = false;
+        },
+
+        // 窗口管理
+        createWindow(type, title, icon, data = {}) {
+          const window = {
+            id: this.nextWindowId++,
+            type,
+            title,
+            icon,
+            x: 100 + (this.windows.length * 30),
+            y: 50 + (this.windows.length * 30),
+            width: 800,
+            height: 600,
+            zIndex: ++this.maxZIndex,
+            maximized: false,
+            minimized: false,
+            ...data
+          };
+          this.windows.push(window);
+          this.showStartMenu = false;
+          return window;
+        },
+
+        closeWindow(id) {
+          this.windows = this.windows.filter(w => w.id !== id);
+        },
+
+        minimizeWindow(id) {
+          const window = this.windows.find(w => w.id === id);
+          if (window) window.minimized = true;
+        },
+
+        toggleMaximize(id) {
+          const window = this.windows.find(w => w.id === id);
+          if (window) window.maximized = !window.maximized;
+        },
+
+        focusWindow(id) {
+          const window = this.windows.find(w => w.id === id);
+          if (window) {
+            window.zIndex = ++this.maxZIndex;
+            window.minimized = false;
+          }
+        },
+
+        startDrag(event, window) {
+          if (window.maximized) return;
+
+          this.dragging = {
+            window,
+            startX: event.clientX - window.x,
+            startY: event.clientY - window.y
+          };
+
+          const onMove = (e) => {
+            if (this.dragging) {
+              this.dragging.window.x = e.clientX - this.dragging.startX;
+              this.dragging.window.y = e.clientY - this.dragging.startY;
+            }
+          };
+
+          const onUp = () => {
+            this.dragging = null;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          };
+
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        },
+
+        // 文件操作
+        openFilesWindow(drive) {
+          const window = this.createWindow('files', drive, '📁', {
+            drive,
+            currentPath: drive,
+            files: [],
+            history: [drive]
+          });
+          this.loadFiles(window);
+        },
+
+        loadFiles(window) {
+          // 模拟数据
+          window.files = [
+            { name: 'Documents', is_dir: true },
+            { name: 'Pictures', is_dir: true },
+            { name: 'Videos', is_dir: true },
+            { name: 'file.txt', is_dir: false, size: 1024 },
+            { name: 'photo.jpg', is_dir: false, size: 2048000 },
+            { name: 'video.mp4', is_dir: false, size: 10485760 }
+          ];
+        },
+
+        refreshFiles(window) {
+          this.loadFiles(window);
+        },
+
+        goBack(window) {
+          if (window.history.length > 1) {
+            window.history.pop();
+            window.currentPath = window.history[window.history.length - 1];
+            this.loadFiles(window);
+          }
+        },
+
+        openFile(window, file) {
+          if (file.is_dir) {
+            window.history.push(window.currentPath + '/' + file.name);
+            window.currentPath = window.history[window.history.length - 1];
+            this.loadFiles(window);
+          } else {
+            alert('打开文件: ' + file.name);
+          }
+        },
+
+        getFileIcon(filename) {
+          const ext = filename.split('.').pop().toLowerCase();
+          const icons = {
+            txt: '📄', pdf: '📕', doc: '📘', docx: '📘',
+            jpg: '🖼️', png: '🖼️', gif: '🖼️',
+            mp3: '🎵', mp4: '🎬', avi: '🎬',
+            zip: '📦', rar: '📦'
+          };
+          return icons[ext] || '📄';
+        },
+
+        // 系统窗口
+        openSystemWindow() {
+          this.createWindow('system', '系统信息', '📊');
+          this.showStartMenu = false;
+        },
+
+        openDiskWindow() {
+          this.createWindow('disks', '磁盘管理', '💿');
+          this.showStartMenu = false;
+        },
+
+        openECConfig() {
+          alert('打开纠删码配置窗口');
+          this.showStartMenu = false;
+        },
+
+        openUserManagement() {
+          alert('打开用户管理窗口');
+          this.showStartMenu = false;
+        },
+
+        showNewFolderDialog(window) {
+          const name = prompt('请输入文件夹名称:');
+          if (name) {
+            window.files.unshift({
+              name: name,
+              is_dir: true
+            });
+          }
+        },
+
+        // 右键菜单
+        showDesktopMenu(event) {
+          this.contextMenu = {
+            show: true,
+            x: event.clientX,
+            y: event.clientY,
+            items: [
+              { icon: '📁', label: '新建文件夹', action: () => this.newFolder() },
+              { icon: '📄', label: '新建文件', action: () => this.newFile() },
+              { separator: true },
+              { icon: '🔄', label: '刷新桌面', action: () => this.refresh() },
+              { separator: true },
+              { icon: '⚙️', label: '设置', action: () => this.openSettings() }
+            ]
+          };
+        },
+
+        showFileContextMenu(event, file, window) {
+          this.contextMenu = {
+            show: true,
+            x: event.clientX,
+            y: event.clientY,
+            items: [
+              { icon: '📂', label: '打开', action: () => this.openFile(window, file) },
+              { separator: true },
+              { icon: '✏️', label: '重命名', action: () => this.renameFile(file) },
+              { icon: '🗑️', label: '删除', action: () => this.deleteFile(window, file) },
+              { separator: true },
+              { icon: '📋', label: '属性', action: () => this.showProperties(file) }
+            ]
+          };
+        },
+
+        showFileMenu(event, drive) {
+          this.contextMenu = {
+            show: true,
+            x: event.clientX,
+            y: event.clientY,
+            items: [
+              { icon: '📂', label: '打开', action: () => this.openFilesWindow(drive.drive) },
+              { separator: true },
+              { icon: '📊', label: '属性', action: () => this.showDiskProperties(drive) }
+            ]
+          };
+        },
+
+        showECMenu(event) {
+          this.contextMenu = {
+            show: true,
+            x: event.clientX,
+            y: event.clientY,
+            items: [
+              { icon: '📂', label: '打开', action: () => this.openFilesWindow('ec_volume') },
+              { separator: true },
+              { icon: '⚙️', label: '配置', action: () => this.openECConfig() }
+            ]
+          };
+        },
+
+        closeContextMenu() {
+          this.contextMenu.show = false;
+        },
+
+        // 右键菜单操作
+        newFolder() {
+          const name = prompt('请输入文件夹名称:');
+          if (name) {
+            alert('创建文件夹: ' + name);
+          }
+          this.closeContextMenu();
+        },
+
+        newFile() {
+          alert('创建新文件');
+          this.closeContextMenu();
+        },
+
+        refresh() {
+          this.loadData();
+          this.closeContextMenu();
+        },
+
+        openSettings() {
+          alert('打开设置');
+          this.closeContextMenu();
+        },
+
+        renameFile(file) {
+          const newName = prompt('请输入新名称:', file.name);
+          if (newName && newName !== file.name) {
+            file.name = newName;
+          }
+          this.closeContextMenu();
+        },
+
+        deleteFile(window, file) {
+          if (confirm('确认删除 ' + file.name + '?')) {
+            window.files = window.files.filter(f => f !== file);
+          }
+          this.closeContextMenu();
+        },
+
+        showProperties(file) {
+          alert('文件属性:\n名称: ' + file.name + '\n大小: ' + this.formatSize(file.size));
+          this.closeContextMenu();
+        },
+
+        showDiskProperties(drive) {
+          alert('磁盘属性:\n' + drive.drive);
+          this.closeContextMenu();
+        },
+
+        // 任务栏
+        toggleStartMenu() {
+          this.showStartMenu = !this.showStartMenu;
+        },
+
+        updateTime() {
+          const now = new Date();
+          this.currentTime = now.toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        },
+
+        // 数据加载
+        loadData() {
+          // 模拟系统信息
+          this.systemInfo = {
+            hostname: 'NAS-Server',
+            os: 'Linux 5.15.0',
+            cpu_percent: 15,
+            memory_total: 8589934592,
+            memory_used: 4294967296
+          };
+
+          // 模拟磁盘信息
+          this.disks = [
+            { mount: 'D:/', bytes_total: 1000000000000, bytes_used: 400000000000, bytes_free: 600000000000, percent: 40 },
+            { mount: 'E:/', bytes_total: 2000000000000, bytes_used: 800000000000, bytes_free: 1200000000000, percent: 40 },
+            { mount: 'F:/', bytes_total: 3000000000000, bytes_used: 900000000000, bytes_free: 2100000000000, percent: 30 }
+          ];
+
+          // 模拟可用驱动器
+          this.availableDrives = [
+            { drive: 'D:/' },
+            { drive: 'E:/' },
+            { drive: 'F:/' }
+          ];
+
+          // 模拟纠删码状态
+          this.ecStatus = {
+            is_configured: true,
+            is_healthy: true
+          };
+        },
+
+        // 工具方法
+        formatSize(bytes) {
+          if (!bytes) return '-';
+          const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+          let size = bytes;
+          let unitIndex = 0;
+          while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex++;
+          }
+          return size.toFixed(1) + ' ' + units[unitIndex];
+        }
+      },
+
+      mounted() {
+        // 更新时间
+        this.updateTime();
+        setInterval(this.updateTime, 1000);
+
+        // 阻止默认右键菜单
+        document.addEventListener('contextmenu', (e) => {
+          if (this.loggedIn) {
+            e.preventDefault();
+          }
+        });
+
+        // 点击关闭右键菜单
+        document.addEventListener('click', () => {
+          if (this.contextMenu.show) {
+            this.closeContextMenu();
+          }
+          if (this.showStartMenu) {
+            this.showStartMenu = false;
+          }
+        });
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
