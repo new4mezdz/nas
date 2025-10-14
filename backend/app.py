@@ -79,16 +79,9 @@ def _save_json(path: str, obj):
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
-# 文件: app.py (替换原有的 _is_ec_volume)
 
 
-# 文件: app.py (确保此函数存在于全局区域)
 
-# app.py -> 找到并替换这个函数
-
-# app.py -> 找到并替换这个函数
-
-# V5 修正版 (正确的)
 def _decode_from_dict(shard_dict: dict, meta: dict) -> bytes:
     """
     一个更健壮的解码器，可以处理索引中缺少 'shard_size' 和 'original_size' 的情况。
@@ -189,7 +182,11 @@ def init_share_table():
 with app.app_context():
     init_share_table()
 
-
+# ===== 静态页面路由 =====
+@app.route("/")
+def index():
+    static_folder = app.static_folder or 'static'
+    return send_from_directory(static_folder, "desktop.html")
 # ========== 确保原有的token_required装饰器支持多种token传递方式 ==========
 def token_required(f=None, admin_only=False):
     def decorator(func):
@@ -473,11 +470,7 @@ def get_drives():
 
 
 
-# ===== 静态页面路由 =====
-@app.route("/")
-def index():
-    static_folder = app.static_folder or 'static'
-    return send_from_directory(static_folder, "index.html")
+
 
 
 # 修改密码（普通用户）
