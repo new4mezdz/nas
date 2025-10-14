@@ -6,9 +6,9 @@
   <title>NAS Web Desktop</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
     body {
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -27,10 +27,13 @@
       text-align: center;
       cursor: pointer;
       transition: all 0.2s;
+      padding: 8px;
     }
 
     .desktop-icon:hover {
       transform: translateY(-2px);
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
     }
 
     .desktop-icon.selected {
@@ -148,6 +151,11 @@
       background: #f0f0f0;
     }
 
+    .context-menu-item.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .context-menu-separator {
       height: 1px;
       background: #e0e0e0;
@@ -228,6 +236,65 @@
     .start-menu-item:hover {
       background: rgba(255,255,255,0.1);
     }
+
+    /* 加载状态 */
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* 文件列表样式 */
+    .file-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .file-item:hover {
+      background: #f5f5f5;
+    }
+
+    .file-item.selected {
+      background: #e3f2fd;
+    }
+
+    /* 侧边栏 */
+    .sidebar {
+      width: 200px;
+      background: #f8f9fa;
+      border-right: 1px solid #e0e0e0;
+      overflow-y: auto;
+    }
+
+    .sidebar-item {
+      padding: 10px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background 0.15s;
+    }
+
+    .sidebar-item:hover {
+      background: #e9ecef;
+    }
+
+    .sidebar-item.active {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
   </style>
 </head>
 <body>
@@ -287,27 +354,14 @@
 
         <!-- 桌面图标区域 -->
         <div class="icon-grid p-8">
-          <!-- 磁盘图标 -->
-          <div v-for="drive in availableDrives"
-               :key="drive.drive"
-               class="desktop-icon"
-               @dblclick="openFilesWindow(drive.drive)"
-               @contextmenu.prevent.stop="showFileMenu($event, drive)">
+          <!-- 文件管理图标 -->
+          <div class="desktop-icon"
+               @dblclick="openFilesWindow()"
+               @contextmenu.prevent.stop="showFilesIconMenu">
             <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
-              💾
+              📁
             </div>
-            <div class="text-white text-xs font-semibold drop-shadow-lg">{{ drive.drive }}</div>
-          </div>
-
-          <!-- 纠删码卷图标 -->
-          <div v-if="ecStatus.is_configured"
-               class="desktop-icon"
-               @dblclick="openFilesWindow('ec_volume')"
-               @contextmenu.prevent.stop="showECMenu">
-            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
-              🛡️
-            </div>
-            <div class="text-white text-xs font-semibold drop-shadow-lg">纠删码卷</div>
+            <div class="text-white text-xs font-semibold drop-shadow-lg">文件管理</div>
           </div>
 
           <!-- 系统信息图标 -->
@@ -338,7 +392,8 @@
                left: window.x + 'px',
                width: window.width + 'px',
                height: window.height + 'px',
-               zIndex: window.zIndex
+               zIndex: window.zIndex,
+               display: window.minimized ? 'none' : 'flex'
              }"
              @mousedown="focusWindow(window.id)">
 
@@ -356,48 +411,145 @@
           </div>
 
           <!-- 窗口内容 -->
-          <div class="window-content">
+          <div class="window-content" style="padding: 0; overflow: hidden;">
             <!-- 文件管理器 -->
-            <div v-if="window.type === 'files'">
-              <div class="mb-4 flex items-center gap-2">
+            <div v-if="window.type === 'files'" class="h-full flex flex-col">
+              <!-- 工具栏 -->
+              <div class="px-4 py-3 border-b bg-gray-50 flex items-center gap-2">
                 <button @click="goBack(window)"
-                        :disabled="window.history.length <= 1"
-                        class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50">
+                        :disabled="window.historyIndex <= 0"
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                   ← 返回
                 </button>
-                <div class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono">
-                  {{ window.currentPath }}
+                <button @click="goForward(window)"
+                        :disabled="window.historyIndex >= window.history.length - 1"
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                  前进 →
+                </button>
+                <button @click="goParent(window)"
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50">
+                  ⬆️ 上级
+                </button>
+                <div class="flex-1 bg-white border px-3 py-1.5 rounded text-sm font-mono overflow-x-auto">
+                  {{ window.currentDrive === 'ec_volume' ? '[纠删码卷]' : window.currentDrive }} {{ window.currentPath }}
                 </div>
                 <button @click="refreshFiles(window)"
-                        class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
-                  🔄
+                        class="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600">
+                  🔄 刷新
                 </button>
               </div>
 
-              <!-- 工具栏 -->
-              <div class="mb-4 flex gap-2">
-                <button @click="showUploadDialog = true"
-                        class="px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600">
-                  📤 上传
-                </button>
-                <button @click="showNewFolderDialog(window)"
-                        class="px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
-                  📁 新建文件夹
-                </button>
-              </div>
-
-              <!-- 文件图标网格 -->
-              <div class="grid grid-cols-4 gap-4">
-                <div v-for="file in window.files"
-                     :key="file.name"
-                     class="flex flex-col items-center p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition"
-                     @dblclick="openFile(window, file)"
-                     @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
-                  <div class="text-5xl mb-2">
-                    {{ file.is_dir ? '📁' : getFileIcon(file.name) }}
+              <!-- 主内容区 -->
+              <div class="flex-1 flex overflow-hidden">
+                <!-- 左侧边栏 -->
+                <div class="sidebar">
+                  <div class="p-3 text-xs font-semibold text-gray-600 border-b bg-white">
+                    💾 存储设备
                   </div>
-                  <div class="text-sm text-center break-all">{{ file.name }}</div>
-                  <div class="text-xs text-gray-500">{{ file.is_dir ? '' : formatSize(file.size) }}</div>
+                  <div v-for="storage in window.sidebar.storage"
+                       :key="storage.path"
+                       class="sidebar-item"
+                       :class="{ active: window.currentDrive === storage.path }"
+                       @click="navigateToStorage(window, storage.path)">
+                    <span class="text-2xl">{{ storage.icon }}</span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium truncate">{{ storage.label }}</div>
+                      <div v-if="storage.usage > 0" class="mt-1.5">
+                        <div class="w-full bg-gray-200 rounded-full h-1.5">
+                          <div class="h-1.5 rounded-full transition-all"
+                               :class="storage.usage > 90 ? 'bg-red-500' : storage.usage > 70 ? 'bg-yellow-500' : 'bg-blue-500'"
+                               :style="{ width: storage.usage + '%' }"></div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-0.5">{{ storage.usage.toFixed(1) }}% 已用</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="h-px bg-gray-200 my-2"></div>
+
+                  <div class="p-3 text-xs font-semibold text-gray-600 bg-white">
+                    ⭐ 快捷方式
+                  </div>
+                  <div class="sidebar-item">
+                    <span class="text-xl">📥</span>
+                    <span class="text-sm">最近文件</span>
+                  </div>
+                  <div class="sidebar-item">
+                    <span class="text-xl">⭐</span>
+                    <span class="text-sm">收藏夹</span>
+                  </div>
+                </div>
+
+                <!-- 文件列表区域 -->
+                <div class="flex-1 overflow-auto p-4">
+                  <div v-if="window.files.length === 0" class="text-center text-gray-400 py-12">
+                    📂 此文件夹为空
+                  </div>
+                  <div v-else>
+                    <!-- 网格视图 -->
+                    <div v-if="window.viewMode === 'grid'" class="grid grid-cols-4 gap-4">
+                      <div v-for="file in window.files"
+                           :key="file.name"
+                           class="flex flex-col items-center p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition"
+                           :class="{ 'bg-blue-50': window.selectedFiles.includes(file.name) }"
+                           @click="toggleFileSelection(window, file.name, $event)"
+                           @dblclick="handleDoubleClick(window, file)"
+                           @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
+                        <div class="text-5xl mb-2">
+                          {{ file.is_dir ? '📁' : getFileIcon(file.name) }}
+                        </div>
+                        <div class="text-sm text-center break-all">{{ file.name }}</div>
+                        <div class="text-xs text-gray-500">{{ file.is_dir ? '' : formatSize(file.size) }}</div>
+                      </div>
+                    </div>
+
+                    <!-- 列表视图 -->
+                    <table v-else class="w-full text-sm">
+                      <thead class="bg-gray-50 border-b">
+                        <tr>
+                          <th class="text-left p-2 w-10">
+                            <input type="checkbox"
+                                   :checked="window.selectedFiles.length === window.files.length && window.files.length > 0"
+                                   @change="$event.target.checked ? selectAllFiles(window) : clearSelection(window)">
+                          </th>
+                          <th class="text-left p-2 cursor-pointer hover:bg-gray-100"
+                              @click="toggleSort(window, 'name')">
+                            名称 {{ window.sortBy === 'name' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}
+                          </th>
+                          <th class="text-left p-2 cursor-pointer hover:bg-gray-100"
+                              @click="toggleSort(window, 'size')">
+                            大小 {{ window.sortBy === 'size' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}
+                          </th>
+                          <th class="text-left p-2 cursor-pointer hover:bg-gray-100"
+                              @click="toggleSort(window, 'mtime')">
+                            修改时间 {{ window.sortBy === 'mtime' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="file in window.files"
+                            :key="file.name"
+                            class="border-b hover:bg-gray-50 cursor-pointer"
+                            :class="{ 'bg-blue-50': window.selectedFiles.includes(file.name) }"
+                            @click="toggleFileSelection(window, file.name, $event)"
+                            @dblclick="handleDoubleClick(window, file)"
+                            @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
+                          <td class="p-2">
+                            <input type="checkbox"
+                                   :checked="window.selectedFiles.includes(file.name)"
+                                   @click.stop
+                                   @change="toggleFileSelection(window, file.name, $event)">
+                          </td>
+                          <td class="p-2">
+                            <span class="mr-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</span>
+                            {{ file.name }}
+                          </td>
+                          <td class="p-2">{{ file.is_dir ? '-' : formatSize(file.size) }}</td>
+                          <td class="p-2">{{ formatTime(file.mtime) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -453,11 +605,12 @@
         <div v-if="contextMenu.show"
              class="context-menu"
              :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
-          <div v-for="item in contextMenu.items" :key="item.label">
+          <div v-for="(item, index) in contextMenu.items" :key="index">
             <div v-if="item.separator" class="context-menu-separator"></div>
             <div v-else
                  class="context-menu-item"
-                 @click="item.action">
+                 :class="{ disabled: item.disabled }"
+                 @click="!item.disabled && item.action()">
               <span>{{ item.icon }}</span>
               <span>{{ item.label }}</span>
             </div>
@@ -468,14 +621,15 @@
       <!-- 任务栏 -->
       <div class="taskbar">
         <!-- 开始按钮 -->
-        <button @click.stop="toggleStartMenu"  class="taskbar-item"
-        :class="{ active: showStartMenu }">
-  <span class="text-xl">🚀</span>
-  <span class="ml-2 font-semibold">开始</span>
-</button>
+        <button @click.stop="toggleStartMenu"
+                class="taskbar-item"
+                :class="{ active: showStartMenu }">
+          <span class="text-xl">🚀</span>
+          <span class="ml-2 font-semibold">开始</span>
+        </button>
 
         <!-- 窗口列表 -->
-        <div v-for="window in windows"
+        <div v-for="window in windows.filter(w => !w.minimized)"
              :key="window.id"
              class="taskbar-item"
              :class="{ active: window.zIndex === maxZIndex }"
