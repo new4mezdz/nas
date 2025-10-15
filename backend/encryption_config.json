@@ -8,6 +8,10 @@
     "e:\\": {
       "password_salt": "f9ba71a4ea3774a29f541a5d1c92d612",
       "password_hash": "a1643598b9fb6dd6e11e7b7a0f4033cdbbad196211c82a338e24f17123ea014b"
+    },
+    "f:\\": {
+      "password_salt": "df899c6e8fa51645b65e422ce6dd4180",
+      "password_hash": "5c1f48ce1b2711e22a62e536bcd9cf1b2363b9a0a4e704d1f3fb37fd91277dc0"
     }
   }
 }

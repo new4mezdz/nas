@@ -795,6 +795,7 @@
                   </button>
                 </div>
 
+
                 <!-- 纠删码配置 -->
                 <div v-if="window.activeTab === 'ec'" class="space-y-4">
                   <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
@@ -902,6 +903,168 @@
                 </div>
               </div>
             </div>
+              <!-- 找到 desktop.html 中 "文件管理器" 的结束标签 </div> -->
+<!-- 在 磁盘管理 (window.type === 'disks') 的 </div> 之后添加: -->
+
+             <!-- 预览窗口 -->
+            <div v-if="window.type === 'preview'" class="h-full flex flex-col overflow-hidden bg-gray-50">
+              <!-- 加载中 -->
+              <div v-if="window.isLoading" class="flex-1 flex items-center justify-center">
+                <div class="text-center">
+                  <div class="loading mb-4"></div>
+                  <p class="text-gray-600">正在加载预览...</p>
+                </div>
+              </div>
+
+              <!-- 错误信息 -->
+              <div v-else-if="window.previewError" class="flex-1 flex items-center justify-center">
+                <div class="text-center text-red-600">
+                  <span class="text-6xl mb-4 block">⚠️</span>
+                  <p class="text-lg">{{ window.previewError }}</p>
+                </div>
+              </div>
+
+              <!-- 预览内容 -->
+              <div v-else class="flex-1 overflow-auto flex items-center justify-center p-4">
+                <!-- 图片预览 -->
+                <div v-if="window.fileType === 'image'" class="max-w-full max-h-full">
+                  <img :src="window.previewContent" :alt="window.fileName"
+                       class="max-w-full max-h-full object-contain shadow-lg rounded-lg">
+                </div>
+
+                <!-- 视频预览 -->
+                <div v-else-if="window.fileType === 'video'" class="w-full max-w-4xl">
+                  <video :src="window.previewContent" controls
+                         class="w-full rounded-lg shadow-lg" style="max-height: 70vh;">
+                    您的浏览器不支持视频播放
+                  </video>
+                </div>
+
+                <!-- 音频预览 -->
+                <div v-else-if="window.fileType === 'audio'" class="w-full max-w-2xl">
+                  <div class="bg-white p-8 rounded-lg shadow-lg text-center">
+                    <div class="text-6xl mb-4">🎵</div>
+                    <h3 class="text-lg font-semibold mb-4">{{ window.fileName }}</h3>
+                    <audio :src="window.previewContent" controls class="w-full">
+                      您的浏览器不支持音频播放
+                    </audio>
+                  </div>
+                </div>
+
+                <!-- 文本预览 -->
+                <div v-else-if="window.fileType === 'text'" class="w-full h-full p-4">
+                  <pre class="bg-white p-4 rounded-lg border shadow-sm font-mono text-sm whitespace-pre-wrap break-words h-full overflow-auto">{{ window.previewContent }}</pre>
+                </div>
+
+                <!-- PDF预览 -->
+                <div v-else-if="window.fileType === 'pdf'" class="w-full h-full">
+                  <iframe :src="window.previewContent" class="w-full h-full border-0"></iframe>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div class="border-t bg-white p-3 flex justify-between items-center">
+                <span class="text-sm text-gray-600">{{ window.fileName }}</span>
+                <div class="flex gap-2">
+                  <button @click="downloadFile(window, {name: window.fileName})"
+                          class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                    📥 下载文件
+                  </button>
+                  <button @click="closeWindow(window.id)"
+                          class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+                    关闭
+                  </button>
+                </div>
+              </div>
+            </div>
+            <!-- 分享结果窗口 -->
+            <div v-if="window.type === 'share-result'" class="h-full flex flex-col overflow-hidden bg-gradient-to-br from-blue-50 to-purple-50">
+              <div class="flex-1 overflow-auto p-8">
+                <div class="max-w-2xl mx-auto">
+                  <!-- 成功图标 -->
+                  <div class="text-center mb-6">
+                    <span class="text-8xl">🎉</span>
+                    <h3 class="text-2xl font-bold text-gray-800 mt-4">分享链接创建成功!</h3>
+                  </div>
+
+                  <!-- 文件信息 -->
+                  <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                    <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <span class="text-xl">📄</span>
+                      文件信息
+                    </h4>
+                    <div class="space-y-2 text-sm">
+                      <div class="flex justify-between">
+                        <span class="text-gray-600">文件名:</span>
+                        <span class="font-medium">{{ window.fileName }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 分享链接 -->
+                  <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                    <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <span class="text-xl">🔗</span>
+                      分享链接
+                    </h4>
+                    <div class="flex gap-2">
+                      <input type="text"
+                             :value="window.shareUrl"
+                             readonly
+                             class="flex-1 px-4 py-2 bg-gray-50 border rounded-lg text-sm font-mono">
+                      <button @click="copyToClipboard(window.shareUrl)"
+                              class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 whitespace-nowrap">
+                        📋 复制
+                      </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">链接已自动复制到剪贴板</p>
+                  </div>
+
+                  <!-- 访问密码 -->
+                  <div v-if="window.password" class="bg-white rounded-lg shadow-md p-6 mb-6">
+                    <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <span class="text-xl">🔒</span>
+                      访问密码
+                    </h4>
+                    <div class="flex items-center gap-3">
+                      <code class="flex-1 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-lg font-bold text-yellow-800">
+                        {{ window.password }}
+                      </code>
+                      <button @click="copyToClipboard(window.password)"
+                              class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 whitespace-nowrap">
+                        📋 复制
+                      </button>
+                    </div>
+                    <p class="text-xs text-yellow-700 mt-2">⚠️ 请将此密码发送给对方</p>
+                  </div>
+
+                  <!-- 提示信息 -->
+                  <div class="bg-blue-100 border-l-4 border-blue-500 p-4 rounded">
+                    <div class="flex items-start gap-3">
+                      <span class="text-2xl">💡</span>
+                      <div class="text-sm text-blue-800">
+                        <p class="font-semibold mb-1">使用提示:</p>
+                        <ul class="list-disc list-inside space-y-1">
+                          <li>将分享链接发送给需要访问的人</li>
+                          <li v-if="window.password">对方需要输入密码才能访问</li>
+                          <li v-else>任何人通过链接都可以访问(无密码保护)</li>
+                          <li>链接有效期为24小时</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 关闭按钮 -->
+              <div class="border-t bg-white p-3 flex justify-end">
+                <button @click="closeWindow(window.id)"
+                        class="px-6 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+                  关闭
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
 
