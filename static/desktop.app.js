@@ -291,20 +291,21 @@ createApp({
       // 添加物理磁盘
       this.availableDrives.forEach(drive => {
         const diskInfo = this.disks.find(d => d.mount === drive.drive);
+        const driveLabel = drive.drive.replace(':/', '');
         storage.push({
           icon: '💾',
-          label: drive.drive.replace(':/', '盘'),
+          label: `${driveLabel} 盘`,
           path: drive.drive,
           type: 'physical',
           usage: diskInfo ? diskInfo.percent : 0
         });
       });
 
-      // 添加 EC 卷
+      // 添加 EC 卷 (放在最前面,使其更醒目)
       if (this.ecStatus.is_configured) {
-        storage.push({
+        storage.unshift({
           icon: '🛡️',
-          label: 'EC卷',
+          label: '纠删码卷',
           path: 'ec_volume',
           type: 'ec',
           usage: 0
@@ -548,6 +549,117 @@ createApp({
       window.open(url);
     },
 
+    downloadSelected(window) {
+      if (window.selectedFiles.length === 0) {
+        alert('请先选择要下载的文件');
+        return;
+      }
+
+      if (window.selectedFiles.length === 1) {
+        const file = window.files.find(f => f.name === window.selectedFiles[0]);
+        if (file && !file.is_dir) {
+          this.downloadFile(window, file);
+        } else {
+          alert('无法下载文件夹');
+        }
+      } else {
+        alert(`批量下载功能开发中...\n已选择 ${window.selectedFiles.length} 个文件`);
+      }
+    },
+
+    renameSelected(window) {
+      if (window.selectedFiles.length !== 1) {
+        alert('请选择一个文件或文件夹进行重命名');
+        return;
+      }
+
+      const oldName = window.selectedFiles[0];
+      const newName = prompt('请输入新名称:', oldName);
+
+      if (!newName || newName === oldName) return;
+
+      this.renameFile(window, { name: oldName }, newName);
+    },
+
+    async deleteSelected(window) {
+      if (window.selectedFiles.length === 0) {
+        alert('请先选择要删除的文件');
+        return;
+      }
+
+      const count = window.selectedFiles.length;
+      if (!confirm(`确认删除选中的 ${count} 项?`)) {
+        return;
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const fileName of window.selectedFiles) {
+        try {
+          const fullPath = this.buildFullPath(window, fileName);
+          const response = await fetch('/api/delete', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ path: fullPath })
+          });
+
+          const data = await response.json();
+          if (data.success) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch (error) {
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        this.loadFiles(window);
+        window.selectedFiles = [];
+      }
+
+      if (failCount > 0) {
+        alert(`删除完成: 成功 ${successCount} 项, 失败 ${failCount} 项`);
+      }
+    },
+
+    cutSelected(window) {
+      if (window.selectedFiles.length === 0) {
+        alert('请先选择要剪切的文件');
+        return;
+      }
+
+      window.clipboard = {
+        mode: 'cut',
+        items: [...window.selectedFiles],
+        sourceDrive: window.currentDrive,
+        sourcePath: window.currentPath
+      };
+
+      alert(`已剪切 ${window.selectedFiles.length} 项`);
+    },
+
+    copySelected(window) {
+      if (window.selectedFiles.length === 0) {
+        alert('请先选择要复制的文件');
+        return;
+      }
+
+      window.clipboard = {
+        mode: 'copy',
+        items: [...window.selectedFiles],
+        sourceDrive: window.currentDrive,
+        sourcePath: window.currentPath
+      };
+
+      alert(`已复制 ${window.selectedFiles.length} 项`);
+    },
+
     openUploadDialog(window) {
       this.showUploadDialog = true;
       this.uploadFiles = [];
@@ -679,19 +791,22 @@ createApp({
         x: event.clientX,
         y: event.clientY,
         items: [
-          { icon: '📁', label: '打开文件管理器', action: () => this.openFilesWindow() },
+          { icon: '📁', label: '打开文件管理', action: () => this.openFilesWindow() },
           { separator: true },
           { icon: '🔄', label: '刷新桌面', action: () => this.loadData() }
         ]
       };
     },
+
     showFilesIconMenu(event) {
       this.contextMenu = {
         show: true,
         x: event.clientX,
         y: event.clientY,
         items: [
-          { icon: '📂', label: '打开', action: () => this.openFilesWindow() }
+          { icon: '📂', label: '打开', action: () => this.openFilesWindow() },
+          { separator: true },
+          { icon: '🔄', label: '刷新', action: () => this.loadData() }
         ]
       };
     },
@@ -745,12 +860,32 @@ createApp({
     },
 
     async pasteFiles(window) {
-      alert('粘贴功能正在开发中...');
+      if (!window.clipboard.items.length) {
+        alert('剪贴板为空');
+        return;
+      }
+
+      const mode = window.clipboard.mode;
+      const count = window.clipboard.items.length;
+
+      alert(`粘贴功能开发中...\n将${mode === 'cut' ? '移动' : '复制'} ${count} 项到当前位置`);
+
+      // TODO: 实现实际的粘贴逻辑
       this.closeContextMenu();
     },
 
-    renameFile(window, file) {
-      alert('重命名功能: ' + file.name + '\n(下一步实现)');
+    renameFile(window, file, newName) {
+      if (!newName) {
+        const currentName = file.name || file;
+        newName = prompt('请输入新名称:', typeof currentName === 'string' ? currentName : currentName.name);
+      }
+
+      if (!newName) return;
+
+      const oldName = typeof file === 'string' ? file : file.name;
+      if (newName === oldName) return;
+
+      alert(`重命名功能: ${oldName} → ${newName}\n(API 对接中...)`);
       this.closeContextMenu();
     },
 
@@ -823,13 +958,30 @@ createApp({
     },
 
     openDiskWindow() {
-      this.createWindow('disks', '磁盘管理', '💿');
+      this.createWindow('disks', '磁盘管理', '💿', {
+        activeTab: 'ec',  // 默认标签页: ec, encryption, raid
+        width: 900,
+        height: 650
+      });
       this.showStartMenu = false;
     },
 
     openECConfig() {
-      alert('打开纠删码配置窗口');
+      // 打开磁盘管理窗口并切换到纠删码标签页
+      const window = this.createWindow('disks', '磁盘管理', '💿', {
+        activeTab: 'ec',
+        width: 900,
+        height: 650
+      });
       this.showStartMenu = false;
+    },
+
+    openECDetailConfig() {
+      alert('打开纠删码详细配置\n(跳转到传统配置界面)');
+    },
+
+    openEncryptionConfig() {
+      alert('打开磁盘加密配置\n(跳转到传统配置界面)');
     },
 
     openUserManagement() {

@@ -414,29 +414,135 @@
           <div class="window-content" style="padding: 0; overflow: hidden;">
             <!-- 文件管理器 -->
             <div v-if="window.type === 'files'" class="h-full flex flex-col">
-              <!-- 工具栏 -->
+              <!-- 导航栏 -->
               <div class="px-4 py-3 border-b bg-gray-50 flex items-center gap-2">
                 <button @click="goBack(window)"
                         :disabled="window.historyIndex <= 0"
-                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="返回">
                   ← 返回
                 </button>
                 <button @click="goForward(window)"
                         :disabled="window.historyIndex >= window.history.length - 1"
-                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="前进">
                   前进 →
                 </button>
                 <button @click="goParent(window)"
-                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50">
+                        class="px-3 py-1.5 bg-white border rounded hover:bg-gray-50"
+                        title="上一级">
                   ⬆️ 上级
                 </button>
                 <div class="flex-1 bg-white border px-3 py-1.5 rounded text-sm font-mono overflow-x-auto">
                   {{ window.currentDrive === 'ec_volume' ? '[纠删码卷]' : window.currentDrive }} {{ window.currentPath }}
                 </div>
                 <button @click="refreshFiles(window)"
-                        class="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600">
-                  🔄 刷新
+                        class="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600"
+                        title="刷新">
+                  🔄
                 </button>
+              </div>
+
+              <!-- 工具栏 -->
+              <div class="px-4 py-2 border-b bg-white flex items-center gap-2 flex-wrap">
+                <!-- 文件操作 -->
+                <div class="flex items-center gap-1 border-r pr-2">
+                  <button @click="openUploadDialog(window)"
+                          class="px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm flex items-center gap-1"
+                          title="上传文件">
+                    📤 上传
+                  </button>
+                  <button @click="downloadSelected(window)"
+                          :disabled="window.selectedFiles.length === 0"
+                          class="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="下载选中文件">
+                    📥 下载
+                  </button>
+                </div>
+
+                <!-- 编辑操作 -->
+                <div class="flex items-center gap-1 border-r pr-2">
+                  <button @click="createNewFolder(window)"
+                          class="px-3 py-1.5 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm flex items-center gap-1"
+                          title="新建文件夹">
+                    📁 新建
+                  </button>
+                  <button @click="renameSelected(window)"
+                          :disabled="window.selectedFiles.length !== 1"
+                          class="px-3 py-1.5 bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="重命名">
+                    ✏️ 重命名
+                  </button>
+                  <button @click="deleteSelected(window)"
+                          :disabled="window.selectedFiles.length === 0"
+                          class="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="删除">
+                    🗑️ 删除
+                  </button>
+                </div>
+
+                <!-- 剪贴板操作 -->
+                <div class="flex items-center gap-1 border-r pr-2">
+                  <button @click="cutSelected(window)"
+                          :disabled="window.selectedFiles.length === 0"
+                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="剪切">
+                    ✂️ 剪切
+                  </button>
+                  <button @click="copySelected(window)"
+                          :disabled="window.selectedFiles.length === 0"
+                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="复制">
+                    📋 复制
+                  </button>
+                  <button @click="pasteFiles(window)"
+                          :disabled="!window.clipboard.items.length"
+                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+                          title="粘贴">
+                    📌 粘贴
+                  </button>
+                </div>
+
+                <!-- 选择操作 -->
+                <div class="flex items-center gap-1 border-r pr-2">
+                  <button @click="selectAllFiles(window)"
+                          class="px-3 py-1.5 bg-gray-100 border rounded hover:bg-gray-200 text-sm"
+                          title="全选">
+                    ☑️ 全选
+                  </button>
+                  <button @click="clearSelection(window)"
+                          :disabled="window.selectedFiles.length === 0"
+                          class="px-3 py-1.5 bg-gray-100 border rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                          title="取消选择">
+                    ⬜ 取消
+                  </button>
+                </div>
+
+                <!-- 视图切换 -->
+                <div class="flex items-center gap-1">
+                  <button @click="window.viewMode = 'list'"
+                          :class="window.viewMode === 'list' ? 'bg-blue-500 text-white' : 'bg-gray-100 border'"
+                          class="px-3 py-1.5 rounded hover:bg-blue-400 text-sm"
+                          title="列表视图">
+                    📋
+                  </button>
+                  <button @click="window.viewMode = 'grid'"
+                          :class="window.viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-100 border'"
+                          class="px-3 py-1.5 rounded hover:bg-blue-400 text-sm"
+                          title="网格视图">
+                    ⊞
+                  </button>
+                </div>
+
+                <!-- 选中文件计数 -->
+                <div class="ml-auto text-sm text-gray-600">
+                  <span v-if="window.selectedFiles.length > 0">
+                    已选中 <strong>{{ window.selectedFiles.length }}</strong> 项
+                  </span>
+                  <span v-else>
+                    共 <strong>{{ window.files.length }}</strong> 项
+                  </span>
+                </div>
               </div>
 
               <!-- 主内容区 -->
@@ -555,46 +661,244 @@
             </div>
 
             <!-- 系统信息 -->
-            <div v-if="window.type === 'system'" class="space-y-4">
-              <h3 class="text-lg font-bold mb-4">系统信息</h3>
-              <div class="grid grid-cols-2 gap-4">
-                <div class="bg-gray-50 p-4 rounded-lg">
-                  <div class="text-sm text-gray-600">主机名</div>
-                  <div class="font-semibold">{{ systemInfo.hostname }}</div>
-                </div>
-                <div class="bg-gray-50 p-4 rounded-lg">
-                  <div class="text-sm text-gray-600">操作系统</div>
-                  <div class="font-semibold">{{ systemInfo.os }}</div>
-                </div>
-                <div class="bg-gray-50 p-4 rounded-lg">
-                  <div class="text-sm text-gray-600">CPU使用率</div>
-                  <div class="font-semibold">{{ systemInfo.cpu_percent }}%</div>
-                </div>
-                <div class="bg-gray-50 p-4 rounded-lg">
-                  <div class="text-sm text-gray-600">内存使用</div>
-                  <div class="font-semibold">
-                    {{ (systemInfo.memory_used / (1024*1024)).toFixed(1) }} /
-                    {{ (systemInfo.memory_total / (1024*1024)).toFixed(1) }} MB
+            <div v-if="window.type === 'system'" class="space-y-4 overflow-auto">
+              <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                <span class="text-2xl">📊</span>
+                系统信息
+              </h3>
+
+              <!-- 基础信息 -->
+              <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
+                <h4 class="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                  <span>💻</span> 系统概览
+                </h4>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="bg-white p-3 rounded-lg shadow-sm">
+                    <div class="text-xs text-gray-600 mb-1">主机名</div>
+                    <div class="font-semibold text-gray-800">{{ systemInfo.hostname }}</div>
                   </div>
+                  <div class="bg-white p-3 rounded-lg shadow-sm">
+                    <div class="text-xs text-gray-600 mb-1">操作系统</div>
+                    <div class="font-semibold text-gray-800">{{ systemInfo.os }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- CPU & 内存 -->
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-white p-4 rounded-lg border shadow-sm">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm font-semibold text-gray-700">🖥️ CPU 使用率</div>
+                    <div class="text-2xl font-bold text-blue-600">{{ systemInfo.cpu_percent }}%</div>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                    <div class="h-3 rounded-full transition-all bg-gradient-to-r from-blue-400 to-blue-600"
+                         :style="{ width: systemInfo.cpu_percent + '%' }"></div>
+                  </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-lg border shadow-sm">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm font-semibold text-gray-700">🧠 内存使用</div>
+                    <div class="text-2xl font-bold text-purple-600">
+                      {{ ((systemInfo.memory_used / systemInfo.memory_total) * 100).toFixed(1) }}%
+                    </div>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                    <div class="h-3 rounded-full transition-all bg-gradient-to-r from-purple-400 to-purple-600"
+                         :style="{ width: (systemInfo.memory_used / systemInfo.memory_total) * 100 + '%' }"></div>
+                  </div>
+                  <div class="text-xs text-gray-500 mt-1">
+                    {{ (systemInfo.memory_used / (1024*1024*1024)).toFixed(2) }} GB /
+                    {{ (systemInfo.memory_total / (1024*1024*1024)).toFixed(2) }} GB
+                  </div>
+                </div>
+              </div>
+
+              <!-- 磁盘容量信息 -->
+              <div class="bg-white p-4 rounded-lg border shadow-sm">
+                <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <span>💾</span> 磁盘容量
+                </h4>
+                <div class="space-y-3">
+                  <div v-for="disk in disks" :key="disk.mount" class="border-b last:border-b-0 pb-3 last:pb-0">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xl">{{ disk.ec_scheme ? '🛡️' : '💾' }}</span>
+                        <span class="font-mono font-bold text-gray-800">{{ disk.mount }}</span>
+                        <span v-if="disk.ec_scheme" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                          {{ disk.ec_scheme }}
+                        </span>
+                      </div>
+                      <div class="text-sm text-gray-600">
+                        {{ formatSize(disk.bytes_total) }}
+                      </div>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                      <div class="h-4 rounded-full transition-all flex items-center justify-center text-xs text-white font-semibold"
+                           :class="disk.percent > 90 ? 'bg-gradient-to-r from-red-400 to-red-600' :
+                                   disk.percent > 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+                                   'bg-gradient-to-r from-green-400 to-green-600'"
+                           :style="{ width: disk.percent + '%' }">
+                        {{ disk.percent }}%
+                      </div>
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>已用: {{ formatSize(disk.bytes_used) }}</span>
+                      <span>可用: {{ formatSize(disk.bytes_free) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 总览统计 -->
+              <div class="grid grid-cols-3 gap-3">
+                <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
+                  <div class="text-xs opacity-90 mb-1">总容量</div>
+                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0)) }}</div>
+                </div>
+                <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
+                  <div class="text-xs opacity-90 mb-1">可用空间</div>
+                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0)) }}</div>
+                </div>
+                <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
+                  <div class="text-xs opacity-90 mb-1">已用空间</div>
+                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0)) }}</div>
                 </div>
               </div>
             </div>
 
             <!-- 磁盘管理 -->
-            <div v-if="window.type === 'disks'" class="space-y-4">
-              <h3 class="text-lg font-bold mb-4">磁盘管理</h3>
-              <div v-for="disk in disks" :key="disk.mount"
-                   class="bg-gray-50 p-4 rounded-lg">
-                <div class="flex justify-between items-center mb-2">
-                  <span class="font-mono font-bold">{{ disk.mount }}</span>
-                  <span class="text-sm text-gray-600">{{ formatSize(disk.bytes_total) }}</span>
+            <div v-if="window.type === 'disks'" class="h-full flex flex-col overflow-hidden">
+              <div class="flex-1 overflow-auto p-4 space-y-4">
+                <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                  <span class="text-2xl">💿</span>
+                  磁盘管理
+                </h3>
+
+                <!-- 标签页切换 -->
+                <div class="flex gap-2 border-b pb-2">
+                  <button @click="window.activeTab = 'ec'"
+                          :class="window.activeTab === 'ec' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
+                          class="px-4 py-2 rounded-t-lg font-semibold transition">
+                    🛡️ 纠删码配置
+                  </button>
+                  <button @click="window.activeTab = 'encryption'"
+                          :class="window.activeTab === 'encryption' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
+                          class="px-4 py-2 rounded-t-lg font-semibold transition">
+                    🔐 磁盘加密
+                  </button>
+                  <button @click="window.activeTab = 'raid'"
+                          :class="window.activeTab === 'raid' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
+                          class="px-4 py-2 rounded-t-lg font-semibold transition">
+                    📦 RAID管理
+                  </button>
                 </div>
-                <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                  <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-full transition-all"
-                       :style="{ width: disk.percent + '%' }"></div>
+
+                <!-- 纠删码配置 -->
+                <div v-if="window.activeTab === 'ec'" class="space-y-4">
+                  <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                    <div class="flex items-start gap-3">
+                      <span class="text-2xl">ℹ️</span>
+                      <div>
+                        <h4 class="font-semibold text-blue-900 mb-1">什么是纠删码?</h4>
+                        <p class="text-sm text-blue-800">纠删码(Erasure Coding)是一种数据保护技术,可以在部分硬盘损坏时恢复数据。配置后,数据会被分散存储在多个硬盘上。</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 当前配置状态 -->
+                  <div class="bg-white border rounded-lg p-4 shadow-sm">
+                    <h4 class="font-semibold mb-3">当前配置状态</h4>
+                    <div v-if="ecStatus.is_configured" class="space-y-2">
+                      <div class="flex items-center gap-2">
+                        <span :class="ecStatus.is_healthy ? 'text-green-600' : 'text-red-600'" class="text-2xl">
+                          {{ ecStatus.is_healthy ? '✅' : '⚠️' }}
+                        </span>
+                        <span class="font-semibold">{{ ecStatus.is_healthy ? '系统健康' : '系统异常' }}</span>
+                      </div>
+                      <div class="text-sm text-gray-600">
+                        配置方案: Reed-Solomon ({{ ecStatus.k }}+{{ ecStatus.m }})
+                      </div>
+                      <div class="text-sm text-gray-600">
+                        参与磁盘: {{ ecStatus.config_disks?.length || 0 }} 个
+                      </div>
+                      <button @click="openECDetailConfig()"
+                              class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                        查看详细配置
+                      </button>
+                    </div>
+                    <div v-else class="text-gray-500">
+                      <p class="mb-3">尚未配置纠删码</p>
+                      <button @click="openECConfig()"
+                              class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+                        开始配置
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- EC卷健康监控 -->
+                  <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
+                       class="bg-red-50 border-l-4 border-red-500 p-4 rounded">
+                    <h4 class="font-semibold text-red-900 mb-2">⚠️ 系统警告</h4>
+                    <p class="text-sm text-red-800 mb-3">检测到 {{ ecStatus.lost_disks?.length || 0 }} 个硬盘离线</p>
+                    <button v-if="ecStatus.can_rebuild"
+                            class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+                      🚀 开始恢复
+                    </button>
+                    <p v-else class="text-sm text-red-900 font-semibold">
+                      ❌ 损坏硬盘数量超过冗余上限,数据可能已丢失
+                    </p>
+                  </div>
                 </div>
-                <div class="mt-2 text-xs text-gray-600">
-                  已用 {{ formatSize(disk.bytes_used) }} / 可用 {{ formatSize(disk.bytes_free) }}
+
+                <!-- 磁盘加密 -->
+                <div v-if="window.activeTab === 'encryption'" class="space-y-4">
+                  <div class="bg-purple-50 border-l-4 border-purple-500 p-4 rounded">
+                    <div class="flex items-start gap-3">
+                      <span class="text-2xl">ℹ️</span>
+                      <div>
+                        <h4 class="font-semibold text-purple-900 mb-1">什么是磁盘加密?</h4>
+                        <p class="text-sm text-purple-800">磁盘加密可以保护存储在硬盘上的数据,即使硬盘被盗也无法读取内容。建议对存储敏感数据的硬盘启用加密。</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="bg-white border rounded-lg p-4 shadow-sm">
+                    <h4 class="font-semibold mb-3">加密磁盘列表</h4>
+                    <div class="space-y-2">
+                      <div v-for="disk in availableDrives" :key="disk.drive"
+                           class="flex items-center justify-between p-3 border rounded hover:bg-gray-50">
+                        <div class="flex items-center gap-3">
+                          <span class="text-2xl">💾</span>
+                          <div>
+                            <div class="font-semibold">{{ disk.drive }}</div>
+                            <div class="text-xs text-gray-500">未加密</div>
+                          </div>
+                        </div>
+                        <button class="px-3 py-1 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
+                          启用加密
+                        </button>
+                      </div>
+                    </div>
+                    <button @click="openEncryptionConfig()"
+                            class="mt-4 px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">
+                      配置加密设置
+                    </button>
+                  </div>
+                </div>
+
+                <!-- RAID管理 -->
+                <div v-if="window.activeTab === 'raid'" class="space-y-4">
+                  <div class="bg-gray-50 border-l-4 border-gray-500 p-4 rounded">
+                    <div class="flex items-start gap-3">
+                      <span class="text-2xl">ℹ️</span>
+                      <div>
+                        <h4 class="font-semibold text-gray-900 mb-1">RAID 管理</h4>
+                        <p class="text-sm text-gray-800">RAID功能即将推出,敬请期待...</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -672,6 +976,73 @@
           <div class="start-menu-item" @click="logout">
             <span class="text-xl">🚪</span>
             <span>退出登录</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 上传文件对话框 -->
+      <div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div class="bg-white w-[600px] rounded-xl shadow-2xl overflow-hidden">
+          <div class="bg-gradient-to-r from-green-500 to-teal-500 text-white px-6 py-4 flex justify-between items-center">
+            <h3 class="text-lg font-bold">📤 上传文件</h3>
+            <button @click="showUploadDialog = false" class="text-white hover:text-gray-200 text-2xl">&times;</button>
+          </div>
+
+          <div class="p-6">
+            <!-- 拖拽区域 -->
+            <div class="border-4 border-dashed rounded-lg p-12 text-center transition-all"
+                 :class="dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'"
+                 @dragenter.prevent="dragOver = true"
+                 @dragover.prevent
+                 @dragleave.prevent="dragOver = false"
+                 @drop.prevent="handleDrop">
+              <div class="text-6xl mb-4">📁</div>
+              <p class="text-lg font-semibold text-gray-700 mb-2">拖拽文件到此处</p>
+              <p class="text-sm text-gray-500 mb-4">或</p>
+              <input type="file" ref="fileInput" class="hidden" multiple @change="handleFileInputChange">
+              <button @click="$refs.fileInput.click()"
+                      class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                选择文件
+              </button>
+            </div>
+
+            <!-- 已选文件列表 -->
+            <div v-if="uploadFiles.length > 0" class="mt-4">
+              <div class="text-sm font-semibold text-gray-700 mb-2">已选择 {{ uploadFiles.length }} 个文件:</div>
+              <div class="max-h-40 overflow-y-auto border rounded-lg">
+                <div v-for="(file, index) in uploadFiles" :key="index"
+                     class="px-3 py-2 border-b last:border-b-0 flex justify-between items-center hover:bg-gray-50">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xl">📄</span>
+                    <div>
+                      <div class="text-sm font-medium">{{ file.name }}</div>
+                      <div class="text-xs text-gray-500">{{ formatSize(file.size) }}</div>
+                    </div>
+                  </div>
+                  <button @click="uploadFiles.splice(index, 1)"
+                          class="text-red-500 hover:text-red-700">&times;</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 上传状态 -->
+            <div v-if="uploadStatus" class="mt-4 p-3 rounded-lg"
+                 :class="uploadStatus.includes('成功') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+              {{ uploadStatus }}
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="mt-6 flex justify-end gap-2">
+              <button @click="showUploadDialog = false"
+                      class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+                取消
+              </button>
+              <button @click="uploadDraggedFiles"
+                      :disabled="uploadFiles.length === 0"
+                      class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                开始上传 ({{ uploadFiles.length }})
+              </button>
+            </div>
           </div>
         </div>
       </div>
