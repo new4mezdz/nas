@@ -2,53 +2,88 @@ const { createApp } = Vue;
 
 createApp({
   data() {
-    return {
-      // ========== 用户认证 ==========
-      loggedIn: false,
-      user: { username: '', is_admin: false },
-      showRegister: false,
-      loginForm: { username: '', password: '' },
-      registerForm: { username: '', password: '', confirm: '' },
-      errorMessage: '',
-      infoMessage: '',
+  return {
+    // ========== 用户认证 ==========
+    loggedIn: false,
+    user: { username: '', is_admin: false },
+    showRegister: false,
+    loginForm: { username: '', password: '' },
+    registerForm: { username: '', password: '', confirm: '' },
+    errorMessage: '',
+    infoMessage: '',
 
-      // ========== 桌面系统 ==========
-      windows: [],
-      nextWindowId: 1,
-      maxZIndex: 100,
-      dragging: null,
+    // ========== 桌面系统 ==========
+    windows: [],
+    nextWindowId: 1,
+    maxZIndex: 100,
+    dragging: null,
 
-      // ========== 任务栏 ==========
-      showStartMenu: false,
-      currentTime: '',
+    // ========== 任务栏 ==========
+    showStartMenu: false,
+    currentTime: '',
 
-      // ========== 右键菜单 ==========
-      contextMenu: {
-        show: false,
-        x: 0,
-        y: 0,
-        items: []
-      },
+    // ========== 右键菜单 ==========
+    contextMenu: {
+      show: false,
+      x: 0,
+      y: 0,
+      items: []
+    },
 
-      // ========== 系统数据 ==========
-      systemInfo: {},
-      disks: [],
-      availableDrives: [],
-      ecStatus: { is_configured: false },
-      encryptionStatus: [],
+    // ========== 系统数据 ==========
+    systemInfo: {},
+    disks: [],
+    availableDrives: [],
+    ecStatus: { is_configured: false },
+    encryptionStatus: [],
 
-      // ========== 文件上传 ==========
-      showUploadDialog: false,
-      uploadFiles: [],
-      dragOver: false,
-      uploadStatus: '',
-      currentUploadWindow: null
-    };
+    // ========== 文件上传 ==========
+    showUploadDialog: false,
+    uploadFiles: [],
+    dragOver: false,
+    uploadStatus: '',
+    currentUploadWindow: null,
+
+    // ===== [修正] EC配置对话框状态 (放到正确的位置) =====
+    showEcSetupDialog: false,
+    ecSetupForm: {
+      k: 4,
+      m: 2,
+      selectedDisks: [],
+      capacityEstimate: null,
+      error: ''
+    }
+  };
+},
+
+  watch: {
+    'ecSetupForm.selectedDisks': {
+      deep: true,
+      handler() { this.getEcCapacityEstimate(); }
+    },
+    'ecSetupForm.k'() {
+      this.getEcCapacityEstimate();
+    }
   },
 
   methods: {
     // ==========================================
-    // 登录认证
+  // 在 methods 中添加
+async getEcCapacityEstimate() {
+    const { k, selectedDisks } = this.ecSetupForm;
+    if (k > 0 && selectedDisks.length > 0) {
+        try {
+            // 调用我们即将创建的后端API
+            const res = await axios.post('/api/ec_estimate', { k, disks: selectedDisks });
+            this.ecSetupForm.capacityEstimate = res.data;
+        } catch (error) {
+            console.error("容量预估失败:", error);
+            this.ecSetupForm.capacityEstimate = null;
+        }
+    } else {
+        this.ecSetupForm.capacityEstimate = null;
+    }
+},
     // ==========================================
     async login() {
       this.errorMessage = '';
@@ -1467,6 +1502,54 @@ shareSelected(window) {
   this.shareFile(window, file);
 },
 
+// 执行健康检查
+async performHealthCheck(window) {
+    try {
+        const response = await axios.get('/api/ec_health_check');
+        window.healthReport = response.data;
+
+        const total = response.data.total_files;
+        const healthy = response.data.healthy_files;
+        const atRisk = response.data.at_risk_files;
+        const corrupted = response.data.corrupted_files;
+
+        this.showToast(
+            `✅ 检查完成: 总文件 ${total}，健康 ${healthy}，风险 ${atRisk}，损坏 ${corrupted}`,
+            atRisk > 0 || corrupted > 0 ? 'warning' : 'success'
+        );
+    } catch (error) {
+        this.showToast(`❌ 健康检查失败: ${error.response?.data?.error || error.message}`, 'error');
+    }
+},
+
+// 批量恢复
+async batchRecover(window) {
+    if (!confirm('确认要批量修复所有可恢复的文件吗?此操作可能需要较长时间。')) {
+        return;
+    }
+
+    try {
+        this.showToast('🚀 正在批量修复文件...', 'info');
+
+        const response = await axios.post('/api/ec_batch_recover', {
+            auto_rebuild: true
+        });
+
+        const report = response.data.report;
+
+        this.showToast(
+            `✅ 修复完成: 成功 ${report.successfully_recovered}，失败 ${report.failed_recoveries.length}`,
+            'success'
+        );
+
+        // 重新执行健康检查
+        await this.performHealthCheck(window);
+
+    } catch (error) {
+        this.showToast(`❌ 批量修复失败: ${error.response?.data?.error || error.message}`, 'error');
+    }
+},
+
 
    async unlockDisk(drive, inFileManagerWindow = null) {
     const password = prompt(`请输入磁盘 [${drive}] 的解锁密码:`);
@@ -1687,20 +1770,101 @@ async decryptDiskPermanently(drive) {
       this.showStartMenu = false;
     },
 
-    openECConfig() {
-      // 打开磁盘管理窗口并切换到纠删码标签页
-      const window = this.createWindow('disks', '磁盘管理', '💿', {
-        activeTab: 'ec',
-        width: 900,
-        height: 650
-      });
-      this.showStartMenu = false;
-    },
+    // 找到并替换原来的 openECConfig 方法
+openECConfig() {
+  // 不再重新打开窗口，而是调用新的方法打开配置对话框
+  this.openEcSetupDialog();
+},
+    // 建议将这些新方法放在 openECConfig() 方法的后面
 
-    openECDetailConfig() {
-      alert('打开纠删码详细配置\n(跳转到传统配置界面)');
-    },
+// [新增] 打开EC配置对话框
+openEcSetupDialog() {
+  // 重置表单为默认值
+  this.ecSetupForm = {
+    k: 4,
+    m: 2,
+    selectedDisks: [],
+    capacityEstimate: null,
+    error: ''
+  };
+  // 从可用磁盘中筛选出未参与EC且未加密的磁盘作为选项
+  this.ecSetupForm.availableDisks = this.availableDrives.filter(d => {
+    const encStatus = this.encryptionStatus.find(s => s.drive === d.drive);
+    return !this.ecStatus.config_disks?.includes(d.drive) && !(encStatus && encStatus.is_configured);
+  });
+  this.showEcSetupDialog = true;
+},
 
+// [新增] 关闭EC配置对话框
+closeEcSetupDialog() {
+  this.showEcSetupDialog = false;
+},
+
+// [新增] 提交EC配置
+async submitEcConfig() {
+  const { k, m, selectedDisks } = this.ecSetupForm;
+  this.ecSetupForm.error = '';
+
+  if (selectedDisks.length < k + m) {
+    this.ecSetupForm.error = `磁盘数量不足，需要 ${k + m} 个，当前选中 ${selectedDisks.length} 个。`;
+    return;
+  }
+
+  try {
+    await axios.post('/api/ec_config', {
+      scheme: 'rs',
+      k: k,
+      m: m,
+      disks: selectedDisks
+    });
+    this.showToast('✅ 纠删码配置成功！', 'success');
+    this.closeEcSetupDialog();
+    // 重新加载数据以更新桌面状态
+    await this.loadData();
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    this.ecSetupForm.error = `配置失败: ${errorMsg}`;
+    this.showToast(`❌ 配置失败: ${errorMsg}`, 'error');
+  }
+},
+
+    // 在 methods 对象中，找到并替换 openECDetailConfig
+openECDetailConfig() {
+  // 不再是 alert，而是创建一个新类型的窗口
+  const window = this.createWindow('ec-detail', '纠删码详细配置', '🛡️', {
+    width: 700,
+    height: 550,
+    // 将当前的 ecStatus 数据传递给新窗口
+    ecDetails: { ...this.ecStatus }
+  });
+  this.showStartMenu = false;
+},
+
+   // 建议放在 openECDetailConfig 方法的后面
+
+// [新增] 删除EC配置的方法
+async deleteEcConfig(window) {
+  // 风险操作，需要用户确认
+  if (!confirm('⚠️ 警告：删除配置将不可恢复，但不会删除已编码的数据文件。您确定要删除纠删码配置吗？')) {
+    return;
+  }
+
+  try {
+    this.showToast('🔄 正在删除配置...', 'info');
+    await axios.delete('/api/ec_config');
+    this.showToast('✅ 纠删码配置已成功删除', 'success');
+
+    // 重新加载系统数据以更新状态
+    await this.loadData();
+
+    // 关闭当前的详细信息窗口
+    this.closeWindow(window.id);
+
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    this.showToast(`❌ 删除失败: ${errorMsg}`, 'error');
+  }
+},
     openEncryptionConfig() {
       alert('打开磁盘加密配置\n(跳转到传统配置界面)');
     },

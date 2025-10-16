@@ -260,7 +260,107 @@ def token_required(f=None, admin_only=False):
     return decorator
 
 
+# 在文件末尾 if __name__ == '__main__': 之前添加
 
+# ========== NAS Center 集成接口 ==========
+
+@app.route('/api/node-info', methods=['GET'])
+def get_node_info():
+    """返回节点基本信息 - 供 NAS Center 调用"""
+    return jsonify({
+        'id': 'node-5',
+        'name': '我的本地节点',
+        'ip': '127.0.0.1',
+        'port': 5000,
+        'status': 'online',
+        'version': '1.0.0'
+    })
+
+
+@app.route('/api/system-stats', methods=['GET'])
+def get_system_stats():
+    """返回系统统计信息 - 供 NAS Center 调用"""
+    try:
+        from utils import get_sys_info, get_disk_info
+
+        # 获取系统信息
+        sys_info = get_sys_info()
+        disk_info = get_disk_info()
+
+        # 计算磁盘总量和使用量
+        total_gb = 0
+        used_gb = 0
+
+        for disk in disk_info:
+            if disk.get('mount', '').upper() not in ['C:/', '/']:  # 排除系统盘
+                total = disk.get('bytes_total', 0) or disk.get('total', 0)
+                used = disk.get('bytes_used', 0) or disk.get('used', 0)
+
+                total_gb += total / (1024 ** 3)  # 转换为 GB
+                used_gb += used / (1024 ** 3)
+
+        disk_percent = round((used_gb / total_gb * 100) if total_gb > 0 else 0, 2)
+
+        return jsonify({
+            'cpu_percent': sys_info.get('cpu_percent', 0),
+            'memory_percent': sys_info.get('mem_percent', 0),
+            'disk_percent': disk_percent,
+            'disk_total_gb': round(total_gb, 2),
+            'disk_used_gb': round(used_gb, 2),
+            'disk_free_gb': round(total_gb - used_gb, 2),
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        print(f"[ERROR] 获取系统统计失败: {e}")
+        return jsonify({
+            'cpu_percent': 0,
+            'memory_percent': 0,
+            'disk_percent': 0,
+            'disk_total_gb': 0,
+            'disk_used_gb': 0,
+            'disk_free_gb': 0,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/disks', methods=['GET'])
+def get_disks_info():
+    """返回详细磁盘信息 - 供 NAS Center 调用"""
+    try:
+        from utils import get_disk_info
+
+        # 获取所有磁盘信息
+        all_disks = get_disk_info()
+
+        # 过滤并格式化数据
+        formatted_disks = []
+        for disk in all_disks:
+            mount = disk.get('mount', '').upper().replace('\\', '/')
+
+            # 排除系统盘
+            if mount in ['C:/', '/']:
+                continue
+
+            total = disk.get('bytes_total', 0) or disk.get('total', 0)
+            used = disk.get('bytes_used', 0) or disk.get('used', 0)
+            free = disk.get('bytes_free', 0) or disk.get('free', 0)
+
+            formatted_disks.append({
+                'mount': disk.get('mount', ''),
+                'total_gb': round(total / (1024 ** 3), 2),
+                'used_gb': round(used / (1024 ** 3), 2),
+                'free_gb': round(free / (1024 ** 3), 2),
+                'usage_percent': round((used / total * 100) if total > 0 else 0, 2),
+                'filesystem': disk.get('fstype', 'unknown'),
+                'device': disk.get('device', 'unknown')
+            })
+
+        return jsonify(formatted_disks)
+
+    except Exception as e:
+        print(f"[ERROR] 获取磁盘信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
 # ===== 用户注册/登录 =====
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -303,7 +403,24 @@ def login():
         'is_admin': bool(user['is_admin'])
     }})
 
+# [新增] EC容量预估接口
+@app.route("/api/ec_estimate", methods=["POST"])
+@token_required(admin_only=True)
+def api_ec_estimate():
+    """根据传入的k值和磁盘列表，实时估算可用容量"""
+    data = request.get_json()
+    k = int(data.get("k", 0))
+    disks = data.get("disks", [])
 
+    if k <= 0 or not disks:
+        return jsonify({"error": "缺少 k 或 disks 参数"}), 400
+
+    try:
+        # 复用已有的 _capacity_estimate 帮助函数
+        estimate = _capacity_estimate(disks, k)
+        return jsonify(estimate)
+    except Exception as e:
+        return jsonify({"error": f"计算容量失败: {str(e)}"}), 500
 # ===== 用户管理后台 =====
 @app.route('/api/users', methods=['GET'])
 @token_required(admin_only=True)
@@ -608,10 +725,177 @@ def decrypt_file_api():
     except Exception as e:
         return jsonify({'error': f'解密失败: {str(e)}'}), 500
 # 文件: app.py (添加一个新的删除路由，用于单文件删除)
+@app.route('/api/ec_health_check', methods=['GET'])
+@token_required(admin_only=True)
+def ec_health_check():
+    """
+    全面的EC卷健康检查
+    """
+    cfg = _load_json(EC_CFG_PATH, {})
+    if not cfg:
+        return jsonify({"is_configured": False})
 
+    idx = _load_json(EC_IDX_PATH, {"files": {}})
+    k, m = cfg.get("k", 0), cfg.get("m", 0)
+    config_disks = cfg.get("disks", [])
+
+    # 检查每个文件的健康状况
+    health_report = {
+        "total_files": len(idx.get("files", {})),
+        "healthy_files": 0,
+        "at_risk_files": 0,  # 丢失分片数 <= m 但 > 0
+        "corrupted_files": 0,  # 丢失分片数 > m
+        "file_details": []
+    }
+
+    for name, meta in idx.get("files", {}).items():
+        missing_shards = []
+        available_shards = []
+
+        for i, disk in enumerate(meta["disks"][:meta["k"] + meta["m"]]):
+            enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
+            blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+
+            if os.path.exists(blk):
+                available_shards.append(i)
+            else:
+                missing_shards.append(i)
+
+        missing_count = len(missing_shards)
+
+        if missing_count == 0:
+            health_report["healthy_files"] += 1
+            status = "healthy"
+        elif missing_count <= m:
+            health_report["at_risk_files"] += 1
+            status = "at_risk"
+        else:
+            health_report["corrupted_files"] += 1
+            status = "corrupted"
+
+        health_report["file_details"].append({
+            "name": name,
+            "status": status,
+            "missing_count": missing_count,
+            "available_count": len(available_shards),
+            "missing_shards": missing_shards,
+            "can_recover": missing_count <= m
+        })
+
+    return jsonify(health_report)
 # 文件: app.py (新增 /api/rename 路由)
 
-# 文件: app.py (替换 @app.route('/api/rename') 路由)
+@app.route('/api/ec_batch_recover', methods=['POST'])
+@token_required(admin_only=True)
+def ec_batch_recover():
+    """
+    批量恢复所有可恢复的文件
+    """
+    data = request.get_json()
+    auto_rebuild = data.get('auto_rebuild', True)
+
+    cfg = _load_json(EC_CFG_PATH, {})
+    if not cfg:
+        return jsonify({"error": "未配置纠删码"}), 400
+
+    idx = _load_json(EC_IDX_PATH, {"files": {}})
+
+    recovery_report = {
+        "total_processed": 0,
+        "successfully_recovered": 0,
+        "failed_recoveries": [],
+        "skipped_files": []
+    }
+
+    for name, meta in idx.get("files", {}).items():
+        k, m = meta["k"], meta["m"]
+        disks = meta["disks"]
+
+        # 检查缺失的分片
+        missing_indices = []
+        shard_dict = {}
+        meta_obj = None
+
+        for i, disk in enumerate(disks[:k + m]):
+            enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
+            blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+
+            if os.path.exists(blk):
+                with open(blk, "rb") as f:
+                    shard_dict[i] = f.read()
+            else:
+                missing_indices.append(i)
+
+            if not meta_obj:
+                mj = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
+                if os.path.exists(mj):
+                    with open(mj, "r", encoding="utf-8") as mf:
+                        meta_obj = json.load(mf)
+
+        recovery_report["total_processed"] += 1
+
+        # 如果没有缺失,跳过
+        if not missing_indices:
+            recovery_report["skipped_files"].append({
+                "name": name,
+                "reason": "no_missing_shards"
+            })
+            continue
+
+        # 如果缺失过多,无法恢复
+        if len(missing_indices) > m:
+            recovery_report["failed_recoveries"].append({
+                "name": name,
+                "reason": "too_many_missing_shards",
+                "missing_count": len(missing_indices)
+            })
+            continue
+
+        # 如果可用分片不足
+        if len(shard_dict) < k or not meta_obj:
+            recovery_report["failed_recoveries"].append({
+                "name": name,
+                "reason": "insufficient_shards",
+                "available_count": len(shard_dict)
+            })
+            continue
+
+        # 执行恢复
+        try:
+            # 解码重建原始数据
+            data_bytes = _decode_from_dict(shard_dict, meta_obj)
+
+            # 重新编码生成所有分片
+            all_shards = rs_encode(data_bytes, k, m)
+
+            # 只写入缺失的分片
+            for missing_idx in missing_indices:
+                disk = disks[missing_idx]
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
+                os.makedirs(enc_dir, exist_ok=True)
+
+                blk_path = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{missing_idx}")
+                with open(blk_path, "wb") as f:
+                    f.write(all_shards[missing_idx])
+
+                # 同时更新meta文件
+                meta_path = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
+                with open(meta_path, "w", encoding="utf-8") as mf:
+                    json.dump(meta_obj, mf, ensure_ascii=False)
+
+            recovery_report["successfully_recovered"] += 1
+
+        except Exception as e:
+            recovery_report["failed_recoveries"].append({
+                "name": name,
+                "reason": "recovery_exception",
+                "error": str(e)
+            })
+
+    return jsonify({
+        "success": True,
+        "report": recovery_report
+    })
 
 @app.route('/api/rename', methods=['POST'])
 @token_required()
@@ -628,11 +912,58 @@ def api_rename_entry():
 
     if '..' in new_name or '/' in new_name or '\\' in new_name:
         return jsonify({"error": "文件名包含非法字符"}), 400
-
-    # 1. 优先处理 EC 卷
+    # ✅ EC 卷重命名逻辑
     if _is_ec_volume(path):
-        # ⚠️ EC 卷重命名逻辑待实现
-        return jsonify({"error": "EC卷重命名功能暂不支持"}), 501
+        try:
+            # 从路径中提取逻辑文件名
+            logical_name = path.replace("\\", "/").strip("/")
+            if logical_name.startswith("ec_volume/"):
+                logical_name = logical_name[len("ec_volume/"):]
+
+            # 读取索引
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+
+            if logical_name not in idx.get("files", {}):
+                return jsonify({"error": "EC卷文件不存在"}), 404
+
+            # 构建新的逻辑路径
+            parent_dir = os.path.dirname(logical_name)
+            new_logical_name = os.path.join(parent_dir, new_name).replace("\\", "/")
+
+            if new_logical_name in idx.get("files", {}):
+                return jsonify({"error": "目标文件名已存在"}), 400
+
+            # 获取文件元数据
+            file_meta = idx["files"][logical_name]
+            disks = file_meta.get("disks", [])
+            base_old_name = os.path.basename(logical_name)
+
+            # 在每个磁盘上重命名分片文件
+            for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
+
+                # 重命名 .blk_X 文件
+                old_blk = os.path.join(enc_dir, f"{base_old_name}.blk_{i}")
+                new_blk = os.path.join(enc_dir, f"{new_name}.blk_{i}")
+
+                if os.path.exists(old_blk):
+                    os.rename(old_blk, new_blk)
+
+                # 重命名 .meta.json 文件
+                old_meta = os.path.join(enc_dir, f"{base_old_name}.meta.json")
+                new_meta = os.path.join(enc_dir, f"{new_name}.meta.json")
+
+                if os.path.exists(old_meta):
+                    os.rename(old_meta, new_meta)
+
+            # 更新索引
+            idx["files"][new_logical_name] = idx["files"].pop(logical_name)
+            _save_json(EC_IDX_PATH, idx)
+
+            return jsonify({"success": True, "message": "EC卷文件重命名成功"})
+
+        except Exception as e:
+            return jsonify({"error": f"EC卷重命名失败: {str(e)}"}), 500
 
     # 2. 物理盘重命名
     else:
@@ -1262,16 +1593,44 @@ def api_ec_config():
     # 新增：处理DELETE请求
     if request.method == "DELETE":
         try:
-            # 删除配置文件
+            # ✅ 1. 读取配置以获取磁盘列表
+            cfg = _load_json(EC_CFG_PATH, {})
+            disks = cfg.get("disks", [])
+
+            # ✅ 2. 清理各磁盘上的 encoded 目录
+            cleaned_disks = []
+            failed_disks = []
+            for disk in disks:
+                try:
+                    encoded_dir = os.path.join(disk, "encoded")
+                    if os.path.exists(encoded_dir):
+                        import shutil
+                        shutil.rmtree(encoded_dir)
+                        cleaned_disks.append(disk)
+                        print(f"✅ 已清理磁盘 {disk} 的 encoded 目录")
+                except Exception as e:
+                    failed_disks.append({"disk": disk, "error": str(e)})
+                    print(f"⚠️ 清理磁盘 {disk} 失败: {e}")
+
+            # ✅ 3. 删除配置文件
             if os.path.exists(EC_CFG_PATH):
                 os.remove(EC_CFG_PATH)
-            # 删除索引文件
+
+            # ✅ 4. 删除索引文件
             if os.path.exists(EC_IDX_PATH):
                 os.remove(EC_IDX_PATH)
-            return jsonify({"success": True, "message": "纠删码配置已成功删除"})
+
+            # ✅ 5. 返回详细结果
+            return jsonify({
+                "success": True,
+                "message": "纠删码配置已成功删除",
+                "cleaned_disks": cleaned_disks,
+                "failed_disks": failed_disks,
+                "total_cleaned": len(cleaned_disks)
+            })
+
         except Exception as e:
             return jsonify({"error": f"删除配置失败: {str(e)}"}), 500
-
     # ----- 原有的GET和POST逻辑保持不变 -----
     def _capacity_estimate(disks_norm: list, k: int):
         info = get_disk_info()

@@ -921,166 +921,8 @@
               </div>
             </div>
 
-            <!-- 磁盘管理 --><!-- 用户管理 -->
-            <div v-else-if="window.type === 'users'" class="h-full flex flex-col overflow-hidden">
-              <div class="flex-1 overflow-auto p-6 space-y-4">
-                <div class="flex items-center justify-between mb-6">
-                  <h3 class="text-2xl font-bold flex items-center gap-2">
-                    <span class="text-3xl">👥</span>
-                    用户管理
-                  </h3>
-                  <button @click="loadUsers(window)"
-                          class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2">
-                    🔄 刷新
-                  </button>
-                </div>
 
-                <!-- 加载中 -->
-                <div v-if="window.loading" class="flex items-center justify-center py-20">
-                  <div class="text-center">
-                    <div class="loading mb-4"></div>
-                    <p class="text-gray-600">正在加载用户列表...</p>
-                  </div>
-                </div>
 
-                <!-- 用户列表 -->
-                <div v-else class="bg-white rounded-lg shadow-sm border overflow-hidden">
-                  <table class="w-full">
-                    <thead class="bg-gray-50 border-b">
-                      <tr>
-                        <th class="text-left p-4 font-semibold text-gray-700">用户名</th>
-                        <th class="text-left p-4 font-semibold text-gray-700">权限</th>
-                        <th class="text-left p-4 font-semibold text-gray-700">状态</th>
-                        <th class="text-left p-4 font-semibold text-gray-700">注册时间</th>
-                        <th class="text-left p-4 font-semibold text-gray-700">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="user in window.users"
-                          :key="user.id"
-                          class="border-b last:border-b-0 hover:bg-gray-50 transition">
-                        <!-- 用户名 -->
-                        <td class="p-4">
-                          <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                              {{ user.username.charAt(0).toUpperCase() }}
-                            </div>
-                            <div>
-                              <div class="font-semibold text-gray-800">{{ user.username }}</div>
-                              <div class="text-xs text-gray-500">ID: {{ user.id }}</div>
-                            </div>
-                          </div>
-                        </td>
-
-                        <!-- 权限 -->
-                        <td class="p-4">
-                          <span v-if="user.is_admin"
-                                class="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-semibold">
-                            👑 管理员
-                          </span>
-                          <span v-else
-                                class="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-semibold">
-                            👤 普通用户
-                          </span>
-                        </td>
-
-                        <!-- 状态 -->
-                        <td class="p-4">
-                          <span v-if="user.is_active"
-                                class="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
-                            ✅ 已启用
-                          </span>
-                          <span v-else
-                                class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">
-                            ⛔ 已禁用
-                          </span>
-                        </td>
-
-                        <!-- 注册时间 -->
-                        <td class="p-4 text-sm text-gray-600">
-                          {{ user.registered_at }}
-                        </td>
-
-                        <!-- 操作 -->
-                        <td class="p-4">
-                          <div class="flex gap-2">
-                            <!-- 切换状态 -->
-                            <button @click="toggleUserActive(window, user)"
-                                    :disabled="user.username === $root.user.username"
-                                    :class="user.is_active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600'"
-                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    :title="user.is_active ? '禁用用户' : '启用用户'">
-                              {{ user.is_active ? '🚫 禁用' : '✅ 启用' }}
-                            </button>
-
-                            <!-- 切换管理员 -->
-                            <button @click="toggleUserAdmin(window, user)"
-                                    :disabled="user.username === $root.user.username"
-                                    :class="user.is_admin ? 'bg-gray-500 hover:bg-gray-600' : 'bg-purple-500 hover:bg-purple-600'"
-                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    :title="user.is_admin ? '取消管理员' : '授予管理员'">
-                              {{ user.is_admin ? '📉 降级' : '📈 升级' }}
-                            </button>
-
-                            <!-- 重置密码 -->
-                            <button @click="resetUserPassword(window, user)"
-                                    class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
-                                    title="重置密码">
-                              🔑 重置
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  <!-- 空状态 -->
-                  <div v-if="window.users.length === 0"
-                       class="text-center py-12 text-gray-500">
-                    <div class="text-6xl mb-4">👥</div>
-                    <p class="text-lg">暂无用户</p>
-                  </div>
-                </div>
-
-                <!-- 统计信息 -->
-                <div class="grid grid-cols-4 gap-4 mt-6">
-                  <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
-                    <div class="text-sm opacity-90 mb-1">总用户数</div>
-                    <div class="text-3xl font-bold">{{ window.users.length }}</div>
-                  </div>
-                  <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
-                    <div class="text-sm opacity-90 mb-1">管理员</div>
-                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_admin).length }}</div>
-                  </div>
-                  <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
-                    <div class="text-sm opacity-90 mb-1">活跃用户</div>
-                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_active).length }}</div>
-                  </div>
-                  <div class="bg-gradient-to-br from-red-500 to-red-600 text-white p-4 rounded-lg shadow-lg">
-                    <div class="text-sm opacity-90 mb-1">禁用用户</div>
-                    <div class="text-3xl font-bold">{{ window.users.filter(u => !u.is_active).length }}</div>
-                  </div>
-                </div>
-
-                <!-- 提示信息 -->
-                <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                  <div class="flex items-start gap-3">
-                    <span class="text-2xl">💡</span>
-                    <div class="text-sm text-blue-800">
-                      <p class="font-semibold mb-1">管理说明:</p>
-                      <ul class="list-disc list-inside space-y-1">
-                        <li>禁用用户后,该用户将无法登录系统</li>
-                        <li>管理员可以管理其他用户,但不能修改自己的状态</li>
-                        <li>重置密码后,请及时通知用户新密码</li>
-                        <li>系统至少需要保留一个活跃的管理员账号</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 磁盘管理 -->
 
             <!-- 磁盘管理 -->
             <div v-else-if="window.type === 'disks'" class="h-full flex flex-col overflow-hidden">
@@ -1165,6 +1007,44 @@
                       ❌ 损坏硬盘数量超过冗余上限,数据可能已丢失
                     </p>
                   </div>
+                    <div class="bg-white border rounded-lg p-4 shadow-sm">
+    <div class="flex justify-between items-center mb-3">
+      <h4 class="font-semibold">🏥 EC卷健康检查</h4>
+      <button @click="performHealthCheck(window)"
+              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+        🔍 执行检查
+      </button>
+    </div>
+
+    <div v-if="window.healthReport" class="space-y-2">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-green-50 p-3 rounded">
+          <div class="text-xs text-green-600">健康文件</div>
+          <div class="text-2xl font-bold text-green-700">
+            {{ window.healthReport.healthy_files }}
+          </div>
+        </div>
+        <div class="bg-yellow-50 p-3 rounded">
+          <div class="text-xs text-yellow-600">风险文件</div>
+          <div class="text-2xl font-bold text-yellow-700">
+            {{ window.healthReport.at_risk_files }}
+          </div>
+        </div>
+        <div class="bg-red-50 p-3 rounded">
+          <div class="text-xs text-red-600">损坏文件</div>
+          <div class="text-2xl font-bold text-red-700">
+            {{ window.healthReport.corrupted_files }}
+          </div>
+        </div>
+      </div>
+
+      <button v-if="window.healthReport.at_risk_files > 0"
+              @click="batchRecover(window)"
+              class="w-full mt-3 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600">
+        🔧 批量修复风险文件
+      </button>
+    </div>
+  </div>
                 </div>
 
                 <!-- 磁盘加密 -->
@@ -1519,6 +1399,85 @@
     </div>
   </div>
 </div>
+              <div v-else-if="window.type === 'ec-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
+                <div class="px-6 py-4 border-b bg-white">
+                  <h3 class="text-xl font-bold flex items-center gap-2">
+                    <span class="text-3xl">🛡️</span>
+                    纠删码详细配置
+                  </h3>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-6 space-y-4">
+                  <div class="bg-white border rounded-lg p-4 shadow-sm">
+                    <h4 class="font-semibold mb-3 text-gray-700">状态总览</h4>
+                    <div class="flex items-center gap-3">
+                      <span class="text-4xl">
+                        {{ window.ecDetails.is_healthy ? '✅' : '⚠️' }}
+                      </span>
+                      <div>
+                        <div class="font-bold text-lg" :class="window.ecDetails.is_healthy ? 'text-green-600' : 'text-red-600'">
+                          {{ window.ecDetails.is_healthy ? '系统健康' : '系统异常' }}
+                        </div>
+                        <div class="text-sm text-gray-500">
+                          {{ window.ecDetails.is_healthy ? '所有配置的磁盘都在线。' : `有 ${window.ecDetails.lost_disks.length} 个磁盘离线！` }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="bg-white border rounded-lg p-4 shadow-sm">
+                    <h4 class="font-semibold mb-3 text-gray-700">配置参数</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div class="text-gray-500">纠删码方案</div>
+                        <div class="font-semibold text-gray-800">Reed-Solomon</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">数据块 (K) / 校验块 (M)</div>
+                        <div class="font-semibold text-gray-800">{{ window.ecDetails.k }} + {{ window.ecDetails.m }}</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">容错能力</div>
+                        <div class="font-semibold text-gray-800">允许 {{ window.ecDetails.m }} 个磁盘损坏</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">数据可恢复性</div>
+                        <div class="font-semibold" :class="window.ecDetails.can_rebuild ? 'text-orange-600' : 'text-green-600'">
+                          {{ window.ecDetails.can_rebuild ? '可恢复' : '健康' }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="bg-white border rounded-lg shadow-sm">
+                    <div class="p-4 border-b font-semibold text-gray-700">
+                      参与磁盘 ({{ window.ecDetails.config_disks.length }} 个)
+                    </div>
+                    <div class="max-h-48 overflow-y-auto">
+                      <ul>
+                        <li v-for="disk in window.ecDetails.config_disks" :key="disk" class="px-4 py-3 border-b last:border-b-0 flex items-center justify-between">
+                          <span class="font-mono font-semibold">{{ disk }}</span>
+                          <span v-if="window.ecDetails.lost_disks.includes(disk)" class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">
+                            ❌ 离线
+                          </span>
+                          <span v-else class="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                            ✔️ 在线
+                          </span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-md mt-6">
+                      <h4 class="font-semibold text-red-900 mb-2">危险操作</h4>
+                      <p class="text-sm text-red-800 mb-3">删除配置后，您将需要重新设置纠删码。此操作无法撤销。</p>
+                      <button @click="deleteEcConfig(window)"
+                              class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                        🗑️ 删除配置
+                      </button>
+                  </div>
+                </div>
+              </div>
 
           </div>
         </div>
@@ -1698,6 +1657,71 @@
         </div>
       </div>
     </div>
+      <div v-if="showEcSetupDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
+  <div class="bg-white w-[700px] rounded-xl shadow-2xl overflow-hidden flex flex-col" style="max-height: 90vh;">
+    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex justify-between items-center">
+      <h3 class="text-lg font-bold">🛡️ 配置纠删码 (Reed-Solomon)</h3>
+      <button @click="closeEcSetupDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+    </div>
+
+    <div class="p-6 overflow-y-auto space-y-6">
+      <div class="grid grid-cols-2 gap-6">
+        <div class="bg-gray-50 p-4 rounded-lg border">
+          <label class="block text-sm font-semibold text-gray-700 mb-2">数据块 (K)</label>
+          <input type="number" v-model.number="ecSetupForm.k" min="1" class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
+          <p class="text-xs text-gray-500 mt-2">原始数据将被拆分成的份数。</p>
+        </div>
+        <div class="bg-gray-50 p-4 rounded-lg border">
+          <label class="block text-sm font-semibold text-gray-700 mb-2">校验块 (M)</label>
+          <input type="number" v-model.number="ecSetupForm.m" min="1" class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none">
+          <p class="text-xs text-gray-500 mt-2">生成的冗余数据份数，最多可容忍 M 个磁盘损坏。</p>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">选择磁盘 (至少选择 K+M = {{ ecSetupForm.k + ecSetupForm.m }} 个)</label>
+        <div class="border rounded-lg max-h-60 overflow-y-auto p-2 space-y-1 bg-white">
+          <div v-for="disk in ecSetupForm.availableDisks" :key="disk.drive" class="flex items-center p-2 rounded hover:bg-blue-50">
+            <input type="checkbox" :value="disk.drive" v-model="ecSetupForm.selectedDisks" :id="'disk-'+disk.drive" class="h-4 w-4 mr-3">
+            <label :for="'disk-'+disk.drive" class="flex-1 cursor-pointer">
+              <span class="font-mono font-bold">{{ disk.drive }}</span>
+              <span class="text-sm text-gray-600 ml-2"> (可用: {{ formatSize(disk.free) }})</span>
+            </label>
+          </div>
+          <div v-if="ecSetupForm.availableDisks.length === 0" class="p-4 text-center text-gray-500">
+            没有可用的未加密、未配置EC的磁盘。
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">已选择 {{ ecSetupForm.selectedDisks.length }} 个磁盘。</p>
+      </div>
+
+      <div v-if="ecSetupForm.capacityEstimate" class="bg-green-50 border-l-4 border-green-500 p-4 rounded-md">
+          <h4 class="font-semibold text-green-800 mb-2">容量预估</h4>
+          <div class="text-sm text-green-700 space-y-1">
+              <p>可用容量: <strong class="text-lg">{{ formatSize(ecSetupForm.capacityEstimate.usable_free_bytes) }}</strong></p>
+              <p class="text-xs">基于最小磁盘可用空间 ({{ formatSize(ecSetupForm.capacityEstimate.min_disk_free) }}) 计算。</p>
+              <p v-if="ecSetupForm.capacityEstimate.imbalance_ratio > 1.2" class="text-xs text-yellow-700 font-bold mt-1">
+                  ⚠️ 警告：所选磁盘容量差异较大，可能会浪费大容量磁盘的空间。
+              </p>
+          </div>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+      <div class="text-sm text-red-600 h-5">
+        {{ ecSetupForm.error }}
+      </div>
+      <div class="flex gap-3">
+        <button @click="closeEcSetupDialog" class="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">取消</button>
+        <button @click="submitEcConfig"
+                :disabled="ecSetupForm.selectedDisks.length < ecSetupForm.k + ecSetupForm.m"
+                class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          确认配置
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
   </div>
 
   <script src="/static/desktop.app.js"></script>
