@@ -1,9 +1,4 @@
 {
   "encrypted_drives": [],
-  "disks": {
-    "g:\\": {
-      "password_salt": "5852896f64b6629d642f97e0f5cf5e94",
-      "password_hash": "f30b38481d0339b395f35e0b36baef30954d21beb903d8745a3340295604f1e7"
-    }
-  }
+  "disks": {}
 }

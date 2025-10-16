@@ -182,6 +182,8 @@ def init_share_table():
 with app.app_context():
     init_share_table()
 
+
+
 # ===== 静态页面路由 =====
 @app.route("/")
 def index():
@@ -511,6 +513,100 @@ def admin_reset_password():
     return jsonify({"success": True})
 
 
+# app.py - 添加以下路由（和之前一样，不需要修改）
+
+@app.route('/api/file/encrypt', methods=['POST'])
+@token_required()
+def encrypt_file_api():
+    """加密单个文件或文件夹"""
+    data = request.get_json()
+    file_path = data.get('file_path', '').strip()
+    password = data.get('password', '').strip()
+    is_folder = data.get('is_folder', False)
+
+    if not file_path or not password:
+        return jsonify({'error': '文件路径和密码不能为空'}), 400
+
+    try:
+        from common import get_actual_file_path, is_path_allowed
+        actual_path = get_actual_file_path(file_path)
+
+        if not actual_path or not os.path.exists(actual_path):
+            return jsonify({'error': '文件或文件夹不存在'}), 404
+
+        if not is_path_allowed(actual_path):
+            return jsonify({'error': '路径不在允许的目录中'}), 403
+
+        # 文件夹加密
+        if is_folder:
+            results = encryption_manager.encrypt_folder_standalone(actual_path, password)
+            return jsonify({
+                'success': True,
+                'message': f'文件夹加密完成: 成功 {results["success"]} 个，失败 {results["failed"]} 个',
+                'details': results
+            })
+
+        # 单文件加密
+        else:
+            success = encryption_manager.encrypt_file_standalone(actual_path, password)
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': f'文件加密成功: {os.path.basename(file_path)}'
+                })
+            else:
+                return jsonify({'error': '文件加密失败'}), 500
+
+    except Exception as e:
+        return jsonify({'error': f'加密失败: {str(e)}'}), 500
+
+
+@app.route('/api/file/decrypt', methods=['POST'])
+@token_required()
+def decrypt_file_api():
+    """解密单个文件或文件夹"""
+    data = request.get_json()
+    file_path = data.get('file_path', '').strip()
+    password = data.get('password', '').strip()
+    is_folder = data.get('is_folder', False)
+
+    if not file_path or not password:
+        return jsonify({'error': '文件路径和密码不能为空'}), 400
+
+    try:
+        from common import get_actual_file_path, is_path_allowed
+        actual_path = get_actual_file_path(file_path)
+
+        if not actual_path or not os.path.exists(actual_path):
+            return jsonify({'error': '文件或文件夹不存在'}), 404
+
+        if not is_path_allowed(actual_path):
+            return jsonify({'error': '路径不在允许的目录中'}), 403
+
+        # 文件夹解密
+        if is_folder:
+            results = encryption_manager.decrypt_folder_standalone(actual_path, password)
+            return jsonify({
+                'success': True,
+                'message': f'文件夹解密完成: 成功 {results["success"]} 个，失败 {results["failed"]} 个',
+                'details': results
+            })
+
+        # 单文件解密
+        else:
+            success = encryption_manager.decrypt_file_standalone(actual_path, password)
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': f'文件解密成功: {os.path.basename(file_path)}'
+                })
+            else:
+                return jsonify({'error': '文件解密失败，请检查密码'}), 500
+
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'解密失败: {str(e)}'}), 500
 # 文件: app.py (添加一个新的删除路由，用于单文件删除)
 
 # 文件: app.py (新增 /api/rename 路由)

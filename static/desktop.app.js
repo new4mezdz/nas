@@ -175,25 +175,71 @@ createApp({
     // ==========================================
     // 窗口管理
     // ==========================================
-    createWindow(type, title, icon, data = {}) {
-      const window = {
-        id: this.nextWindowId++,
-        type,
-        title,
-        icon,
-        x: 100 + (this.windows.length * 30),
-        y: 50 + (this.windows.length * 30),
-        width: 900,
-        height: 650,
-        zIndex: ++this.maxZIndex,
-        maximized: false,
-        minimized: false,
-        ...data
-      };
-      this.windows.push(window);
-      this.showStartMenu = false;
-      return window;
-    },
+    // 在 createWindow 方法中添加初始化
+createWindow(type, title, icon, data = {}) {
+  const window = {
+    id: this.nextWindowId++,
+    type,
+    title,
+    icon,
+    x: 100 + (this.windows.length * 30),
+    y: 50 + (this.windows.length * 30),
+    width: 900,
+    height: 650,
+    zIndex: ++this.maxZIndex,
+    maximized: false,
+    minimized: false,
+    ...data
+  };
+
+  // 为设置窗口添加表单数据
+  if (type === 'settings') {
+    window.passwordForm = {
+      oldPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    };
+  }
+
+  this.windows.push(window);
+  this.showStartMenu = false;
+  return window;
+},
+
+// 提交密码修改
+async submitPasswordChange(window) {
+  const form = window.passwordForm;
+
+  if (!form.oldPassword || !form.newPassword || !form.confirmPassword) {
+    this.showToast('⚠️ 请填写完整信息', 'warning');
+    return;
+  }
+
+  if (form.newPassword !== form.confirmPassword) {
+    this.showToast('❌ 两次输入的密码不一致', 'error');
+    return;
+  }
+
+  if (form.newPassword.length < 6) {
+    this.showToast('⚠️ 密码长度至少 6 位', 'warning');
+    return;
+  }
+
+  try {
+    await axios.patch('/api/change_password', {
+      old_password: form.oldPassword,
+      new_password: form.newPassword
+    });
+    this.showToast('✅ 密码修改成功', 'success');
+
+    // 清空表单
+    form.oldPassword = '';
+    form.newPassword = '';
+    form.confirmPassword = '';
+  } catch (error) {
+    this.showToast(`❌ 修改失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
 
     closeWindow(id) {
       this.windows = this.windows.filter(w => w.id !== id);
@@ -333,6 +379,44 @@ createApp({
 
   return storage;
 },
+
+    // 在 desktop.app.js 的 methods 中添加
+
+// 打开个人设置
+openPersonalSettings() {
+  const window = this.createWindow('settings', '个人设置', '⚙️', {
+    width: 600,
+    height: 500,
+    currentTab: 'profile' // profile, password
+  });
+  this.showStartMenu = false;
+},
+
+// 修改个人密码
+async changePassword(window) {
+  const oldPassword = prompt('请输入当前密码:');
+  if (!oldPassword) return;
+
+  const newPassword = prompt('请输入新密码:');
+  if (!newPassword) return;
+
+  const confirmPassword = prompt('请再次输入新密码:');
+  if (newPassword !== confirmPassword) {
+    this.showToast('❌ 两次输入的密码不一致', 'error');
+    return;
+  }
+
+  try {
+    await axios.patch('/api/change_password', {
+      old_password: oldPassword,
+      new_password: newPassword
+    });
+    this.showToast('✅ 密码修改成功', 'success');
+  } catch (error) {
+    this.showToast(`❌ 修改失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
+
     async loadFiles(window) {
   window.isLocked = false; // 每次加载前重置状态
   const token = localStorage.getItem('token');
@@ -796,6 +880,111 @@ async createNewFolder(window) {
   }
 },
 
+
+    // ==========================================
+// 文件/文件夹加密功能
+// ==========================================
+
+async encryptFileOrFolder(window, file) {
+  const itemType = file.is_dir ? '文件夹' : '文件';
+
+  // 弹出密码输入框
+  const password = prompt(`请输入加密密码（用于加密${itemType}"${file.name}"）：`);
+  if (!password) {
+    this.showToast('❌ 未输入密码，操作已取消', 'info');
+    return;
+  }
+
+  // 确认密码
+  const confirmPassword = prompt('请再次输入密码以确认：');
+  if (password !== confirmPassword) {
+    this.showToast('❌ 两次输入的密码不一致', 'error');
+    return;
+  }
+
+  this.closeContextMenu();
+
+  try {
+    const fullPath = this.buildFullPath(window, file.name);
+
+    this.showToast(`🔄 正在加密${itemType}...`, 'info');
+
+    const response = await axios.post('/api/file/encrypt', {
+      file_path: fullPath,
+      password: password,
+      is_folder: file.is_dir
+    });
+
+    if (response.data.success) {
+      this.showToast(`✅ ${response.data.message}`, 'success');
+
+      // 显示详细结果（如果是文件夹）
+      if (file.is_dir && response.data.details) {
+        const details = response.data.details;
+        if (details.failed > 0) {
+          console.warn('部分文件加密失败:', details.errors);
+        }
+      }
+
+      // 刷新文件列表
+      await this.loadFiles(window);
+    } else {
+      this.showToast('❌ 加密失败', 'error');
+    }
+  } catch (error) {
+    console.error('加密失败:', error);
+    const errorMsg = error.response?.data?.error || error.message;
+    this.showToast(`❌ 加密失败: ${errorMsg}`, 'error');
+  }
+},
+
+async decryptFileOrFolder(window, file) {
+  const itemType = file.is_dir ? '文件夹' : '文件';
+
+  // 弹出密码输入框
+  const password = prompt(`请输入解密密码（用于解密${itemType}"${file.name}"）：`);
+  if (!password) {
+    this.showToast('❌ 未输入密码，操作已取消', 'info');
+    return;
+  }
+
+  this.closeContextMenu();
+
+  try {
+    const fullPath = this.buildFullPath(window, file.name);
+
+    this.showToast(`🔄 正在解密${itemType}...`, 'info');
+
+    const response = await axios.post('/api/file/decrypt', {
+      file_path: fullPath,
+      password: password,
+      is_folder: file.is_dir
+    });
+
+    if (response.data.success) {
+      this.showToast(`✅ ${response.data.message}`, 'success');
+
+      // 显示详细结果（如果是文件夹）
+      if (file.is_dir && response.data.details) {
+        const details = response.data.details;
+        if (details.failed > 0) {
+          console.warn('部分文件解密失败:', details.errors);
+          this.showToast(`⚠️ 部分文件解密失败，请查看控制台`, 'warning');
+        }
+      }
+
+      // 刷新文件列表
+      await this.loadFiles(window);
+    } else {
+      this.showToast('❌ 解密失败', 'error');
+    }
+  } catch (error) {
+    console.error('解密失败:', error);
+    const errorMsg = error.response?.data?.error || error.message;
+    this.showToast(`❌ 解密失败: ${errorMsg}`, 'error');
+  }
+},
+
     async uploadDraggedFiles() {
       if (!this.uploadFiles.length) return;
 
@@ -869,7 +1058,10 @@ async createNewFolder(window) {
     // 右键菜单
     // ==========================================
     showFileContextMenu(event, file, window) {
-    event.preventDefault();
+  event.preventDefault();
+
+  // 判断文件是否已加密
+  const isEncrypted = file.name.endsWith('.encrypted');
 
   this.contextMenu = {
     show: true,
@@ -885,20 +1077,36 @@ async createNewFolder(window) {
           } else {
             this.previewFile(window, file);
           }
-        }
+        },
+        disabled: isEncrypted  // 加密文件禁用预览
       },
       {
         icon: '📥',
         label: '下载',
         action: () => this.downloadFile(window, file),
-        disabled: file.is_dir
+        disabled: file.is_dir || isEncrypted  // 加密文件禁用下载
       },
       {
         icon: '🔗',
         label: '分享',
         action: () => this.shareFile(window, file),
-        disabled: file.is_dir
+        disabled: file.is_dir || isEncrypted  // 加密文件禁用分享
       },
+      { separator: true },
+
+      // ✅ 新增：加密/解密选项
+      {
+        icon: isEncrypted ? '🔓' : '🔒',
+        label: isEncrypted ? '解密' : '加密',
+        action: () => {
+          if (isEncrypted) {
+            this.decryptFileOrFolder(window, file);
+          } else {
+            this.encryptFileOrFolder(window, file);
+          }
+        }
+      },
+
       { separator: true },
       { icon: '✂️', label: '剪切', action: () => this.cutFile(window, file) },
       { icon: '📋', label: '复制', action: () => this.copyFile(window, file) },
@@ -1343,6 +1551,98 @@ async decryptDiskPermanently(drive) {
             this.showToast(`❌ 锁定失败: ${error.response?.data?.error || error.message}`, 'error');
         }
     },
+
+    // ==========================================
+    // 用户管理
+    // ==========================================
+    async openUserManagement() {
+      const window = this.createWindow('users', '用户管理', '👥', {
+        width: 900,
+        height: 650,
+        users: [],
+        loading: true,
+        editingUser: null,
+        newPassword: ''
+      });
+      this.showStartMenu = false;
+      await this.loadUsers(window);
+    },
+
+   async loadUsers(window) {
+  if (!this.user.is_admin) {
+    this.showToast('⚠️ 需要管理员权限', 'error');
+    return;
+  }
+
+  try {
+    window.loading = true;  // ✅ 开始加载
+    const response = await axios.get('/api/users');
+    window.users = response.data || [];  // ✅ 确保至少是空数组
+    console.log('[DEBUG] 用户列表加载成功:', window.users);  // 添加调试日志
+  } catch (error) {
+    console.error('加载用户列表失败:', error);
+    window.users = [];  // ✅ 失败时设置为空数组
+    this.showToast('❌ 加载用户列表失败: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    window.loading = false;  // ✅ 结束加载
+  }
+},
+
+    async toggleUserActive(window, user) {
+      if (!confirm(`确认${user.is_active ? '禁用' : '启用'}用户 ${user.username}?`)) {
+        return;
+      }
+
+      try {
+        await axios.patch(`/api/users/${user.id}`, {
+          is_active: !user.is_active
+        });
+        this.showToast(`✅ 用户状态已更新`, 'success');
+        await this.loadUsers(window);
+      } catch (error) {
+        this.showToast('❌ 操作失败: ' + (error.response?.data?.error || error.message), 'error');
+      }
+    },
+
+    async toggleUserAdmin(window, user) {
+      if (!confirm(`确认${user.is_admin ? '取消' : '授予'}用户 ${user.username} 的管理员权限?`)) {
+        return;
+      }
+
+      try {
+        await axios.patch(`/api/users/${user.id}`, {
+          is_admin: !user.is_admin
+        });
+        this.showToast(`✅ 权限已更新`, 'success');
+        await this.loadUsers(window);
+      } catch (error) {
+        this.showToast('❌ 操作失败: ' + (error.response?.data?.error || error.message), 'error');
+      }
+    },
+
+    async resetUserPassword(window, user) {
+      const newPassword = prompt(`为用户 ${user.username} 设置新密码:`);
+      if (!newPassword || !newPassword.trim()) {
+        return;
+      }
+
+      const confirmPassword = prompt('请再次输入新密码确认:');
+      if (newPassword !== confirmPassword) {
+        this.showToast('❌ 两次输入的密码不一致', 'error');
+        return;
+      }
+
+      try {
+        await axios.post('/api/admin/reset_password', {
+          username: user.username,
+          new_password: newPassword
+        });
+        this.showToast(`✅ 用户 ${user.username} 的密码已重置`, 'success');
+      } catch (error) {
+        this.showToast('❌ 重置密码失败: ' + (error.response?.data?.error || error.message), 'error');
+      }
+    },
+
     async setEncryptionPassword(drive, isConfigured) {
         const old_password = isConfigured ? prompt(`磁盘 [${drive}] 已有密码，请输入旧密码:`, '') : null;
         if (isConfigured && old_password === null) return;
@@ -1405,10 +1705,6 @@ async decryptDiskPermanently(drive) {
       alert('打开磁盘加密配置\n(跳转到传统配置界面)');
     },
 
-    openUserManagement() {
-      alert('打开用户管理窗口');
-      this.showStartMenu = false;
-    },
 
     // ==========================================
     // 任务栏
@@ -1447,16 +1743,22 @@ async decryptDiskPermanently(drive) {
     },
 
     getFileIcon(filename) {
-      if (!filename) return '📄';
-      const ext = filename.split('.').pop().toLowerCase();
-      const icons = {
-        txt: '📄', pdf: '📕', doc: '📘', docx: '📘',
-        jpg: '🖼️', png: '🖼️', gif: '🖼️',
-        mp3: '🎵', mp4: '🎬', avi: '🎬',
-        zip: '📦', rar: '📦'
-      };
-      return icons[ext] || '📄';
-    },
+  if (!filename) return '📄';
+
+  // ✅ 加密文件显示锁图标
+  if (filename.endsWith('.encrypted')) {
+    return '🔒';
+  }
+
+  const ext = filename.split('.').pop().toLowerCase();
+  const icons = {
+    txt: '📄', pdf: '📕', doc: '📘', docx: '📘',
+    jpg: '🖼️', png: '🖼️', gif: '🖼️',
+    mp3: '🎵', mp4: '🎬', avi: '🎬',
+    zip: '📦', rar: '📦'
+  };
+  return icons[ext] || '📄';
+},
     copyToClipboard(text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {

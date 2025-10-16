@@ -355,35 +355,36 @@
            @click="closeContextMenu">
 
         <!-- 桌面图标区域 -->
-        <div class="icon-grid p-8">
-          <!-- 文件管理图标 -->
-          <div class="desktop-icon"
-               @dblclick="openFilesWindow()"
-               @contextmenu.prevent.stop="showFilesIconMenu">
-            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
-              📁
-            </div>
-            <div class="text-white text-xs font-semibold drop-shadow-lg">文件管理</div>
-          </div>
+<div class="icon-grid p-8">
+  <!-- 文件管理图标 - 所有用户可见 -->
+  <div class="desktop-icon"
+       @dblclick="openFilesWindow()"
+       @contextmenu.prevent.stop="showFilesIconMenu">
+    <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+      📁
+    </div>
+    <div class="text-white text-xs font-semibold drop-shadow-lg">文件管理</div>
+  </div>
 
-          <!-- 系统信息图标 -->
-          <div class="desktop-icon"
-               @dblclick="openSystemWindow">
-            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
-              📊
-            </div>
-            <div class="text-white text-xs font-semibold drop-shadow-lg">系统信息</div>
-          </div>
+  <!-- 系统信息图标 - 所有用户可见 -->
+  <div class="desktop-icon"
+       @dblclick="openSystemWindow">
+    <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+      📊
+    </div>
+    <div class="text-white text-xs font-semibold drop-shadow-lg">系统信息</div>
+  </div>
 
-          <!-- 磁盘管理图标 -->
-          <div class="desktop-icon"
-               @dblclick="openDiskWindow">
-            <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
-              💿
-            </div>
-            <div class="text-white text-xs font-semibold drop-shadow-lg">磁盘管理</div>
-          </div>
-        </div>
+  <!-- 磁盘管理图标 - 仅管理员可见 -->
+  <div v-if="user.is_admin"
+       class="desktop-icon"
+       @dblclick="openDiskWindow">
+    <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+      💿
+    </div>
+    <div class="text-white text-xs font-semibold drop-shadow-lg">磁盘管理</div>
+  </div>
+</div>
 
         <!-- 窗口容器 -->
         <div v-for="window in windows"
@@ -627,112 +628,459 @@
             </div>
 
             <!-- 系统信息 -->
-            <div v-else-if="window.type === 'system'" class="space-y-4 overflow-auto">
-              <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
-                <span class="text-2xl">📊</span>
-                系统信息
-              </h3>
+            <!-- 系统信息 -->
+<div v-else-if="window.type === 'system'" class="h-full flex flex-col overflow-hidden">
+  <!-- 标题区 -->
+  <div class="px-6 py-4 border-b bg-gradient-to-r from-blue-50 to-purple-50">
+    <h3 class="text-xl font-bold flex items-center gap-2">
+      <span class="text-3xl">📊</span>
+      系统信息
+    </h3>
+  </div>
 
-              <!-- 基础信息 -->
-              <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
-                <h4 class="font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                  <span>💻</span> 系统概览
-                </h4>
-                <div class="grid grid-cols-2 gap-4">
-                  <div class="bg-white p-3 rounded-lg shadow-sm">
-                    <div class="text-xs text-gray-600 mb-1">主机名</div>
-                    <div class="font-semibold text-gray-800">{{ systemInfo.hostname }}</div>
-                  </div>
-                  <div class="bg-white p-3 rounded-lg shadow-sm">
-                    <div class="text-xs text-gray-600 mb-1">操作系统</div>
-                    <div class="font-semibold text-gray-800">{{ systemInfo.os }}</div>
+  <!-- 可滚动内容区 -->
+  <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+
+    <!-- 基础信息 -->
+    <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
+      <h4 class="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+        <span>💻</span> 系统概览
+      </h4>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white p-3 rounded-lg shadow-sm">
+          <div class="text-xs text-gray-600 mb-1">主机名</div>
+          <div class="font-semibold text-gray-800 text-sm truncate" :title="systemInfo.hostname">
+            {{ systemInfo.hostname }}
+          </div>
+        </div>
+        <div class="bg-white p-3 rounded-lg shadow-sm">
+          <div class="text-xs text-gray-600 mb-1">操作系统</div>
+          <div class="font-semibold text-gray-800 text-sm truncate" :title="systemInfo.os">
+            {{ systemInfo.os }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CPU & 内存 -->
+    <div class="grid grid-cols-2 gap-3">
+      <div class="bg-white p-4 rounded-lg border shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-gray-700">🖥️ CPU 使用率</div>
+          <div class="text-xl font-bold text-blue-600">{{ systemInfo.cpu_percent }}%</div>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+          <div class="h-2.5 rounded-full transition-all bg-gradient-to-r from-blue-400 to-blue-600"
+               :style="{ width: systemInfo.cpu_percent + '%' }"></div>
+        </div>
+      </div>
+
+      <div class="bg-white p-4 rounded-lg border shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-gray-700">🧠 内存使用</div>
+          <div class="text-xl font-bold text-purple-600">
+            {{ ((systemInfo.memory_used / systemInfo.memory_total) * 100).toFixed(1) }}%
+          </div>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+          <div class="h-2.5 rounded-full transition-all bg-gradient-to-r from-purple-400 to-purple-600"
+               :style="{ width: (systemInfo.memory_used / systemInfo.memory_total) * 100 + '%' }"></div>
+        </div>
+        <div class="text-xs text-gray-500 mt-1">
+          {{ (systemInfo.memory_used / (1024*1024*1024)).toFixed(2) }} GB /
+          {{ (systemInfo.memory_total / (1024*1024*1024)).toFixed(2) }} GB
+        </div>
+      </div>
+    </div>
+
+    <!-- 磁盘容量信息 -->
+    <div class="bg-white p-4 rounded-lg border shadow-sm">
+      <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+        <span>💾</span> 磁盘容量
+      </h4>
+      <div class="space-y-3 max-h-64 overflow-y-auto pr-2">
+        <div v-for="disk in disks" :key="disk.mount"
+             class="border-b last:border-b-0 pb-3 last:pb-0">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2 flex-1 min-w-0">
+              <span class="text-xl flex-shrink-0">{{ disk.ec_scheme ? '🛡️' : '💾' }}</span>
+              <span class="font-mono font-bold text-gray-800 text-sm truncate"
+                    :title="disk.mount">
+                {{ disk.mount }}
+              </span>
+              <span v-if="disk.ec_scheme"
+                    class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded flex-shrink-0">
+                {{ disk.ec_scheme }}
+              </span>
+            </div>
+            <div class="text-sm text-gray-600 flex-shrink-0 ml-2">
+              {{ formatSize(disk.bytes_total) }}
+            </div>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+            <div class="h-3 rounded-full transition-all flex items-center justify-center text-xs text-white font-semibold"
+                 :class="disk.percent > 90 ? 'bg-gradient-to-r from-red-400 to-red-600' :
+                         disk.percent > 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+                         'bg-gradient-to-r from-green-400 to-green-600'"
+                 :style="{ width: disk.percent + '%' }">
+              {{ disk.percent }}%
+            </div>
+          </div>
+          <div class="flex justify-between text-xs text-gray-500 mt-1">
+            <span>已用: {{ formatSize(disk.bytes_used) }}</span>
+            <span>可用: {{ formatSize(disk.bytes_free) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 总览统计 -->
+    <div class="grid grid-cols-3 gap-3">
+      <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
+        <div class="text-xs opacity-90 mb-1">总容量</div>
+        <div class="text-lg font-bold truncate"
+             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0))">
+          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0)) }}
+        </div>
+      </div>
+      <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
+        <div class="text-xs opacity-90 mb-1">可用空间</div>
+        <div class="text-lg font-bold truncate"
+             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0))">
+          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0)) }}
+        </div>
+      </div>
+      <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
+        <div class="text-xs opacity-90 mb-1">已用空间</div>
+        <div class="text-lg font-bold truncate"
+             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0))">
+          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0)) }}
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+             <!-- 用户管理 -->
+            <div v-else-if="window.type === 'users'" class="h-full flex flex-col overflow-hidden">
+              <div class="flex-1 overflow-auto p-6 space-y-4">
+                <div class="flex items-center justify-between mb-6">
+                  <h3 class="text-2xl font-bold flex items-center gap-2">
+                    <span class="text-3xl">👥</span>
+                    用户管理
+                  </h3>
+                  <button @click="loadUsers(window)"
+                          class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2">
+                    🔄 刷新
+                  </button>
+                </div>
+
+                <!-- 加载中 -->
+                <div v-if="window.loading" class="flex items-center justify-center py-20">
+                  <div class="text-center">
+                    <div class="loading mb-4"></div>
+                    <p class="text-gray-600">正在加载用户列表...</p>
                   </div>
                 </div>
-              </div>
 
-              <!-- CPU & 内存 -->
-              <div class="grid grid-cols-2 gap-4">
-                <div class="bg-white p-4 rounded-lg border shadow-sm">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="text-sm font-semibold text-gray-700">🖥️ CPU 使用率</div>
-                    <div class="text-2xl font-bold text-blue-600">{{ systemInfo.cpu_percent }}%</div>
-                  </div>
-                  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div class="h-3 rounded-full transition-all bg-gradient-to-r from-blue-400 to-blue-600"
-                         :style="{ width: systemInfo.cpu_percent + '%' }"></div>
+                <!-- 用户列表 -->
+                <div v-else class="bg-white rounded-lg shadow-sm border overflow-hidden">
+                  <table class="w-full">
+                    <thead class="bg-gray-50 border-b">
+                      <tr>
+                        <th class="text-left p-4 font-semibold text-gray-700">用户名</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">权限</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">状态</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">注册时间</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="user in window.users"
+                          :key="user.id"
+                          class="border-b last:border-b-0 hover:bg-gray-50 transition">
+                        <!-- 用户名 -->
+                        <td class="p-4">
+                          <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                              {{ user.username.charAt(0).toUpperCase() }}
+                            </div>
+                            <div>
+                              <div class="font-semibold text-gray-800">{{ user.username }}</div>
+                              <div class="text-xs text-gray-500">ID: {{ user.id }}</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <!-- 权限 -->
+                        <td class="p-4">
+                          <span v-if="user.is_admin"
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-semibold">
+                            👑 管理员
+                          </span>
+                          <span v-else
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-semibold">
+                            👤 普通用户
+                          </span>
+                        </td>
+
+                        <!-- 状态 -->
+                        <td class="p-4">
+                          <span v-if="user.is_active"
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
+                            ✅ 已启用
+                          </span>
+                          <span v-else
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">
+                            ⛔ 已禁用
+                          </span>
+                        </td>
+
+                        <!-- 注册时间 -->
+                        <td class="p-4 text-sm text-gray-600">
+                          {{ user.registered_at }}
+                        </td>
+
+                        <!-- 操作 -->
+                        <td class="p-4">
+                          <div class="flex gap-2">
+                            <!-- 切换状态 -->
+                            <button @click="toggleUserActive(window, user)"
+                                    :disabled="user.username === $root.user.username"
+                                    :class="user.is_active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600'"
+                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :title="user.is_active ? '禁用用户' : '启用用户'">
+                              {{ user.is_active ? '🚫 禁用' : '✅ 启用' }}
+                            </button>
+
+                            <!-- 切换管理员 -->
+                            <button @click="toggleUserAdmin(window, user)"
+                                    :disabled="user.username === $root.user.username"
+                                    :class="user.is_admin ? 'bg-gray-500 hover:bg-gray-600' : 'bg-purple-500 hover:bg-purple-600'"
+                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :title="user.is_admin ? '取消管理员' : '授予管理员'">
+                              {{ user.is_admin ? '📉 降级' : '📈 升级' }}
+                            </button>
+
+                            <!-- 重置密码 -->
+                            <button @click="resetUserPassword(window, user)"
+                                    class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
+                                    title="重置密码">
+                              🔑 重置
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <!-- 空状态 -->
+                  <div v-if="window.users.length === 0"
+                       class="text-center py-12 text-gray-500">
+                    <div class="text-6xl mb-4">👥</div>
+                    <p class="text-lg">暂无用户</p>
                   </div>
                 </div>
 
-                <div class="bg-white p-4 rounded-lg border shadow-sm">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="text-sm font-semibold text-gray-700">🧠 内存使用</div>
-                    <div class="text-2xl font-bold text-purple-600">
-                      {{ ((systemInfo.memory_used / systemInfo.memory_total) * 100).toFixed(1) }}%
+                <!-- 统计信息 -->
+                <div class="grid grid-cols-4 gap-4 mt-6">
+                  <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">总用户数</div>
+                    <div class="text-3xl font-bold">{{ window.users.length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">管理员</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_admin).length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">活跃用户</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_active).length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-red-500 to-red-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">禁用用户</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => !u.is_active).length }}</div>
+                  </div>
+                </div>
+
+                <!-- 提示信息 -->
+                <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                  <div class="flex items-start gap-3">
+                    <span class="text-2xl">💡</span>
+                    <div class="text-sm text-blue-800">
+                      <p class="font-semibold mb-1">管理说明:</p>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li>禁用用户后,该用户将无法登录系统</li>
+                        <li>管理员可以管理其他用户,但不能修改自己的状态</li>
+                        <li>重置密码后,请及时通知用户新密码</li>
+                        <li>系统至少需要保留一个活跃的管理员账号</li>
+                      </ul>
                     </div>
                   </div>
-                  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div class="h-3 rounded-full transition-all bg-gradient-to-r from-purple-400 to-purple-600"
-                         :style="{ width: (systemInfo.memory_used / systemInfo.memory_total) * 100 + '%' }"></div>
-                  </div>
-                  <div class="text-xs text-gray-500 mt-1">
-                    {{ (systemInfo.memory_used / (1024*1024*1024)).toFixed(2) }} GB /
-                    {{ (systemInfo.memory_total / (1024*1024*1024)).toFixed(2) }} GB
-                  </div>
-                </div>
-              </div>
-
-              <!-- 磁盘容量信息 -->
-              <div class="bg-white p-4 rounded-lg border shadow-sm">
-                <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                  <span>💾</span> 磁盘容量
-                </h4>
-                <div class="space-y-3">
-                  <div v-for="disk in disks" :key="disk.mount" class="border-b last:border-b-0 pb-3 last:pb-0">
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center gap-2">
-                        <span class="text-xl">{{ disk.ec_scheme ? '🛡️' : '💾' }}</span>
-                        <span class="font-mono font-bold text-gray-800">{{ disk.mount }}</span>
-                        <span v-if="disk.ec_scheme" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
-                          {{ disk.ec_scheme }}
-                        </span>
-                      </div>
-                      <div class="text-sm text-gray-600">
-                        {{ formatSize(disk.bytes_total) }}
-                      </div>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                      <div class="h-4 rounded-full transition-all flex items-center justify-center text-xs text-white font-semibold"
-                           :class="disk.percent > 90 ? 'bg-gradient-to-r from-red-400 to-red-600' :
-                                   disk.percent > 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
-                                   'bg-gradient-to-r from-green-400 to-green-600'"
-                           :style="{ width: disk.percent + '%' }">
-                        {{ disk.percent }}%
-                      </div>
-                    </div>
-                    <div class="flex justify-between text-xs text-gray-500 mt-1">
-                      <span>已用: {{ formatSize(disk.bytes_used) }}</span>
-                      <span>可用: {{ formatSize(disk.bytes_free) }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 总览统计 -->
-              <div class="grid grid-cols-3 gap-3">
-                <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
-                  <div class="text-xs opacity-90 mb-1">总容量</div>
-                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0)) }}</div>
-                </div>
-                <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
-                  <div class="text-xs opacity-90 mb-1">可用空间</div>
-                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0)) }}</div>
-                </div>
-                <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
-                  <div class="text-xs opacity-90 mb-1">已用空间</div>
-                  <div class="text-xl font-bold">{{ formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0)) }}</div>
                 </div>
               </div>
             </div>
+
+            <!-- 磁盘管理 --><!-- 用户管理 -->
+            <div v-else-if="window.type === 'users'" class="h-full flex flex-col overflow-hidden">
+              <div class="flex-1 overflow-auto p-6 space-y-4">
+                <div class="flex items-center justify-between mb-6">
+                  <h3 class="text-2xl font-bold flex items-center gap-2">
+                    <span class="text-3xl">👥</span>
+                    用户管理
+                  </h3>
+                  <button @click="loadUsers(window)"
+                          class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2">
+                    🔄 刷新
+                  </button>
+                </div>
+
+                <!-- 加载中 -->
+                <div v-if="window.loading" class="flex items-center justify-center py-20">
+                  <div class="text-center">
+                    <div class="loading mb-4"></div>
+                    <p class="text-gray-600">正在加载用户列表...</p>
+                  </div>
+                </div>
+
+                <!-- 用户列表 -->
+                <div v-else class="bg-white rounded-lg shadow-sm border overflow-hidden">
+                  <table class="w-full">
+                    <thead class="bg-gray-50 border-b">
+                      <tr>
+                        <th class="text-left p-4 font-semibold text-gray-700">用户名</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">权限</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">状态</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">注册时间</th>
+                        <th class="text-left p-4 font-semibold text-gray-700">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="user in window.users"
+                          :key="user.id"
+                          class="border-b last:border-b-0 hover:bg-gray-50 transition">
+                        <!-- 用户名 -->
+                        <td class="p-4">
+                          <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                              {{ user.username.charAt(0).toUpperCase() }}
+                            </div>
+                            <div>
+                              <div class="font-semibold text-gray-800">{{ user.username }}</div>
+                              <div class="text-xs text-gray-500">ID: {{ user.id }}</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <!-- 权限 -->
+                        <td class="p-4">
+                          <span v-if="user.is_admin"
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-semibold">
+                            👑 管理员
+                          </span>
+                          <span v-else
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-semibold">
+                            👤 普通用户
+                          </span>
+                        </td>
+
+                        <!-- 状态 -->
+                        <td class="p-4">
+                          <span v-if="user.is_active"
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
+                            ✅ 已启用
+                          </span>
+                          <span v-else
+                                class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">
+                            ⛔ 已禁用
+                          </span>
+                        </td>
+
+                        <!-- 注册时间 -->
+                        <td class="p-4 text-sm text-gray-600">
+                          {{ user.registered_at }}
+                        </td>
+
+                        <!-- 操作 -->
+                        <td class="p-4">
+                          <div class="flex gap-2">
+                            <!-- 切换状态 -->
+                            <button @click="toggleUserActive(window, user)"
+                                    :disabled="user.username === $root.user.username"
+                                    :class="user.is_active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600'"
+                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :title="user.is_active ? '禁用用户' : '启用用户'">
+                              {{ user.is_active ? '🚫 禁用' : '✅ 启用' }}
+                            </button>
+
+                            <!-- 切换管理员 -->
+                            <button @click="toggleUserAdmin(window, user)"
+                                    :disabled="user.username === $root.user.username"
+                                    :class="user.is_admin ? 'bg-gray-500 hover:bg-gray-600' : 'bg-purple-500 hover:bg-purple-600'"
+                                    class="px-3 py-1.5 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :title="user.is_admin ? '取消管理员' : '授予管理员'">
+                              {{ user.is_admin ? '📉 降级' : '📈 升级' }}
+                            </button>
+
+                            <!-- 重置密码 -->
+                            <button @click="resetUserPassword(window, user)"
+                                    class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
+                                    title="重置密码">
+                              🔑 重置
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <!-- 空状态 -->
+                  <div v-if="window.users.length === 0"
+                       class="text-center py-12 text-gray-500">
+                    <div class="text-6xl mb-4">👥</div>
+                    <p class="text-lg">暂无用户</p>
+                  </div>
+                </div>
+
+                <!-- 统计信息 -->
+                <div class="grid grid-cols-4 gap-4 mt-6">
+                  <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">总用户数</div>
+                    <div class="text-3xl font-bold">{{ window.users.length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">管理员</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_admin).length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">活跃用户</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => u.is_active).length }}</div>
+                  </div>
+                  <div class="bg-gradient-to-br from-red-500 to-red-600 text-white p-4 rounded-lg shadow-lg">
+                    <div class="text-sm opacity-90 mb-1">禁用用户</div>
+                    <div class="text-3xl font-bold">{{ window.users.filter(u => !u.is_active).length }}</div>
+                  </div>
+                </div>
+
+                <!-- 提示信息 -->
+                <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                  <div class="flex items-start gap-3">
+                    <span class="text-2xl">💡</span>
+                    <div class="text-sm text-blue-800">
+                      <p class="font-semibold mb-1">管理说明:</p>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li>禁用用户后,该用户将无法登录系统</li>
+                        <li>管理员可以管理其他用户,但不能修改自己的状态</li>
+                        <li>重置密码后,请及时通知用户新密码</li>
+                        <li>系统至少需要保留一个活跃的管理员账号</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 磁盘管理 -->
 
             <!-- 磁盘管理 -->
             <div v-else-if="window.type === 'disks'" class="h-full flex flex-col overflow-hidden">
@@ -1037,6 +1385,141 @@
               </div>
             </div>
 
+              <!-- 个人设置窗口 -->
+<div v-else-if="window.type === 'settings'" class="h-full flex flex-col overflow-hidden">
+  <!-- 标题 -->
+  <div class="px-6 py-4 border-b bg-gradient-to-r from-blue-50 to-purple-50">
+    <h3 class="text-xl font-bold flex items-center gap-2">
+      <span class="text-3xl">⚙️</span>
+      个人设置
+    </h3>
+  </div>
+
+  <!-- 标签页 -->
+  <div class="flex border-b bg-gray-50">
+    <button @click="window.currentTab = 'profile'"
+            :class="window.currentTab === 'profile' ? 'bg-white border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'"
+            class="px-6 py-3 font-semibold transition">
+      👤 个人资料
+    </button>
+    <button @click="window.currentTab = 'password'"
+            :class="window.currentTab === 'password' ? 'bg-white border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'"
+            class="px-6 py-3 font-semibold transition">
+      🔒 修改密码
+    </button>
+  </div>
+
+  <!-- 内容区 -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <!-- 个人资料标签页 -->
+    <div v-if="window.currentTab === 'profile'" class="space-y-4">
+      <div class="bg-white border rounded-lg p-6">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-4xl font-bold">
+            {{ user.username.charAt(0).toUpperCase() }}
+          </div>
+          <div>
+            <div class="text-2xl font-bold text-gray-800">{{ user.username }}</div>
+            <div class="text-sm text-gray-600 flex items-center gap-2 mt-1">
+              <span v-if="user.is_admin" class="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-xs font-semibold">
+                👑 管理员
+              </span>
+              <span v-else class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-semibold">
+                👤 普通用户
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between py-2 border-b">
+            <span class="text-gray-600">用户名</span>
+            <span class="font-semibold text-gray-800">{{ user.username }}</span>
+          </div>
+          <div class="flex justify-between py-2 border-b">
+            <span class="text-gray-600">角色</span>
+            <span class="font-semibold text-gray-800">{{ user.is_admin ? '管理员' : '普通用户' }}</span>
+          </div>
+          <div class="flex justify-between py-2">
+            <span class="text-gray-600">账号状态</span>
+            <span class="text-green-600 font-semibold">✅ 正常</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 权限说明 -->
+      <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl">💡</span>
+          <div class="text-sm text-blue-800">
+            <p class="font-semibold mb-1">权限说明:</p>
+            <ul class="list-disc list-inside space-y-1">
+              <li v-if="user.is_admin">管理员拥有系统完全控制权限</li>
+              <li v-if="user.is_admin">可以管理用户、磁盘和系统配置</li>
+              <li v-if="!user.is_admin">普通用户可以管理文件和查看系统信息</li>
+              <li v-if="!user.is_admin">如需更高权限,请联系管理员</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 修改密码标签页 -->
+    <div v-if="window.currentTab === 'password'" class="space-y-4">
+      <div class="bg-white border rounded-lg p-6">
+        <h4 class="text-lg font-semibold mb-4 text-gray-800">修改密码</h4>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">当前密码</label>
+            <input v-model="window.passwordForm.oldPassword"
+                   type="password"
+                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                   placeholder="请输入当前密码">
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">新密码</label>
+            <input v-model="window.passwordForm.newPassword"
+                   type="password"
+                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                   placeholder="请输入新密码">
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
+            <input v-model="window.passwordForm.confirmPassword"
+                   type="password"
+                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                   placeholder="请再次输入新密码">
+          </div>
+
+          <button @click="submitPasswordChange(window)"
+                  class="w-full bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition">
+            确认修改
+          </button>
+        </div>
+      </div>
+
+      <!-- 安全提示 -->
+      <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl">⚠️</span>
+          <div class="text-sm text-yellow-800">
+            <p class="font-semibold mb-1">安全建议:</p>
+            <ul class="list-disc list-inside space-y-1">
+              <li>密码长度至少 6 位</li>
+              <li>建议包含字母、数字和特殊字符</li>
+              <li>定期修改密码以保证安全</li>
+              <li>不要与他人分享密码</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
           </div>
         </div>
 
@@ -1085,35 +1568,68 @@
       </div>
 
       <!-- 开始菜单 -->
-      <div v-if="showStartMenu" class="start-menu">
-        <div class="start-menu-header">
-          <div class="text-xl font-bold">{{ user.username }}</div>
-          <div class="text-sm opacity-80">{{ user.is_admin ? '管理员' : '普通用户' }}</div>
-        </div>
-        <div class="start-menu-items">
-          <div class="start-menu-item" @click="openSystemWindow">
-            <span class="text-xl">📊</span>
-            <span>系统信息</span>
-          </div>
-          <div class="start-menu-item" @click="openDiskWindow">
-            <span class="text-xl">💿</span>
-            <span>磁盘管理</span>
-          </div>
-          <div class="start-menu-item" @click="openECConfig">
-            <span class="text-xl">⚙️</span>
-            <span>纠删码配置</span>
-          </div>
-          <div v-if="user.is_admin" class="start-menu-item" @click="openUserManagement">
-            <span class="text-xl">👥</span>
-            <span>用户管理</span>
-          </div>
-          <div class="h-px bg-white/20 my-2"></div>
-          <div class="start-menu-item" @click="logout">
-            <span class="text-xl">🚪</span>
-            <span>退出登录</span>
-          </div>
-        </div>
-      </div>
+<div v-if="showStartMenu" class="start-menu">
+  <div class="start-menu-header">
+    <div class="flex items-center gap-2">
+      <div class="text-xl font-bold">{{ user.username }}</div>
+      <!-- 显示角色徽章 -->
+      <span v-if="user.is_admin"
+            class="text-xs bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded-full font-semibold">
+        👑 管理员
+      </span>
+      <span v-else
+            class="text-xs bg-blue-400 text-blue-900 px-2 py-0.5 rounded-full font-semibold">
+        👤 普通用户
+      </span>
+    </div>
+  </div>
+
+  <div class="start-menu-items">
+    <!-- 系统信息 - 所有用户 -->
+    <div class="start-menu-item" @click="openSystemWindow">
+      <span class="text-xl">📊</span>
+      <span>系统信息</span>
+    </div>
+
+    <!-- 磁盘管理 - 仅管理员 -->
+    <div v-if="user.is_admin"
+         class="start-menu-item"
+         @click="openDiskWindow">
+      <span class="text-xl">💿</span>
+      <span>磁盘管理</span>
+    </div>
+
+    <!-- 纠删码配置 - 仅管理员 -->
+    <div v-if="user.is_admin"
+         class="start-menu-item"
+         @click="openECConfig">
+      <span class="text-xl">⚙️</span>
+      <span>纠删码配置</span>
+    </div>
+
+    <!-- 用户管理 - 仅管理员 -->
+    <div v-if="user.is_admin"
+         class="start-menu-item"
+         @click="openUserManagement">
+      <span class="text-xl">👥</span>
+      <span>用户管理</span>
+    </div>
+
+    <div class="h-px bg-white/20 my-2"></div>
+
+    <!-- 个人设置 - 所有用户 -->
+    <div class="start-menu-item" @click="openPersonalSettings">
+      <span class="text-xl">⚙️</span>
+      <span>个人设置</span>
+    </div>
+
+    <!-- 退出登录 - 所有用户 -->
+    <div class="start-menu-item" @click="logout">
+      <span class="text-xl">🚪</span>
+      <span>退出登录</span>
+    </div>
+  </div>
+</div>
 
       <!-- 上传文件对话框 -->
       <div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
