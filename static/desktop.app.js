@@ -116,7 +116,8 @@ createApp({
           this.fetchSystemInfo(),
           this.fetchDiskInfo(),
           this.fetchAvailableDrives(),
-          this.fetchEcStatus()
+          this.fetchEcStatus(),
+          this.fetchEncryptionStatus()
         ]);
       } catch (e) {
         console.error('加载数据失败:', e);
@@ -289,7 +290,6 @@ createApp({
         searchKeyword: '',
         searching: false,
         sortBy: 'name',
-        isLocked: false,
         sortOrder: 'asc'
       });
 
@@ -298,75 +298,87 @@ createApp({
     },
 
     buildStorageList() {
-      const storage = [];
+  const storage = [];
 
-      // 添加物理磁盘
-      this.availableDrives.forEach(drive => {
-        const diskInfo = this.disks.find(d => d.mount === drive.drive);
-        const driveLabel = drive.drive.replace(':/', '');
-        storage.push({
-          icon: '💾',
-          label: `${driveLabel} 盘`,
-          path: drive.drive,
-          type: 'physical',
-          usage: diskInfo ? diskInfo.percent : 0
-        });
-      });
+  // 添加物理磁盘
+  this.availableDrives.forEach(drive => {
+    const diskInfo = this.disks.find(d => d.mount === drive.drive);
+    const driveLabel = drive.drive.replace(':/', '');
+    const encStatus = this.encryptionStatus.find(s => s.drive === drive.drive);
 
-      // 添加 EC 卷 (放在最前面,使其更醒目)
-      if (this.ecStatus.is_configured) {
-        storage.unshift({
-          icon: '🛡️',
-          label: '纠删码卷',
-          path: 'ec_volume',
-          type: 'ec',
-          usage: 0
-        });
-      }
+    let icon = '💾';
+    if (encStatus?.is_configured) {
+        icon = encStatus.is_unlocked ? '🔓' : '🔒';
+    }
 
-      return storage;
-    },
+    storage.push({
+      icon: icon,
+      label: `${driveLabel} 盘`,
+      path: drive.drive,
+      type: 'physical',
+      usage: diskInfo ? diskInfo.percent : 0,
+    });
+  });
 
+  // 添加 EC 卷
+  if (this.ecStatus.is_configured) {
+    storage.unshift({
+      icon: '🛡️',
+      label: '纠删码卷',
+      path: 'ec_volume',
+      type: 'ec',
+      usage: 0
+    });
+  }
+
+  return storage;
+},
     async loadFiles(window) {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        alert('未登录');
-        return;
-      }
+  window.isLocked = false; // 每次加载前重置状态
+  const token = localStorage.getItem('token');
+  if (!token) {
+    this.showToast('未登录', 'error');
+    return;
+  }
 
-      // 构建完整路径
-      let fullPath;
-      if (window.currentDrive === 'ec_volume') {
-        fullPath = window.currentPath.startsWith('ec_volume')
-          ? window.currentPath
-          : 'ec_volume';
-      } else {
-        const cleanPath = window.currentPath.replace(/^\//, '');
-        fullPath = window.currentDrive + cleanPath;
-      }
+  let fullPath;
+  if (window.currentDrive === 'ec_volume') {
+    fullPath = window.currentPath.startsWith('ec_volume') ? window.currentPath : 'ec_volume';
+  } else {
+    const cleanPath = window.currentPath.replace(/^\//, '');
+    fullPath = window.currentDrive + cleanPath;
+  }
 
-      try {
-        const response = await fetch(`/api/list?path=${encodeURIComponent(fullPath)}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+  try {
+    const response = await axios.get(`/api/list?path=${encodeURIComponent(fullPath)}`);
+    window.files = response.data.items || [];
+    this.sortFiles(window);
+  } catch (error) {
+    console.error('加载文件列表失败:', error);
+    const errorData = error.response?.data || {};
+    const errorMsg = errorData.error || '未知错误';
+    const errorType = errorData.error_type;
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+    // ✅ 根据错误类型做不同处理
+    if (errorType === 'disk_locked') {
+      window.isLocked = true;
+      window.files = [];
+      const drive = errorData.drive;
+
+      this.showToast(`🔒 ${errorMsg}`, 'warning');
+
+      // 自动弹出解锁对话框
+      setTimeout(async () => {
+        const shouldUnlock = confirm(`磁盘 ${drive} 已锁定\n\n是否立即解锁?`);
+        if (shouldUnlock) {
+          await this.unlockDisk(drive, window);
         }
-
-        const data = await response.json();
-
-        if (data.success) {
-          window.files = data.items || [];
-          this.sortFiles(window);
-        } else {
-          alert('❌ 加载失败: ' + (data.error || '未知错误'));
-        }
-      } catch (error) {
-        console.error('加载文件列表失败:', error);
-        alert('❌ 加载失败: ' + error.message);
-      }
-    },
+      }, 100);
+    } else {
+      this.showToast(`❌ 加载失败: ${errorMsg}`, 'error');
+    }
+  }
+},
 
     sortFiles(window) {
       const files = window.files;
@@ -531,7 +543,7 @@ createApp({
       if (file.is_dir) {
         this.openFolder(window, file.name);
       } else {
-        this.downloadFile(window, file);
+        this.previewFile(window, file);
       }
     },
 
@@ -579,19 +591,24 @@ createApp({
       }
     },
 
-    renameSelected(window) {
-      if (window.selectedFiles.length !== 1) {
-        alert('请选择一个文件或文件夹进行重命名');
-        return;
-      }
+    // 重命名选中项(工具栏按钮)
+renameSelected(window) {
+  if (window.selectedFiles.length !== 1) {
+    this.showToast('⚠️ 请选择一个文件或文件夹进行重命名', 'warning');
+    return;
+  }
 
-      const oldName = window.selectedFiles[0];
-      const newName = prompt('请输入新名称:', oldName);
+  const fileName = window.selectedFiles[0];
+  const file = window.files.find(f => f.name === fileName);
 
-      if (!newName || newName === oldName) return;
+  if (!file) {
+    this.showToast('❌ 文件不存在', 'error');
+    return;
+  }
 
-      this.renameFile(window, { name: oldName }, newName);
-    },
+  // 调用重命名方法(会弹出输入框)
+  this.renameFile(window, file);
+},
 
     async deleteSelected(window) {
       if (window.selectedFiles.length === 0) {
@@ -678,6 +695,106 @@ createApp({
       this.uploadStatus = '';
       this.currentUploadWindow = window;
     },
+// 重命名文件/文件夹
+async renameFile(window, file, newName) {
+  // 如果没有提供新名称,弹出输入框
+  if (!newName) {
+    const oldName = typeof file === 'string' ? file : file.name;
+    newName = prompt('请输入新名称:', oldName);
+  }
+
+  if (!newName || !newName.trim()) {
+    return;
+  }
+
+  const oldName = typeof file === 'string' ? file : file.name;
+
+  // 名称没有变化
+  if (newName === oldName) {
+    this.closeContextMenu();
+    return;
+  }
+
+  // 检查文件名是否包含非法字符
+  if (/[<>:"/\\|?*]/.test(newName)) {
+    this.showToast('❌ 文件名包含非法字符', 'error');
+    this.closeContextMenu();
+    return;
+  }
+
+  try {
+    // 构建完整路径
+    const fullPath = this.buildFullPath(window, oldName);
+
+    // 发送重命名请求
+    const response = await axios.post('/api/rename', {
+      path: fullPath,
+      new_name: newName
+    });
+
+    if (response.data.success) {
+      this.showToast(`✅ 重命名成功: ${oldName} → ${newName}`, 'success');
+      // 刷新文件列表
+      this.loadFiles(window);
+      // 清除选中状态
+      window.selectedFiles = [];
+    } else {
+      this.showToast(`❌ 重命名失败: ${response.data.error}`, 'error');
+    }
+  } catch (error) {
+    console.error('重命名失败:', error);
+    const errorMsg = error.response?.data?.error || error.message;
+    this.showToast(`❌ 重命名失败: ${errorMsg}`, 'error');
+  }
+
+  this.closeContextMenu();
+},
+    // 新建文件夹
+async createNewFolder(window) {
+  const folderName = prompt('请输入新文件夹名称:', '新建文件夹');
+
+  if (!folderName || !folderName.trim()) {
+    return;
+  }
+
+  // 检查文件名是否包含非法字符
+  if (/[<>:"/\\|?*]/.test(folderName)) {
+    this.showToast('❌ 文件夹名包含非法字符', 'error');
+    return;
+  }
+
+  try {
+    let parentPath;
+
+    // 构建父路径
+    if (window.currentDrive === 'ec_volume') {
+      parentPath = window.currentPath.startsWith('ec_volume')
+        ? window.currentPath
+        : 'ec_volume';
+    } else {
+      const cleanPath = window.currentPath.replace(/^\//, '');
+      parentPath = cleanPath ? window.currentDrive + cleanPath : window.currentDrive;
+    }
+
+    // 发送创建请求
+    const response = await axios.post('/api/mkdir', {
+      parent: parentPath,
+      name: folderName
+    });
+
+    if (response.data.success) {
+      this.showToast(`✅ 文件夹 "${folderName}" 创建成功`, 'success');
+      // 刷新文件列表
+      this.loadFiles(window);
+    } else {
+      this.showToast(`❌ 创建失败: ${response.data.error}`, 'error');
+    }
+  } catch (error) {
+    console.error('创建文件夹失败:', error);
+    const errorMsg = error.response?.data?.error || error.message;
+    this.showToast(`❌ 创建失败: ${errorMsg}`, 'error');
+  }
+},
 
     async uploadDraggedFiles() {
       if (!this.uploadFiles.length) return;
@@ -903,20 +1020,7 @@ createApp({
       this.closeContextMenu();
     },
 
-    renameFile(window, file, newName) {
-      if (!newName) {
-        const currentName = file.name || file;
-        newName = prompt('请输入新名称:', typeof currentName === 'string' ? currentName : currentName.name);
-      }
 
-      if (!newName) return;
-
-      const oldName = typeof file === 'string' ? file : file.name;
-      if (newName === oldName) return;
-
-      alert(`重命名功能: ${oldName} → ${newName}\n(API 对接中...)`);
-      this.closeContextMenu();
-    },
 
     async deleteFile(window, file) {
       if (!confirm(`确认删除 ${file.name}?`)) {
@@ -975,200 +1079,88 @@ createApp({
              this.isPdf(file) || this.isText(file);
     },
 
-    async previewFile(window, file) {
-      if (file.is_dir) {
-        alert('无法预览文件夹');
-        return;
-      }
+    // 文件: static/desktop.app.js
 
-      if (!this.isPreviewable(file)) {
-        alert(`不支持预览此文件格式`);
-        return;
-      }
+async previewFile(window, file) {
+  if (file.is_dir) {
+    alert('无法预览文件夹');
+    return;
+  }
+  if (!this.isPreviewable(file)) {
+    alert(`不支持预览此文件格式`);
+    return;
+  }
+  const fullPath = this.buildFullPath(window, file.name);
+  const token = localStorage.getItem('token');
 
-      const fullPath = this.buildFullPath(window, file.name);
-      const token = localStorage.getItem('token');
+  let previewType = '';
+  if (this.isImage(file)) previewType = 'image';
+  else if (this.isVideo(file)) previewType = 'video';
+  else if (this.isAudio(file)) previewType = 'audio';
+  else if (this.isPdf(file)) previewType = 'pdf';
+  else if (this.isText(file)) previewType = 'text';
 
-      try {
-        // 创建预览窗口
-        let previewType = '';
-        if (this.isImage(file)) previewType = 'image';
-        else if (this.isVideo(file)) previewType = 'video';
-        else if (this.isAudio(file)) previewType = 'audio';
-        else if (this.isPdf(file)) previewType = 'pdf';
-        else if (this.isText(file)) previewType = 'text';
+  const previewWindow = this.createWindow('preview', `预览: ${file.name}`, '👁️', {
+    width: 900,
+    height: 700,
+    fileType: previewType,
+    filePath: fullPath,
+    fileName: file.name,
+    isLoading: true,
+    previewContent: '',
+    previewError: ''
+  });
 
-        const previewWindow = this.createWindow('preview', `预览: ${file.name}`, '👁️', {
-          width: 900,
-          height: 700,
-          fileType: previewType,
-          filePath: fullPath,
-          fileName: file.name,
-          isLoading: true,
-          previewContent: '',
-          previewError: ''
-        });
+  // [核心改动] 如果是PDF，调用 createPdfPreviewSession 方法
+  if (this.isPdf(file)) {
+    try {
+      const sessionUrl = await this.createPdfPreviewSession(fullPath, token);
+      previewWindow.previewContent = sessionUrl;
+      previewWindow.isLoading = false;
+    } catch (error) {
+      previewWindow.previewError = 'PDF预览失败: ' + error.message;
+      previewWindow.isLoading = false;
+    }
+    return;
+  }
 
-        // PDF 使用会话预览方案
-        if (this.isPdf(file)) {
-          console.log('开始创建PDF预览会话...');
-          console.log('文件路径:', fullPath);
+  // 其他文件类型逻辑
+  const url = `/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
+  if (this.isImage(file) || this.isVideo(file) || this.isAudio(file)) {
+    previewWindow.previewContent = url;
+    previewWindow.isLoading = false;
+  } else if (this.isText(file)) {
+    try {
+      const response = await axios.get(url);
+      previewWindow.previewContent = response.data;
+      previewWindow.isLoading = false;
+    } catch (err) {
+      previewWindow.previewError = '文本加载异常: ' + (err.response?.data?.error || err.message);
+      previewWindow.isLoading = false;
+    }
+  }
+},
+    // 文件: static/desktop.app.js
+// ... 在 methods 对象内 ...
 
-          try {
-            const sessionUrl = await this.createPdfPreviewSession(fullPath, token);
-            console.log('PDF预览会话创建成功!');
-            console.log('会话URL:', sessionUrl);
-
-            // 设置预览内容
-            previewWindow.previewContent = sessionUrl;
-            previewWindow.isLoading = false;
-
-            // 调试: 检查窗口状态
-            console.log('=== 预览窗口最终状态 ===');
-            console.log('窗口ID:', previewWindow.id);
-            console.log('窗口类型:', previewWindow.type);
-            console.log('文件类型:', previewWindow.fileType);
-            console.log('预览内容URL:', previewWindow.previewContent);
-            console.log('是否加载中:', previewWindow.isLoading);
-            console.log('是否有错误:', previewWindow.previewError);
-            console.log('完整窗口对象:', JSON.stringify(previewWindow, null, 2));
-
-            // 延迟检查iframe是否加载
-            setTimeout(() => {
-              console.log('\n=== 1秒后检查DOM ===');
-              const iframes = document.querySelectorAll('iframe');
-              console.log('页面中的iframe数量:', iframes.length);
-
-              if (iframes.length === 0) {
-                console.error('❌ iframe未被渲染!');
-                console.log('可能原因:');
-                console.log('1. Vue条件渲染未匹配');
-                console.log('2. window.fileType !== "pdf"');
-                console.log('3. HTML模板问题');
-
-                // 检查预览窗口元素
-                const previewDivs = document.querySelectorAll('[class*="preview"]');
-                console.log('包含preview的div数量:', previewDivs.length);
-
-                // 检查所有窗口
-                const allWindows = document.querySelectorAll('.window');
-                console.log('所有窗口数量:', allWindows.length);
-                allWindows.forEach((win, i) => {
-                  console.log(`窗口 ${i}:`, win.querySelector('.window-header')?.textContent);
-                });
-              } else {
-                console.log('✅ 找到iframe');
-                iframes.forEach((iframe, index) => {
-                  console.log(`iframe ${index}:`, {
-                    src: iframe.src,
-                    width: iframe.offsetWidth,
-                    height: iframe.offsetHeight,
-                    display: window.getComputedStyle(iframe).display
-                  });
-                });
-              }
-            }, 1000);
-
-          } catch (error) {
-            console.error('PDF预览会话创建失败:', error);
-            previewWindow.previewError = 'PDF预览失败: ' + error.message;
-            previewWindow.isLoading = false;
-          }
-          return;
-        }
-
-        // 其他格式使用 download 接口
-        const url = `/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
-
-        if (this.isImage(file) || this.isVideo(file) || this.isAudio(file)) {
-          // 图片、视频、音频直接使用URL
-          previewWindow.previewContent = url;
-          previewWindow.isLoading = false;
-        } else if (this.isText(file)) {
-          // 文本文件需要获取内容
-          try {
-            const response = await fetch(url);
-            if (response.ok) {
-              const text = await response.text();
-              previewWindow.previewContent = text;
-              previewWindow.isLoading = false;
-            } else {
-              previewWindow.previewError = '文本加载失败';
-              previewWindow.isLoading = false;
-            }
-          } catch (err) {
-            previewWindow.previewError = '文本加载异常: ' + err.message;
-            previewWindow.isLoading = false;
-          }
-        }
-      } catch (error) {
-        console.error('预览文件失败:', error);
-        alert('预览失败: ' + error.message);
-      }
-    },
-
-// 创建PDF预览会话
-async createPdfPreviewSession(filePath, token) {
+createPdfPreviewSession: async function(filePath, token) {
   try {
-    console.log('正在创建PDF预览会话...');
-    console.log('文件路径:', filePath);
-    console.log('Token:', token ? '已提供' : '未提供');
-
     const response = await axios.post('/api/create-preview-session', {
       file_path: filePath,
       file_type: 'pdf'
-    }, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Content-Type': 'application/json'
-      }
     });
-
-    console.log('=== 后端响应 ===');
-    console.log('完整响应:', response.data);
-    console.log('success:', response.data.success);
-    console.log('session_id:', response.data.session_id);
-    console.log('message:', response.data.message);
-
     if (response.data.success && response.data.session_id) {
-      const sessionUrl = `/api/preview-session/${response.data.session_id}`;
-      console.log('✅ 生成的会话URL:', sessionUrl);
-
-      // 立即测试会话是否可访问
-      console.log('测试会话访问...');
-      const testResponse = await fetch(sessionUrl);
-      console.log('会话测试响应状态:', testResponse.status);
-
-      if (!testResponse.ok) {
-        const errorData = await testResponse.json();
-        console.error('❌ 会话访问失败:', errorData);
-        throw new Error('会话创建后立即失效: ' + (errorData.error || '未知错误'));
-      }
-
-      console.log('✅ 会话可以正常访问');
-      return sessionUrl;
+      return `/api/preview-session/${response.data.session_id}`;
     } else {
       throw new Error(response.data.error || '创建预览会话失败');
     }
   } catch (error) {
     console.error('❌ 创建PDF预览会话失败:', error);
-
-    // 详细的错误处理
-    if (error.response) {
-      if (error.response.status === 401) {
-        throw new Error('登录已过期,请重新登录');
-      } else if (error.response.status === 404) {
-        throw new Error('文件不存在');
-      } else if (error.response.status === 403) {
-        throw new Error('没有访问权限');
-      } else {
-        throw new Error('创建预览会话失败: ' + (error.response.data?.error || `HTTP ${error.response.status}`));
-      }
-    } else if (error.request) {
-      throw new Error('网络请求失败,请检查网络连接');
-    } else {
-      throw new Error('创建预览会话失败: ' + error.message);
+    const errorMsg = error.response?.data?.error || error.message;
+    if (error.response?.status === 401) {
+      throw new Error('登录已过期,请重新登录');
     }
+    throw new Error('创建预览会话失败: ' + errorMsg);
   }
 },
 // 文件分享功能
@@ -1267,6 +1259,117 @@ shareSelected(window) {
   this.shareFile(window, file);
 },
 
+
+   async unlockDisk(drive, inFileManagerWindow = null) {
+    const password = prompt(`请输入磁盘 [${drive}] 的解锁密码:`);
+    if (!password) return;
+    
+    try {
+        await axios.post('/api/encryption/unlock', { drive, password });
+        this.showToast(`✅ 磁盘 ${drive} 解锁成功`, 'success');
+        await this.fetchEncryptionStatus();
+        
+        // ✅ 刷新所有文件管理器窗口
+        this.windows.forEach(w => {
+            if (w.type === 'files') {
+                // 更新侧边栏存储列表
+                w.sidebar.storage = this.buildStorageList();
+                
+                // 如果当前窗口正在显示该磁盘,则自动刷新
+                if (w.currentDrive === drive || 
+                    (inFileManagerWindow && w.id === inFileManagerWindow.id)) {
+                    this.loadFiles(w);
+                }
+            }
+        });
+    } catch (error) {
+        this.showToast(`❌ 解锁失败: ${error.response?.data?.error || error.message}`, 'error');
+    }
+},
+
+// ... (您已有的其他方法) ...
+
+// [新增] 永久解密磁盘的方法
+async decryptDiskPermanently(drive) {
+    // 风险提示 1
+    if (!confirm(`⚠️ 警告：这是一个高风险操作！\n\n您确定要永久解密磁盘 [${drive}] 吗？\n此操作会将所有文件还原为明文，且不可逆。`)) {
+        return;
+    }
+    // 风险提示 2：要求用户输入盘符确认
+    const confirmation = prompt(`为确认操作，请输入要解密的磁盘盘符 (例如: ${drive})`);
+    if (confirmation !== drive) {
+        this.showToast('输入不匹配，操作已取消', 'info');
+        return;
+    }
+
+    const password = prompt(`请输入磁盘 [${drive}] 的密码以开始解密:`);
+    if (!password) {
+        this.showToast('密码不能为空，操作已取消', 'info');
+        return;
+    }
+
+    try {
+        this.showToast(`🚀 已开始在后台解密磁盘 [${drive}]...`, 'info');
+        const response = await axios.post('/api/encryption/decrypt-disk', {
+            drive: drive,
+            password: password
+        });
+
+        // 这里的消息只是告诉用户任务已启动
+        alert(response.data.message);
+
+        // 稍等片刻后刷新状态，让用户看到变化（最终完成需要看后台日志）
+        setTimeout(() => {
+            this.fetchEncryptionStatus();
+        }, 3000);
+
+    } catch (error) {
+        this.showToast(`❌ 启动解密任务失败: ${error.response?.data?.error || error.message}`, 'error');
+    }
+},
+    async lockDisk(drive) {
+        if (!confirm(`确认要锁定磁盘 [${drive}] 吗？`)) return;
+        try {
+            await axios.post('/api/encryption/lock', { drive });
+            this.showToast(`🔒 磁盘 ${drive} 已锁定`, 'info');
+            await this.fetchEncryptionStatus();
+            // 刷新文件管理器侧边栏
+            this.windows.forEach(w => {
+                if (w.type === 'files') {
+                    w.sidebar.storage = this.buildStorageList();
+                }
+            });
+        } catch (error) {
+            this.showToast(`❌ 锁定失败: ${error.response?.data?.error || error.message}`, 'error');
+        }
+    },
+    async setEncryptionPassword(drive, isConfigured) {
+        const old_password = isConfigured ? prompt(`磁盘 [${drive}] 已有密码，请输入旧密码:`, '') : null;
+        if (isConfigured && old_password === null) return;
+
+        const new_password = prompt(`请输入磁盘 [${drive}] 的新密码:`);
+        if (!new_password) {
+            this.showToast('新密码不能为空', 'error');
+            return;
+        }
+        const confirm_password = prompt('请再次输入新密码:');
+        if (new_password !== confirm_password) {
+            this.showToast('两次输入的密码不一致', 'error');
+            return;
+        }
+
+        try {
+            await axios.post('/api/encryption/set-password', {
+                drives: [drive],
+                old_password: old_password,
+                new_password: new_password
+            });
+            this.showToast(`✅ 磁盘 ${drive} 密码设置成功`, 'success');
+            await this.fetchEncryptionStatus();
+        } catch (error) {
+            this.showToast(`❌ 设置密码失败: ${error.response?.data?.error || error.message}`, 'error');
+        }
+    },
     // ==========================================
     // 系统窗口
     // ==========================================

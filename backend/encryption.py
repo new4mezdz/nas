@@ -117,6 +117,60 @@ class EncryptionManager:
             encrypted_data = f.read()
         return xor_cipher(encrypted_data, key)
 
+    def decrypt_disk_permanently(self, drive_path: str, password: str) -> dict:
+        """
+        永久解密一个磁盘上的所有文件。这是一个耗时且危险的操作。
+        返回一个包含处理结果的字典。
+        """
+        norm_drive = _norm_abs(drive_path)
+
+        # 1. 验证密码并获取密钥
+        if not self.unlock(norm_drive, password):
+            # 如果密码错误，顺便把可能因其他会话解锁的盘锁上，确保安全
+            self.lock(norm_drive)
+            raise ValueError("密码错误")
+
+        key = self.unlocked_keys.get(norm_drive)
+        if not key:
+            # 理论上 unlock 成功后这里不会触发
+            raise EncryptionError("无法获取密钥，即使密码正确")
+
+        print(f"⚠️ 开始对磁盘 {norm_drive} 进行永久解密操作...")
+
+        processed_files = 0
+        failed_files = []
+
+        # 2. 遍历磁盘上的所有文件
+        for root, dirs, files in os.walk(norm_drive):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+                try:
+                    # a. 读取加密内容
+                    with open(file_path, "rb") as f:
+                        encrypted_data = f.read()
+
+                    # b. 在内存中解密
+                    decrypted_data = xor_cipher(encrypted_data, key)
+
+                    # c. 将解密后的明文写回原文件，覆盖加密内容
+                    with open(file_path, "wb") as f:
+                        f.write(decrypted_data)
+
+                    processed_files += 1
+                    print(f"  ✅ 已解密: {file_path}")
+
+                except Exception as e:
+                    print(f"  ❌ 解密失败: {file_path}, 错误: {e}")
+                    failed_files.append(file_path)
+
+        # 3. 操作完成后，立即将密钥从内存中移除
+        self.lock(norm_drive)
+
+        print(f"✅ 磁盘 {norm_drive} 解密完成。")
+        return {
+            "processed_files": processed_files,
+            "failed_files": failed_files
+        }
     def write_encrypted_file(self, file_path: str, data: bytes):
         """加密并写入文件"""
         drive = self._get_drive_for_path(file_path)

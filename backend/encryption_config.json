@@ -1,17 +1,9 @@
 {
-  "encrypted_drives": [
-    "E:\\",
-    "e:\\",
-    "g:\\"
-  ],
+  "encrypted_drives": [],
   "disks": {
-    "e:\\": {
-      "password_salt": "f9ba71a4ea3774a29f541a5d1c92d612",
-      "password_hash": "a1643598b9fb6dd6e11e7b7a0f4033cdbbad196211c82a338e24f17123ea014b"
-    },
-    "f:\\": {
-      "password_salt": "df899c6e8fa51645b65e422ce6dd4180",
-      "password_hash": "5c1f48ce1b2711e22a62e536bcd9cf1b2363b9a0a4e704d1f3fb37fd91277dc0"
+    "g:\\": {
+      "password_salt": "5852896f64b6629d642f97e0f5cf5e94",
+      "password_hash": "f30b38481d0339b395f35e0b36baef30954d21beb903d8745a3340295604f1e7"
     }
   }
 }

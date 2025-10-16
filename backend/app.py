@@ -1429,26 +1429,21 @@ def list_files():
     full_path_from_request = request.args.get('path', '/')
     keyword = request.args.get('q', '').strip().lower()
 
-    # --- 分支 1: 处理纠删码卷 (此部分逻辑正确，无需修改) ---
+    # --- 分支 1: 处理纠删码卷 (保持不变) ---
     if _is_ec_volume(full_path_from_request):
         idx = _load_json(EC_IDX_PATH, {"files": {}})
         items, now_ts = [], int(time.time())
-
         norm_req_path = full_path_from_request.replace("\\", "/").strip("/")
-
         if norm_req_path == 'ec_volume':
             current_dir_prefix = ''
         else:
             current_dir_prefix = norm_req_path[len('ec_volume/'):] + '/'
-
         sub_items = set()
         for name, meta in idx.get("files", {}).items():
             if not name.startswith(current_dir_prefix):
                 continue
-
             relative_to_current = name[len(current_dir_prefix):]
             parts = relative_to_current.split('/')
-
             if len(parts) == 1:
                 items.append({
                     "name": parts[0], "is_dir": False, "size": meta.get("size", 0),
@@ -1456,52 +1451,47 @@ def list_files():
                 })
             else:
                 sub_items.add(parts[0])
-
         for dir_name in sub_items:
-             items.append({
+            items.append({
                 "name": dir_name, "is_dir": True, "size": None,
                 "mtime": now_ts, "path": current_dir_prefix + dir_name
             })
-
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
         return jsonify({"success": True, "items": items})
 
-    # --- 分支 2: 处理物理硬盘 (重构此部分逻辑) ---
+    # --- 分支 2: 处理物理硬盘 (✅ 关键修复) ---
     else:
         try:
             full_path = os.path.abspath(full_path_from_request)
-            allowed = False
-            drive_prefix = None
-            for base_dir in get_available_drives():
-                if full_path.upper().startswith(os.path.abspath(base_dir).upper()):
-                    allowed = True
-                    drive_prefix = base_dir
-                    break
-            if not allowed:
+            if not is_path_allowed(full_path):
                 return jsonify({'error': '非法路径或不允许访问的磁盘'}), 403
+
+            # ✅ 关键修复: 优先检查加密状态
+            if encryption_manager.is_path_encrypted(full_path):
+                drive = encryption_manager._get_drive_for_path(full_path)
+                if drive and drive not in encryption_manager.unlocked_keys:
+                    return jsonify({
+                        'error': f'磁盘 {drive} 已锁定,无法访问',
+                        'error_type': 'disk_locked',
+                        'drive': drive
+                    }), 403
+
             if not os.path.exists(full_path) or not os.path.isdir(full_path):
-                return jsonify({'error': f'路径不存在或不是文件夹: {full_path}'}), 404
+                return jsonify({'error': f'路径不存在或不是文件夹'}), 404
 
             items = []
-            # [关键修正] 计算相对于盘符根目录的路径
-            relative_path_root = os.path.relpath(full_path, drive_prefix)
-            if relative_path_root == '.':
-                relative_path_root = ''
-
             for name in os.listdir(full_path):
-                if keyword and keyword not in name.lower(): continue
                 entry_full_path = os.path.join(full_path, name)
                 stat = os.stat(entry_full_path)
-                # [关键修正] 返回相对于盘符根目录的路径
-                relative_path = os.path.join(relative_path_root, name).replace('\\', '/')
                 items.append({
-                    'name': name, 'is_dir': os.path.isdir(entry_full_path),
+                    'name': name,
+                    'is_dir': os.path.isdir(entry_full_path),
                     'size': stat.st_size if os.path.isfile(entry_full_path) else None,
-                    'mtime': stat.st_mtime, 'path': relative_path
+                    'mtime': stat.st_mtime,
                 })
-
             items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
             return jsonify({'success': True, 'items': items})
+
         except Exception as e:
             return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
 
@@ -1970,6 +1960,52 @@ def encryption_lock():
     encryption_manager.lock(drive)
     return jsonify({'success': True, 'message': f'磁盘 {drive} 已锁定'})
 
+
+# 文件: backend/app.py
+import threading  # 确保在文件顶部导入 threading 模块
+
+
+# ... (您已有的其他路由) ...
+
+# [新增] 永久解密磁盘的API接口
+@app.route('/api/encryption/decrypt-disk', methods=['POST'])
+@token_required(admin_only=True)
+def decrypt_disk_permanently_api():
+    data = request.get_json()
+    drive = data.get('drive')
+    password = data.get('password')
+
+    if not drive or not password:
+        return jsonify({'error': '需要提供磁盘和密码'}), 400
+
+    def background_task(app, drive_path, pwd):
+        with app.app_context():
+            try:
+                result = encryption_manager.decrypt_disk_permanently(drive_path, pwd)
+
+                # 解密成功后，从配置文件中移除该磁盘的加密设置
+                if not result.get("failed_files"):
+                    config_path = encryption_manager.config_path
+                    config = _load_json(config_path, {"disks": {}})
+                    norm_drive = _norm_abs(drive_path)
+                    if norm_drive in config.get("disks", {}):
+                        del config["disks"][norm_drive]
+                        _save_json(config_path, config)
+                        # 重新加载配置以更新服务器状态
+                        encryption_manager.load_config()
+                        print(f"🎉 已从加密配置中移除磁盘 {drive_path}")
+
+            except ValueError as e:  # 捕获密码错误
+                print(f"后台解密任务失败: {e}")
+            except Exception as e:
+                print(f"后台解密任务发生严重错误: {e}")
+
+    # 在后台线程中运行解密任务
+    thread = threading.Thread(target=background_task, args=(app, drive, password))
+    thread.start()
+
+    return jsonify(
+        {'success': True, 'message': f'已开始在后台对磁盘 {drive} 进行永久解密，请通过服务器后台日志查看进度。'})
 
 # 文件: app.py -> 再次替换 set_encryption_password 函数
 
