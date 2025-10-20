@@ -283,24 +283,36 @@ def get_system_stats():
     try:
         from utils import get_sys_info, get_disk_info
 
-        # 获取系统信息
+        # 获取系统信息 (这部分不变)
         sys_info = get_sys_info()
         disk_info = get_disk_info()
 
-        # 计算磁盘总量和使用量
+        # 计算磁盘总量和使用量 (这部分不变)
         total_gb = 0
         used_gb = 0
-
         for disk in disk_info:
-            if disk.get('mount', '').upper() not in ['C:/', '/']:  # 排除系统盘
+            if disk.get('mount', '').upper() not in ['C:/', '/']:
                 total = disk.get('bytes_total', 0) or disk.get('total', 0)
                 used = disk.get('bytes_used', 0) or disk.get('used', 0)
-
-                total_gb += total / (1024 ** 3)  # 转换为 GB
+                total_gb += total / (1024 ** 3)
                 used_gb += used / (1024 ** 3)
-
         disk_percent = round((used_gb / total_gb * 100) if total_gb > 0 else 0, 2)
 
+        # 👇 [核心修改] 在这里增加获取硬件温度的逻辑
+        cpu_temp = 0  # 默认值为 0
+        try:
+            hw_data = hardware_monitor.get_hardware_data()
+            if hw_data and 'temperatures' in hw_data:
+                # 遍历所有温度传感器，找到包含 "CPU" 的那个
+                for temp_sensor in hw_data['temperatures']:
+                    if 'cpu' in temp_sensor.get('name', '').lower():
+                        cpu_temp = temp_sensor.get('value', 0)
+                        break # 找到第一个就停止
+        except Exception as hw_error:
+            print(f"[WARNING] 在 /api/system-stats 中获取硬件温度失败: {hw_error}")
+
+
+        # 👇 [核心修改] 在返回的 JSON 中增加 cpu_temp_celsius 字段
         return jsonify({
             'cpu_percent': sys_info.get('cpu_percent', 0),
             'memory_percent': sys_info.get('mem_percent', 0),
@@ -308,6 +320,7 @@ def get_system_stats():
             'disk_total_gb': round(total_gb, 2),
             'disk_used_gb': round(used_gb, 2),
             'disk_free_gb': round(total_gb - used_gb, 2),
+            'cpu_temp_celsius': cpu_temp,  # <-- 新增的字段
             'timestamp': datetime.now().isoformat()
         })
 
@@ -320,9 +333,9 @@ def get_system_stats():
             'disk_total_gb': 0,
             'disk_used_gb': 0,
             'disk_free_gb': 0,
+            'cpu_temp_celsius': 0, # <-- 保证出错时也有这个字段
             'error': str(e)
         }), 500
-
 
 @app.route('/api/disks', methods=['GET'])
 def get_disks_info():
@@ -498,14 +511,36 @@ def get_current_directory():
 from utils import get_sys_info, get_disk_info
 import shutil
 
+# 在文件顶部添加导入
+from hardware_monitor import hardware_monitor
+
+
+# 修改 /api/system 路由
+# 文件: 客户端 app.py
 
 @app.route('/api/system', methods=['GET'])
-@token_required()
 def api_system():
-    return jsonify(get_sys_info())
+    """获取系统信息，包括硬件监控数据"""
+    try:
+        sys_info = get_sys_info()
+        hw_data = hardware_monitor.get_hardware_data()
 
+        if hw_data:
+            sys_info['temperatures'] = hw_data.get('temperatures', [])
+            sys_info['fans'] = hw_data.get('fans', [])
+            sys_info['voltages'] = hw_data.get('voltages', [])
+        else:
+            sys_info['temperatures'] = []
+            sys_info['fans'] = []
+            sys_info['voltages'] = []
+            # 👇 [核心修改] 更新这里的错误提示
+            sys_info['hw_monitor_error'] = '无法获取硬件监控数据, 请检查 LibreHardwareMonitor.exe 是否运行正常'
 
-# 文件: app.py
+        return jsonify(sys_info)
+
+    except Exception as e:
+        print(f"[ERROR] /api/system 接口发生严重错误: {e}")
+        return jsonify({'error': f'获取系统信息时发生内部错误: {str(e)}'}), 500
 
 @app.route('/api/disk', methods=['GET'])
 @token_required()
@@ -2133,25 +2168,87 @@ def ec_rebuild():
 
 NGROK_PATH = str(Path(__file__).with_name('ngrok.exe'))
 FLASK_PORT = 5000
+PROJECT_ROOT = Path(__file__).parent # <-- 注意，这里只有一个 .parent
+OHM_PATH = str(PROJECT_ROOT / 'LibreHardwareMonitor-net472' / 'LibreHardwareMonitor.exe')
 
-ngrok_url_global = None  # 👈 全局变量保存公网地址
+OHM_PORT = 8085
+ngrok_url_global = None
+ohm_process = None
 
 
+
+# ===== (请完整替换您原来的 start_openhardwaremonitor 函数) =====
+# 文件: 客户端 app.py
+
+# ===== (请完整替换您原来的 start_openhardwaremonitor 函数) =====
+def start_librehardwaremonitor():
+    """
+    启动 LibreHardwareMonitor 并等待其 HTTP 服务就绪。
+    使用 subprocess 和组合 creation flags 实现后台隐藏启动。
+    """
+    global ohm_process
+    print("🌡️  正在启动 LibreHardwareMonitor (后台隐藏模式)...")
+
+    if not os.path.exists(OHM_PATH):
+        print(f"⚠️  LibreHardwareMonitor.exe 未找到, 路径: {OHM_PATH}")
+        return None
+
+    try:
+        if os.name == 'nt':
+            subprocess.run(
+                ['taskkill', '/F', '/IM', 'LibreHardwareMonitor.exe'],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        print("🧹  已清理旧的 LibreHardwareMonitor 进程。")
+    except Exception:
+        pass
+
+    try:
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NO_WINDOW = 0x08000000
+        flags = DETACHED_PROCESS | CREATE_NO_WINDOW
+
+        ohm_proc = subprocess.Popen(
+            [OHM_PATH],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.dirname(OHM_PATH),
+            creationflags=flags
+        )
+        print("   - 已在后台发送启动指令。")
+
+        print("⏳  正在等待 LibreHardwareMonitor HTTP 服务就绪...")
+        for i in range(15):
+            time.sleep(1)
+            try:
+                response = requests.get(f'http://localhost:{OHM_PORT}/data.json', timeout=2)
+                if response.status_code == 200:
+                    print(f"✅  LibreHardwareMonitor HTTP 服务已就绪 (后台隐藏)。")
+                    return ohm_proc
+            except requests.exceptions.ConnectionError:
+                continue
+
+        print("⚠️  LibreHardwareMonitor 已启动, 但无法确认其 Web 服务。")
+        return ohm_proc
+
+    except Exception as e:
+        print(f'❌  LibreHardwareMonitor 启动时发生严重错误: {e}')
+        return None
 def start_ngrok():
     """
     一个更健壮的 ngrok 启动函数。
-    它会清理旧进程、轮询API状态，并在失败时提供调试信息。
+    它会清理旧进程、轮询API状态,并在失败时提供调试信息。
     """
     global ngrok_url_global
     print("⚙️ 正在启动 ngrok...")
 
     # 确保 ngrok.exe 存在
     if not os.path.exists(NGROK_PATH):
-        print(f"❌ ngrok.exe 未找到，路径: {NGROK_PATH}")
-        print("💡 提示：ngrok 不是必需的，程序将在本地模式下运行")
+        print(f"❌ ngrok.exe 未找到,路径: {NGROK_PATH}")
+        print("💡 提示:ngrok 不是必需的,程序将在本地模式下运行")
         return None, None
 
-    # 尝试终止已有的 ngrok 进程，避免冲突
+    # 尝试终止已有的 ngrok 进程,避免冲突
     try:
         if os.name == 'nt':
             subprocess.run(['taskkill', '/F', '/IM', 'ngrok.exe'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2159,7 +2256,7 @@ def start_ngrok():
             subprocess.run(['killall', 'ngrok'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("🧹 已清理旧的 ngrok 进程。")
     except Exception:
-        pass # 忽略错误，因为可能没有旧进程在运行
+        pass # 忽略错误,因为可能没有旧进程在运行
 
     ngrok_proc = None
     try:
@@ -2197,8 +2294,8 @@ def start_ngrok():
                     break
             except requests.exceptions.RequestException:
                 if i < 14:
-                    print(f"⏳ ngrok API 尚未就绪，正在重试... ({i+1}/15)")
-                continue # API 还未就绪，继续等待
+                    print(f"⏳ ngrok API 尚未就绪,正在重试... ({i+1}/15)")
+                continue # API 还未就绪,继续等待
             except Exception as e:
                 print(f"❌ 获取 ngrok 地址时出错: {e}")
                 break
@@ -2208,7 +2305,7 @@ def start_ngrok():
             ngrok_url_global = ngrok_url
             return ngrok_url, ngrok_proc
         else:
-            print('❌ ngrok 启动失败，无法获取公网地址。')
+            print('❌ ngrok 启动失败,无法获取公网地址。')
             if ngrok_proc:
                 print("--- ngrok 输出日志 ---")
                 ngrok_proc.terminate() # 终止进程以释放资源
@@ -2230,6 +2327,8 @@ def start_ngrok():
             ngrok_proc.terminate()
         return None, None
 # ========== 你的 Flask 路由、逻辑在这里 ==========
+
+
 
 
 # ===== 文档协作API =====
@@ -3267,37 +3366,64 @@ from filemanager import file_bp
 
 app.register_blueprint(file_bp)
 
-# ===== 主启动入口 =====
+# 文件: 客户端 app.py (最末尾)
+
 if __name__ == '__main__':
-    # 数据库初始化已在文件顶部完成，无需再次调用
-    print("✅ 数据库初始化完成。") # 只是打印信息，实际初始化已完成
+    print("✅  数据库初始化完成。")
+    print("🚀  正在启动文件管理系统...")
 
-    print("🚀 正在启动文件管理系统...")
+    ngrok_url, ngrok_proc = None, None
+    ohm_proc = None
 
-    ngrok_url, ngrok_proc = None, None  # Initialize ngrok variables
     try:
-        # 启动 ngrok（如果启用）
-        ngrok_url, ngrok_proc = start_ngrok() # 假设 start_ngrok() 函数已定义并返回 ngrok_url, ngrok_proc
+        # 1. 启动 LibreHardwareMonitor
+        # 👇 [核心修改] 调用新的函数名
+        ohm_proc = start_librehardwaremonitor()
 
-        print(f"📍 Flask 服务器启动在端口: {FLASK_PORT}")
+        # 2. 启动 ngrok (如果可用)
+        ngrok_url, ngrok_proc = start_ngrok()
+
+        # 3. 打印启动信息
+        print(f"🔧  Flask 服务器启动在端口: {FLASK_PORT}")
         print("=" * 50)
         if ngrok_url:
-            print(f"🌐 外网访问地址: {ngrok_url}")
-        print(f"🏠 本地访问地址: http://localhost:{FLASK_PORT}")
-        # 注意: 局域网访问地址需要用户手动替换 '您的IP地址'
-        print(f"🔗 局域网访问地址: http://您的IP地址:{FLASK_PORT}")
+            print(f"🌐  外网访问地址: {ngrok_url}")
+        print(f"🏠  本地访问地址: http://localhost:{FLASK_PORT}")
+        print(f"🔗  局域网访问地址: http://您的IP地址:{FLASK_PORT}")
+        if ohm_proc:
+            print(f"🌡️   硬件监控服务: http://localhost:{OHM_PORT} (由程序自动管理)")
+        else:
+            print("⚠️   硬件监控服务启动失败，相关功能将不可用。")
         print("=" * 50)
 
-        # 启动 SocketIO 服务器
+        # 4. 启动 SocketIO 服务器
         socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
 
     except KeyboardInterrupt:
-        print("\n👋 程序正在退出...")
+        print("\n👋  程序正在退出...")
     except Exception as e:
-        print(f"❌ 启动失败: {e}")
+        print(f"❌  启动失败: {e}")
     finally:
+        print("\n🛑  正在执行清理程序...")
+
+        # 5. 关闭 LibreHardwareMonitor
+        if ohm_proc:
+            # 👇 [核心修改] 更新这里的日志信息
+            print("   - 正在关闭 LibreHardwareMonitor...")
+            try:
+                ohm_proc.terminate()
+                ohm_proc.wait(timeout=5)
+                print("   ✅  LibreHardwareMonitor 已关闭。")
+            except subprocess.TimeoutExpired:
+                ohm_proc.kill()
+                print("   ✅  LibreHardwareMonitor 已强制关闭。")
+            except Exception as e:
+                print(f"   ⚠️  关闭 LibreHardwareMonitor 时出错: {e}")
+
+        # 6. 关闭 ngrok
         if ngrok_proc:
-            print("🛑 正在关闭 ngrok...")
+            print("   - 正在关闭 ngrok...")
             ngrok_proc.terminate()
-            print("✅ ngrok 已关闭。")
-        print("✅ 程序已退出。")
+            print("   ✅  ngrok 已关闭。")
+
+        print("✅  清理完成, 程序已退出。")

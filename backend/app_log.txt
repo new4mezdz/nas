@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "F:\python\nas\backend\app.py", line 66, in <module>
+    encryption_manager = EncryptionManager(config_path=ENCRYPTION_CFG_PATH)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\python\nas\backend\encryption.py", line 42, in __init__
+    self.load_config()
+  File "F:\python\nas\backend\encryption.py", line 59, in load_config
+    print(f"\U0001f512 加密管理器已加载,受保护的驱动器: {list(self.disk_configs.keys()) or '无'}")
+UnicodeEncodeError: 'gbk' codec can't encode character '\U0001f512' in position 0: illegal multibyte sequence
