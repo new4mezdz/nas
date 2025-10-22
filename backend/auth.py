@@ -1,77 +1,162 @@
-from flask import Blueprint, request, jsonify, current_app, g
-import jwt
-from werkzeug.security import generate_password_hash, check_password_hash
+# 文件: backend/auth.py (完整修复版)
+
+from flask import request, jsonify, session, g
 from functools import wraps
+import jwt
+from datetime import datetime, timedelta
 
-auth_bp = Blueprint('auth', __name__, url_prefix='/api')
+# ⚠️ 这个密钥必须与管理端完全一致
+ACCESS_TOKEN_SECRET = 'your-access-token-secret-key'
 
-# 简易用户“数据库”：字典结构保存用户密码哈希和管理员标识
-# 格式: users = { username: {"password_hash": "...", "is_admin": bool}, ... }
-users = {}
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({"error": "缺少用户名或密码"}), 400
-    username = data['username']
-    password = data['password']
-    if username in users:
-        return jsonify({"error": "用户已存在"}), 400
-    if not username or not password:
-        return jsonify({"error": "用户名和密码不能为空"}), 400
-    # （可选）可以在此检查 password_confirmation 等字段
+def verify_access_token(token):
+    """
+    验证访问令牌
+    返回: payload (dict) 或 None
+    """
+    try:
+        payload = jwt.decode(token, ACCESS_TOKEN_SECRET, algorithms=['HS256'])
+        return payload
+    except jwt.ExpiredSignatureError:
+        print("[AUTH] 令牌已过期")
+        return None
+    except jwt.InvalidTokenError as e:
+        print(f"[AUTH] 令牌无效: {e}")
+        return None
+    except Exception as e:
+        print(f"[AUTH] 验证令牌时出错: {e}")
+        return None
 
-    # 使用 Werkzeug 提供的函数生成密码哈希
-    password_hash = generate_password_hash(password)
-    # 简单规则：用户名为 "admin" 的用户设为管理员
-    is_admin = True if username == 'admin' else False
-    users[username] = {"password_hash": password_hash, "is_admin": is_admin}
-    return jsonify({"message": "注册成功"}), 200
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({"error": "缺少用户名或密码"}), 400
-    username = data['username']
-    password = data['password']
-    user = users.get(username)
-    # 校验用户存在且密码正确
-    if not user or not check_password_hash(user['password_hash'], password):
-        return jsonify({"error": "用户名或密码不正确"}), 401
-    # 生成 JWT Token，载荷包含用户名和是否管理员标识
-    token = jwt.encode({"username": username, "is_admin": user["is_admin"]},
-                       current_app.config['SECRET_KEY'], algorithm="HS256")
-    # 某些 PyJWT 版本可能返回字节类型，确保转换为字符串
-    if isinstance(token, bytes):
-        token = token.decode('utf-8')
-    return jsonify({
-        "message": "登录成功",
-        "token": token,
-        "user": {
-            "username": username,
-            "is_admin": user["is_admin"]
-        }
-    }), 200
+def load_user():
+    """
+    在每个请求之前加载用户信息
+    支持三种认证方式:
+    1. Session (本地登录)
+    2. URL参数中的token (管理端跳转)
+    3. Authorization Header (API调用)
+    """
+    g.user = None
 
-# 装饰器：保护路由，验证 JWT Token
-def token_required(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # 从请求头获取 Authorization: Bearer <token>
+    # 方式1: 检查 session (本地登录)
+    if 'user' in session:
+        g.user = session['user']
+        print(f"[AUTH] 从session加载用户: {g.user}")
+        return
+
+    # 方式2: 检查 URL 参数中的 token (管理端跳转)
+    token = request.args.get('token')
+
+    # 方式3: 检查 Authorization Header (API调用)
+    if not token:
         auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"error": "认证令牌缺失"}), 401
-        token = auth_header.split(None, 1)[1]  # 提取空格后的 token 部分
-        try:
-            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "认证令牌已过期"}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"error": "认证令牌无效"}), 401
-        # Token 验证通过，在全局上下文 g 中记录用户信息
-        g.username = data.get('username')
-        g.is_admin = data.get('is_admin', False)
-        return func(*args, **kwargs)
-    return wrapper
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]  # 移除 "Bearer " 前缀
+
+    # 如果找到 token,验证它
+    if token:
+        payload = verify_access_token(token)
+
+        if payload:
+            # ✅ 从 payload 中提取用户信息
+            g.user = payload.get('user_id')
+
+            # 将用户信息存入 session (保持登录状态)
+            session['user'] = g.user
+            session['username'] = payload.get('username')
+            session['file_permission'] = payload.get('file_permission', 'readonly')
+            session['role'] = payload.get('role', 'user')
+
+            print(f"[AUTH] 从令牌加载用户: {payload.get('username')} (权限: {session['file_permission']})")
+        else:
+            print("[AUTH] 令牌验证失败")
+
+
+def login_required(f):
+    """
+    登录验证装饰器
+    """
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not g.user:
+            return jsonify({'error': '未登录'}), 401
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def init_auth(app):
+    """
+    初始化认证系统
+    """
+    # 注册请求前钩子
+    app.before_request(load_user)
+
+    # 注册登录路由
+    @app.route('/api/login', methods=['POST'])
+    def login():
+        """本地登录接口"""
+        from flask import current_app
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username or not password:
+            return jsonify({'error': '用户名和密码不能为空'}), 400
+
+        # 这里需要连接到你的用户数据库
+        # 示例代码,需要根据实际情况修改
+        from common import get_db
+        db = get_db()
+
+        user = db.execute(
+            "SELECT * FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+
+        if not user:
+            return jsonify({'error': '用户不存在'}), 401
+
+        # 验证密码 (假设你使用了 werkzeug 的密码哈希)
+        from werkzeug.security import check_password_hash
+        if not check_password_hash(user['password'], password):
+            return jsonify({'error': '密码错误'}), 401
+
+        # 登录成功,设置 session
+        session['user'] = user['id']
+        session['username'] = user['username']
+        session['file_permission'] = user.get('file_permission', 'readonly')
+        session['is_admin'] = bool(user.get('is_admin', 0))
+
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user['id'],
+                'username': user['username'],
+                'file_permission': session['file_permission'],
+                'is_admin': session['is_admin']
+            }
+        })
+
+    @app.route('/api/logout', methods=['POST'])
+    def logout():
+        """登出接口"""
+        session.clear()
+        return jsonify({'success': True})
+
+    @app.route('/api/current-user', methods=['GET'])
+    def current_user():
+        """获取当前登录用户"""
+        if g.user:
+            return jsonify({
+                'user': {
+                    'id': g.user,
+                    'username': session.get('username'),
+                    'file_permission': session.get('file_permission', 'readonly'),
+                    'is_admin': session.get('is_admin', False)
+                }
+            })
+        return jsonify({'user': None}), 401
+
+    print("[AUTH] 认证系统初始化完成")

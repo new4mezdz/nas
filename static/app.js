@@ -5,7 +5,9 @@ const app = Vue.createApp({
     //           用户与认证 (User & Auth)
     // =============================================
     loggedIn: false,
-    user: { username: '', is_admin: false },
+    user: { username: '',
+      is_admin: false,
+    permission: 'readonly'},
 
     // --- 登录/注册 ---
     showRegister: false,
@@ -225,6 +227,21 @@ const app = Vue.createApp({
         this.selectedFiles = value ? this.fileList.map(f => f.name) : [];
       }
     },
+    canRead() {
+        // 只要登录了就有读取权限
+        return this.loggedIn;
+    },
+    canWrite() {
+        // 需要 'readwrite' 或 'fullcontrol' 权限
+        return this.loggedIn && (this.user.permission === 'readwrite' || this.user.permission === 'fullcontrol' || this.user.is_admin);
+    },
+    canDelete() {
+        // 需要 'fullcontrol' 权限
+        return this.loggedIn && (this.user.permission === 'fullcontrol' || this.user.is_admin);
+    },
+    isAdmin() {
+        return this.loggedIn && this.user.is_admin;
+    }
   },
 
   methods: {
@@ -291,28 +308,31 @@ normalizePath(p) {
     showRegisterForm() {
       this.showRegister = true; this.errorMessage = ''; this.infoMessage = '';
     },
+
     async login() {
-      this.errorMessage = ''; this.infoMessage = '';
-      if (!this.loginForm.username || !this.loginForm.password) {
-        this.errorMessage = '请输入用户名和密码'; return;
-      }
+      this.errorMessage = '';
+      this.infoMessage = '';
       try {
-        const res = await axios.post('/api/login', {
-          username: this.loginForm.username,
-          password: this.loginForm.password
-        });
-        const data = res.data;
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        axios.defaults.headers.common['Authorization'] = 'Bearer ' + data.token;
-        this.user = data.user;
-        this.loggedIn = true;
-        this.loginForm.password = '';
-        await this.loadMainPanel();
-      } catch (err) {
-        this.errorMessage = err.response?.data?.error || '登录失败';
+        // 调用 *本节点* 的 /api/login (它会去问主控中心)
+        const response = await axios.post('/api/login', this.loginForm);
+        if (response.data.success) {
+          this.loggedIn = true;
+          this.user.username = response.data.user.username;
+          this.user.is_admin = response.data.user.role === 'admin'; // 假设后端返回 role
+          // [核心修改] 保存从后端获取的权限
+          this.user.permission = response.data.user.permission || 'readonly';
+          this.infoMessage = '登录成功';
+          console.log("登录成功，权限:", this.user.permission);
+          // 登录成功后执行的操作，例如加载文件列表
+          // await this.loadFiles('/'); // 假设有这个方法
+        } else {
+          this.errorMessage = response.data.message || '登录失败';
+        }
+      } catch (error) {
+        this.errorMessage = '登录请求失败: ' + (error.response?.data?.message || error.message);
       }
     },
+
     async register() {
       this.errorMessage = ''; this.infoMessage = '';
       if (!this.registerForm.username || !this.registerForm.password) {
@@ -334,22 +354,43 @@ normalizePath(p) {
         this.errorMessage = err.response?.data?.error || '注册失败';
       }
     },
-    logout() {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      this.loggedIn = false;
-      this.user = { username: '', is_admin: false };
-      this.systemInfo = { hostname: '', os: '', cpu_percent: 0, memory_total: 0, memory_used: 0, uptime: 0 };
-      this.disks = [];
-      this.sambaMessage = '';
-      this.errorMessage = '';
-      this.infoMessage = '';
-      this.showChangePw = false;
-      this.pwMsg = '';
-      delete axios.defaults.headers.common['Authorization'];
-      this.stopSysTimer();
+
+    async logout() {
+        try {
+            await axios.post('/api/logout');
+            this.loggedIn = false;
+            this.user = { username: '', is_admin: false, permission: 'readonly' }; // 重置用户信息
+            this.windows = []; // 关闭所有窗口
+            this.infoMessage = '已退出登录';
+        } catch (error) {
+            this.errorMessage = '退出登录失败';
+        }
     },
 
+
+
+    async checkAuth() {
+        try {
+            // 调用 *本节点* 的 /api/check-auth
+            const response = await axios.get('/api/check-auth');
+            if (response.data.authenticated) {
+                this.loggedIn = true;
+                this.user.username = response.data.user.username;
+                this.user.is_admin = response.data.user.role === 'admin';
+                // [核心修改] 保存从后端获取的权限
+                this.user.permission = response.data.user.permission || 'readonly';
+                console.log("已登录，权限:", this.user.permission);
+                // await this.loadFiles('/'); // 加载初始文件
+            } else {
+                this.loggedIn = false;
+            }
+        } catch (error) {
+            this.loggedIn = false;
+            console.error("认证检查失败:", error);
+            // 这里可以添加一个提示，告知用户可能需要重新登录
+            this.showToast('认证检查失败，请尝试重新登录', 'error');
+        }
+    },
     // ========== 修改密码 ==========
     showChangePasswordForm() {
       this.showChangePw = true;

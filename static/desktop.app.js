@@ -1,16 +1,11 @@
+axios.defaults.withCredentials = true;
 const { createApp } = Vue;
 
 createApp({
   data() {
   return {
-    // ========== 用户认证 ==========
-    loggedIn: false,
-    user: { username: '', is_admin: false },
-    showRegister: false,
-    loginForm: { username: '', password: '' },
-    registerForm: { username: '', password: '', confirm: '' },
-    errorMessage: '',
-    infoMessage: '',
+    loggedIn: false, // 保留这个
+user: { username: '', is_admin: false },
 
     // ========== 桌面系统 ==========
     windows: [],
@@ -84,63 +79,20 @@ async getEcCapacityEstimate() {
         this.ecSetupForm.capacityEstimate = null;
     }
 },
-    // ==========================================
-    async login() {
-      this.errorMessage = '';
-      if (!this.loginForm.username || !this.loginForm.password) {
-        this.errorMessage = '请输入用户名和密码';
-        return;
-      }
-      try {
-        const res = await axios.post('/api/login', {
-          username: this.loginForm.username,
-          password: this.loginForm.password
-        });
-        localStorage.setItem('token', res.data.token);
-        localStorage.setItem('user', JSON.stringify(res.data.user));
-        axios.defaults.headers.common['Authorization'] = 'Bearer ' + res.data.token;
-        this.user = res.data.user;
-        this.loggedIn = true;
-        this.loginForm.password = '';
-        await this.loadData();
-      } catch (err) {
-        this.errorMessage = err.response?.data?.error || '登录失败';
-      }
-    },
-
-    async register() {
-      this.errorMessage = '';
-      if (!this.registerForm.username || !this.registerForm.password) {
-        this.errorMessage = '请输入用户名和密码';
-        return;
-      }
-      if (this.registerForm.password !== this.registerForm.confirm) {
-        this.errorMessage = '两次密码输入不一致';
-        return;
-      }
-      try {
-        await axios.post('/api/register', {
-          username: this.registerForm.username,
-          password: this.registerForm.password
-        });
-        this.infoMessage = '注册成功,请登录';
-        this.loginForm.username = this.registerForm.username;
-        this.loginForm.password = this.registerForm.password;
-        this.showRegister = false;
-      } catch (err) {
-        this.errorMessage = err.response?.data?.error || '注册失败';
-      }
-    },
 
     logout() {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      this.loggedIn = false;
-      this.user = { username: '', is_admin: false };
-      this.windows = [];
-      this.showStartMenu = false;
-      delete axios.defaults.headers.common['Authorization'];
-    },
+  // 清除本地状态
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  this.loggedIn = false;
+  this.user = { username: '', is_admin: false };
+  this.windows = [];
+  this.showStartMenu = false;
+  delete axios.defaults.headers.common['Authorization'];
+
+  // ✅ 跳转到管理端登录页
+  window.location.href = '/admin/login'; // 根据你的管理端路由调整
+},
 
     // ==========================================
     // 数据加载
@@ -808,11 +760,13 @@ renameSelected(window) {
       alert(`已复制 ${window.selectedFiles.length} 项`);
     },
 
-    openUploadDialog(window) {
-      this.showUploadDialog = true;
-      this.uploadFiles = [];
-      this.uploadStatus = '';
-      this.currentUploadWindow = window;
+    openUploadDialog(window) { // 假设这是您的方法
+        if (!this.canWrite) {
+            this.showToast('权限不足，无法上传文件', 'error');
+            return;
+        }
+        this.currentUploadWindow = window; //
+        this.showUploadDialog = true; //
     },
 // 重命名文件/文件夹
 async renameFile(window, file, newName) {
@@ -869,51 +823,29 @@ async renameFile(window, file, newName) {
   this.closeContextMenu();
 },
     // 新建文件夹
-async createNewFolder(window) {
-  const folderName = prompt('请输入新文件夹名称:', '新建文件夹');
+async createNewFolder(window) { // 假设这是您的方法
+        if (!this.canWrite) {
+            this.showToast('权限不足，无法创建文件夹', 'error');
+            return;
+        }
+        const folderName = prompt('请输入新文件夹名称:', '新文件夹'); //
+        if (!folderName) return; //
 
-  if (!folderName || !folderName.trim()) {
-    return;
-  }
+        try {
+            const path = this.buildFullPath(window, folderName); //
+            // 注意: 后端 NAS 节点的 mkdir API 可能需要 parent 和 name 参数
+            // 请确保后端 /api/mkdir 接口与此处的调用匹配
+            // const parentPath = window.path; // 获取当前窗口路径
+            // await axios.post('/api/mkdir', { parent: parentPath, name: folderName });
+             await axios.post('/api/mkdir', { path: path }); // 假设您的 API 接受 path
 
-  // 检查文件名是否包含非法字符
-  if (/[<>:"/\\|?*]/.test(folderName)) {
-    this.showToast('❌ 文件夹名包含非法字符', 'error');
-    return;
-  }
-
-  try {
-    let parentPath;
-
-    // 构建父路径
-    if (window.currentDrive === 'ec_volume') {
-      parentPath = window.currentPath.startsWith('ec_volume')
-        ? window.currentPath
-        : 'ec_volume';
-    } else {
-      const cleanPath = window.currentPath.replace(/^\//, '');
-      parentPath = cleanPath ? window.currentDrive + cleanPath : window.currentDrive;
-    }
-
-    // 发送创建请求
-    const response = await axios.post('/api/mkdir', {
-      parent: parentPath,
-      name: folderName
-    });
-
-    if (response.data.success) {
-      this.showToast(`✅ 文件夹 "${folderName}" 创建成功`, 'success');
-      // 刷新文件列表
-      this.loadFiles(window);
-    } else {
-      this.showToast(`❌ 创建失败: ${response.data.error}`, 'error');
-    }
-  } catch (error) {
-    console.error('创建文件夹失败:', error);
-    const errorMsg = error.response?.data?.error || error.message;
-    this.showToast(`❌ 创建失败: ${errorMsg}`, 'error');
-  }
-},
+            this.showToast('✅ 文件夹创建成功', 'success');
+            this.loadFiles(window); //
+        } catch (error) {
+            console.error("创建文件夹失败:", error);
+            this.showToast('❌ 创建失败: ' + (error.response?.data?.error || error.message), 'error'); //
+        }
+    },
 
 
     // ==========================================
@@ -1092,65 +1024,120 @@ async decryptFileOrFolder(window, file) {
     // ==========================================
     // 右键菜单
     // ==========================================
-    showFileContextMenu(event, file, window) {
-  event.preventDefault();
+    showContextMenu(event, file, window) { // 确保方法名是 showContextMenu
+      event.preventDefault(); // 阻止浏览器默认右键菜单
 
-  // 判断文件是否已加密
-  const isEncrypted = file.name.endsWith('.encrypted');
+      // 判断文件是否已加密 (这部分逻辑保留)
+      const isEncrypted = file.name.endsWith('.encrypted');
 
-  this.contextMenu = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        icon: file.is_dir ? '📂' : '👁️',
-        label: file.is_dir ? '打开' : '预览',
-        action: () => {
-          if (file.is_dir) {
-            this.handleDoubleClick(window, file);
-          } else {
-            this.previewFile(window, file);
-          }
+      // 构建菜单项数组，并加入权限检查
+      const menuItems = [
+        {
+          icon: file.is_dir ? '📂' : '👁️',
+          label: file.is_dir ? '打开' : '预览',
+          action: () => {
+            if (file.is_dir) {
+              this.handleDoubleClick(window, file); // 假设 handleDoubleClick 用于打开文件夹
+            } else {
+              this.previewFile(window, file); // 假设 previewFile 用于预览文件
+            }
+            this.closeContextMenu(); // 操作后关闭菜单
+          },
+          // 打开/预览 只需要读取权限
+          disabled: !this.canRead || isEncrypted // 加密文件禁用预览
         },
-        disabled: isEncrypted  // 加密文件禁用预览
-      },
-      {
-        icon: '📥',
-        label: '下载',
-        action: () => this.downloadFile(window, file),
-        disabled: file.is_dir || isEncrypted  // 加密文件禁用下载
-      },
-      {
-        icon: '🔗',
-        label: '分享',
-        action: () => this.shareFile(window, file),
-        disabled: file.is_dir || isEncrypted  // 加密文件禁用分享
-      },
-      { separator: true },
-
-      // ✅ 新增：加密/解密选项
-      {
-        icon: isEncrypted ? '🔓' : '🔒',
-        label: isEncrypted ? '解密' : '加密',
-        action: () => {
-          if (isEncrypted) {
-            this.decryptFileOrFolder(window, file);
-          } else {
-            this.encryptFileOrFolder(window, file);
-          }
+        {
+          icon: '📥',
+          label: '下载',
+          action: () => {
+             this.downloadFile(window, file); // 假设 downloadFile 用于下载
+             this.closeContextMenu();
+          },
+          // 下载 只需要读取权限，但不能下载文件夹或加密文件
+          disabled: !this.canRead || file.is_dir || isEncrypted
+        },
+        {
+          icon: '🔗',
+          label: '分享',
+          action: () => {
+             this.shareFile(window, file); // 假设 shareFile 用于分享
+             this.closeContextMenu();
+          },
+          // 分享 通常需要至少读权限，也不能分享文件夹或加密文件 (根据您的 shareFile 逻辑调整)
+          disabled: !this.canRead || file.is_dir || isEncrypted
+        },
+        { separator: true }, // 分隔线
+        {
+          icon: '✂️',
+          label: '剪切',
+          action: () => {
+             this.cutFile(window, file); // 假设 cutFile 处理剪切
+             this.closeContextMenu();
+          },
+          // 剪切 需要写入权限 (因为后续需要粘贴，可能涉及删除原文件)
+          disabled: !this.canWrite
+        },
+        {
+          icon: '📋',
+          label: '复制',
+          action: () => {
+             this.copyFile(window, file); // 假设 copyFile 处理复制
+             this.closeContextMenu();
+          },
+          // 复制 只需要读取权限
+          disabled: !this.canRead
+        },
+         // 粘贴 通常不在这里，而是在文件夹空白处右键，或者直接用工具栏按钮
+        { separator: true }, // 分隔线
+        {
+          icon: '✏️',
+          label: '重命名',
+          action: () => {
+             this.renameFile(window, file); // 假设 renameFile 处理重命名
+             this.closeContextMenu();
+          },
+          // 重命名 需要写入权限
+          disabled: !this.canWrite
+        },
+        {
+          icon: '🗑️',
+          label: '删除',
+          action: () => {
+            // 注意：这里调用的是 deleteItem, 它内部会调用我们改好的 deleteFile
+             this.deleteItem(window, file);
+             // deleteItem 内部会调用 closeContextMenu，所以这里不用再调
+          },
+          // 删除 需要完全控制权限
+          disabled: !this.canDelete
+        },
+        // --- 加密/解密 ---
+        // (将加密/解密放到最后，或者根据您的喜好调整顺序)
+        { separator: true },
+        {
+          icon: isEncrypted ? '🔓' : '🔒',
+          label: isEncrypted ? '解密文件' : '加密文件',
+          action: () => {
+            if (isEncrypted) {
+              this.decryptFileOrFolder(window, file); // 假设处理解密
+            } else {
+              this.encryptFileOrFolder(window, file); // 假设处理加密
+            }
+            this.closeContextMenu();
+          },
+          // 加密/解密 通常需要较高权限，我们用 '完全控制' (canDelete) 来控制
+          // 文件夹的加密/解密逻辑可能更复杂，这里暂时统一处理
+          disabled: !this.canDelete
         }
-      },
+      ];
 
-      { separator: true },
-      { icon: '✂️', label: '剪切', action: () => this.cutFile(window, file) },
-      { icon: '📋', label: '复制', action: () => this.copyFile(window, file) },
-      { separator: true },
-      { icon: '✏️', label: '重命名', action: () => this.renameFile(window, file) },
-      { icon: '🗑️', label: '删除', action: () => this.deleteFile(window, file) }
-    ]
-  };
-},
+      // 更新 contextMenu 数据以显示菜单
+      this.contextMenu = {
+        show: true,
+        x: event.clientX,
+        y: event.clientY,
+        items: menuItems // 使用我们构建好的带权限检查的数组
+      };
+    },
     showEmptyAreaContextMenu(event, window) {
       event.preventDefault();
 
@@ -1265,35 +1252,45 @@ async decryptFileOrFolder(window, file) {
 
 
 
-    async deleteFile(window, file) {
-      if (!confirm(`确认删除 ${file.name}?`)) {
-        this.closeContextMenu();
+    async deleteFile(window, file) { // 这是您提供的函数签名
+      // 1. [新增] 前端权限检查 (使用计算属性)
+      if (!this.canDelete) {
+          this.showToast('权限不足，无法删除文件', 'error'); // 使用 showToast 显示错误
+          this.closeContextMenu(); // 关闭右键菜单
+          return;
+      }
+
+      // 保留确认对话框
+      if (!confirm(`确认删除 ${file.name}?`)) { //
+        this.closeContextMenu(); //
         return;
       }
 
       try {
-        const fullPath = this.buildFullPath(window, file.name);
-        const response = await fetch('/api/delete', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ path: fullPath })
+        // 假设 this.buildFullPath 是您用于构建完整路径的辅助函数
+        const fullPath = this.buildFullPath(window, file.name); //
+
+        // 2. [修改] 使用 axios 并移除 Authorization header
+        //    确保 /api/delete 是您后端 NAS 节点上正确的删除 API 路由
+        const response = await axios.post('/api/delete', { // 改为 axios
+             path: fullPath //
         });
+        // axios 对于非 2xx 响应会自动抛出错误, 所以直接检查 data
 
-        const data = await response.json();
-
-        if (data.success) {
-          this.loadFiles(window);
+        if (response.data.success) { //
+          this.showToast('✅ 删除成功', 'success'); // 使用 showToast
+          this.loadFiles(window); // 重新加载文件列表
         } else {
-          alert('❌ 删除失败: ' + data.error);
+          // 如果后端返回 success: false 但状态码是 2xx (理论上不应该)
+          this.showToast('❌ 删除失败: ' + (response.data.error || '未知错误'), 'error'); //
         }
       } catch (error) {
-        alert('❌ 删除失败: ' + error.message);
+        // 处理 axios 抛出的错误 (网络问题, 或后端返回 4xx/5xx 状态码)
+        console.error("删除文件时出错:", error);
+        this.showToast('❌ 删除失败: ' + (error.response?.data?.error || error.message), 'error'); //
       }
 
-      this.closeContextMenu();
+      this.closeContextMenu(); //
     },
 
     // 文件类型检查辅助方法
@@ -1840,30 +1837,77 @@ openECDetailConfig() {
   this.showStartMenu = false;
 },
 
-   // 建议放在 openECDetailConfig 方法的后面
+// ====== 客户端 desktop_app.js 的 checkCurrentUser 方法 ======
+// 完整替换原有的 checkCurrentUser 方法
 
-// [新增] 删除EC配置的方法
-async deleteEcConfig(window) {
-  // 风险操作，需要用户确认
-  if (!confirm('⚠️ 警告：删除配置将不可恢复，但不会删除已编码的数据文件。您确定要删除纠删码配置吗？')) {
-    return;
+async checkCurrentUser() {
+  // 1. 检查 URL 中是否有 token 参数
+  const urlParams = new URLSearchParams(window.location.search);
+  const accessToken = urlParams.get('token');
+
+  if (accessToken) {
+    // ✅ 访问令牌登录流程
+    try {
+      const res = await axios.post('/api/verify-access-token', {
+        token: accessToken
+      });
+
+      if (res.data.success && res.data.user && res.data.token) {
+        this.user = res.data.user;
+        this.loggedIn = true;
+
+        // 保存新的长期 token
+        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        axios.defaults.headers.common['Authorization'] = 'Bearer ' + res.data.token;
+
+        // ✅ 清除 URL 中的 token(安全!)
+        window.history.replaceState({}, document.title, '/desktop');
+
+        await this.loadData();
+        this.showToast(`✅ 欢迎回来, ${this.user.username}`, 'success');
+        return;
+      }
+    } catch (err) {
+      console.error('Token 验证失败:', err);
+      this.showToast('❌ 访问令牌无效或已过期,请重新登录', 'error');
+      // 清除本地认证信息
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // ✅ 跳转回管理端登录页,带上 redirect=client 参数
+      setTimeout(() => {
+        window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client&node_id=node-5';
+      }, 2000);
+      return;
+    }
   }
 
-  try {
-    this.showToast('🔄 正在删除配置...', 'info');
-    await axios.delete('/api/ec_config');
-    this.showToast('✅ 纠删码配置已成功删除', 'success');
+  // 2. 检查本地是否有 token
+  const localToken = localStorage.getItem('token');
+  if (localToken) {
+    try {
+      axios.defaults.headers.common['Authorization'] = 'Bearer ' + localToken;
+      const res = await axios.get('/api/current-user');
 
-    // 重新加载系统数据以更新状态
-    await this.loadData();
-
-    // 关闭当前的详细信息窗口
-    this.closeWindow(window.id);
-
-  } catch (error) {
-    const errorMsg = error.response?.data?.error || error.message;
-    this.showToast(`❌ 删除失败: ${errorMsg}`, 'error');
+      if (res.data.user) {
+        this.user = res.data.user;
+        this.loggedIn = true;
+        await this.loadData();
+        return;
+      }
+    } catch (err) {
+      // token 过期,清除
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
   }
+
+  // 3. 都没有,跳转回管理端登录页
+  this.showToast('❌ 未登录,请先登录', 'warning');
+  setTimeout(() => {
+    // ✅ 跳转回管理端登录页,带上 redirect=client 参数
+    window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client&node_id=node-5';
+  }, 1000);
 },
     openEncryptionConfig() {
       alert('打开磁盘加密配置\n(跳转到传统配置界面)');
@@ -1957,70 +2001,62 @@ async deleteEcConfig(window) {
     },  // ⚠️ 注意这里有逗号!
 
     // 显示Toast提示消息
-    showToast(message, type = 'info') {
-      // 创建toast元素
-      const toast = document.createElement('div');
-      toast.textContent = message;
-      toast.className = `fixed top-20 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg shadow-lg text-white font-semibold z-[9999] transition-all duration-300`;
+    showToast(message, type = 'info') { //
+      // ... (您的 showToast 代码) ...
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.className = `fixed top-5 left-1/2 transform -translate-x-1/2 text-white px-6 py-3 rounded-lg shadow-lg z-[2000] opacity-0 transition-all duration-300`;
 
-      // 根据类型设置颜色
-      if (type === 'success') {
-        toast.classList.add('bg-green-500');
-      } else if (type === 'error') {
-        toast.classList.add('bg-red-500');
-      } else {
-        toast.classList.add('bg-blue-500');
-      }
+        // 根据类型设置颜色
+        if (type === 'success') {
+            toast.classList.add('bg-green-500');
+        } else if (type === 'error') {
+            toast.classList.add('bg-red-500');
+        } else {
+            toast.classList.add('bg-blue-500');
+        }
 
-      document.body.appendChild(toast);
+        document.body.appendChild(toast);
 
-      // 动画效果
-      setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translate(-50%, -20px)';
-      }, 2000);
+        // 动画效果
+        setTimeout(() => {
+            toast.style.opacity = '1'; // 先显示
+            toast.style.transform = 'translate(-50%, 0)';
+        }, 50); // 短暂延迟确保元素已渲染
 
-      setTimeout(() => {
-        document.body.removeChild(toast);
-      }, 2500);
-    }  // ⚠️ 注意:最后一个方
-  },
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translate(-50%, -20px)';
+        }, 2000); // 2秒后开始消失
 
+        setTimeout(() => {
+            if (document.body.contains(toast)) { // 检查元素是否还在
+                document.body.removeChild(toast);
+            }
+        }, 2500); // 2.5秒后移除DOM
+    }
+},
 
   mounted() {
-    // 更新时间
-    this.updateTime();
-    setInterval(this.updateTime, 1000);
+  this.updateTime();
+  setInterval(this.updateTime, 1000);
 
-    // 阻止默认右键菜单
-    document.addEventListener('contextmenu', (e) => {
-      if (this.loggedIn) {
-        e.preventDefault();
-      }
-    });
-
-    // 点击关闭右键菜单
-    document.addEventListener('click', () => {
-      if (this.contextMenu.show) {
-        this.closeContextMenu();
-      }
-      if (this.showStartMenu) {
-        this.showStartMenu = false;
-      }
-    });
-
-    // 检查是否已登录
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
-    if (token && userData) {
-      try {
-        axios.defaults.headers.common['Authorization'] = 'Bearer ' + token;
-        this.user = JSON.parse(userData);
-        this.loggedIn = true;
-        this.loadData();
-      } catch (e) {
-        this.logout();
-      }
+  document.addEventListener('contextmenu', (e) => {
+    if (this.loggedIn) {
+      e.preventDefault();
     }
-  }
+  });
+
+  document.addEventListener('click', () => {
+    if (this.contextMenu.show) {
+      this.closeContextMenu();
+    }
+    if (this.showStartMenu) {
+      this.showStartMenu = false;
+    }
+  });
+
+  // ✅ 改为调用新的检查用户方法
+  this.checkCurrentUser();
+}
 }).mount('#app');

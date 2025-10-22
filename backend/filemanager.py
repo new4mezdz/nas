@@ -4,10 +4,10 @@
 
 import os
 import shutil
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
 # 确保从 common 导入 _is_ec_volume
-from common import token_required, get_actual_file_path, is_path_allowed, _is_ec_volume
-# ...
+from common import get_actual_file_path, is_path_allowed, _is_ec_volume
+from permission_decorator import permission_required
 # 确保所有文件操作路由都已在 app.py 中用 EC 卷逻辑优先实现。
 # 本文件只保留 app.py 中没有的或功能不重复的路由。
 
@@ -22,7 +22,7 @@ file_bp = Blueprint('filemanager', __name__, url_prefix='/api')
 
 # ========== 1. 创建目录 (/api/mkdir) - 集成 EC 卷隔离 ==========
 @file_bp.route('/mkdir', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('readwrite')
 def make_dir():
     data = request.json
     parent = data.get('parent', '/')
@@ -39,10 +39,9 @@ def make_dir():
 
     # 2. 物理盘创建
     try:
-        # 使用 get_actual_file_path 来解析父目录，保证路径安全
+        # (这部分逻辑不变)
         parent_abs = get_actual_file_path(parent)
 
-        # 路径安全检查
         if not parent_abs or _is_ec_volume(parent_abs):
             return jsonify({"error": "路径无效或 EC 卷处理错误"}), 400
         if not os.path.isdir(parent_abs):
@@ -50,7 +49,6 @@ def make_dir():
 
         abs_path = os.path.join(parent_abs, new_dir)
 
-        # 最终安全检查
         if not is_path_allowed(abs_path):
             return jsonify({"error": "不允许访问该路径"}), 403
 
@@ -64,8 +62,9 @@ def make_dir():
 
 
 # ========== 2. 文件编辑 (/api/edit) - 集成 EC 卷隔离 ==========
+# 5. [修改] 替换装饰器 (注意：这里改为'readonly'，允许只读用户查看)
 @file_bp.route('/edit', methods=['GET', 'POST'])
-@token_required()
+@permission_required('readonly')
 def edit_file():
     req_path = request.args.get('path') or request.get_json().get('path')
     if not req_path:
@@ -78,14 +77,14 @@ def edit_file():
     # 2. 物理盘处理
     actual_path = get_actual_file_path(req_path)
 
-    # 路径安全检查
     if not actual_path or not os.path.exists(actual_path) or not os.path.isfile(actual_path):
         return jsonify({'error': '文件不存在或不是文件'}), 404
     if not is_path_allowed(actual_path):
         return jsonify({"error": "路径不在允许的目录中"}), 403
 
     if request.method == 'GET':
-        # 读取文件内容
+        # (GET请求，'readonly' 权限已足够)
+        # (读取逻辑不变)
         try:
             encodings = ['utf-8', 'utf-16', 'gbk', 'latin-1']
             content = None
@@ -103,7 +102,21 @@ def edit_file():
             return jsonify({"error": f"读取失败: {str(e)}"}), 500
 
     elif request.method == 'POST':
-        # 保存文件内容
+
+        # 6. [新增] 内部权限检查！
+        # 装饰器只检查了 'readonly'，但 POST 保存需要 'readwrite' 权限
+        user_perm = session.get('file_permission', 'readonly')
+        user_role = session.get('role')
+
+        # 检查是否不是管理员，并且权限低于 'readwrite'
+        if user_role != 'admin' and user_perm not in ['readwrite', 'fullcontrol']:
+            return jsonify({
+                "error": "权限不足",
+                "message": f"保存文件需要 'readwrite' 或 'fullcontrol' 权限，您当前为 '{user_perm}'"
+            }), 403
+
+        # (权限检查通过，开始保存文件)
+        # (保存逻辑不变)
         data = request.get_json()
         new_content = data.get('content', '')
 

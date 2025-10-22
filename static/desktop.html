@@ -301,54 +301,25 @@
 <body>
 
   <div id="app">
-    <!-- 登录界面 -->
-    <div v-if="!loggedIn" class="fixed inset-0 flex items-center justify-center"
-         style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-      <div class="bg-white/90 backdrop-blur-xl p-8 rounded-2xl shadow-2xl w-96">
-        <h1 class="text-3xl font-bold text-center mb-6 bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-          NAS Desktop
-        </h1>
-        <div v-if="!showRegister">
-          <input v-model="loginForm.username"
-                 type="text"
-                 placeholder="用户名"
-                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
-          <input v-model="loginForm.password"
-                 type="password"
-                 placeholder="密码"
-                 @keyup.enter="login"
-                 class="w-full px-4 py-3 mb-4 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
-          <button @click="login"
-                  class="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition">
-            登录
-          </button>
-          <p class="text-center mt-4 text-sm">
-            没有账号? <a href="#" @click.prevent="showRegister=true" class="text-purple-600 font-semibold">注册</a>
-          </p>
-        </div>
-        <div v-else>
-          <input v-model="registerForm.username" type="text" placeholder="用户名"
-                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
-          <input v-model="registerForm.password" type="password" placeholder="密码"
-                 class="w-full px-4 py-3 mb-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
-          <input v-model="registerForm.confirm" type="password" placeholder="确认密码"
-                 @keyup.enter="register"
-                 class="w-full px-4 py-3 mb-4 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none">
-          <button @click="register"
-                  class="w-full bg-gradient-to-r from-green-600 to-teal-600 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition">
-            注册
-          </button>
-          <p class="text-center mt-4 text-sm">
-            已有账号? <a href="#" @click.prevent="showRegister=false" class="text-purple-600 font-semibold">登录</a>
-          </p>
-        </div>
-        <p v-if="errorMessage" class="mt-4 text-center text-red-600 text-sm">{{ errorMessage }}</p>
-        <p v-if="infoMessage" class="mt-4 text-center text-green-600 text-sm">{{ infoMessage }}</p>
+<!-- 顶部用户信息栏 -->
+  <div v-if="currentUser" class="fixed top-0 left-0 right-0 bg-black/80 text-white px-4 py-2 z-50 flex justify-between items-center">
+    <div class="flex items-center gap-3">
+      <span class="text-lg">👤</span>
+      <div>
+        <div class="font-semibold">{{ currentUser.username }}</div>
+        <div class="text-xs opacity-80">权限: {{ currentUser.file_permission }}</div>
       </div>
     </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs opacity-70">来自管理中心</span>
+      <button @click="logout" class="px-3 py-1 bg-red-500 rounded hover:bg-red-600">
+        退出
+      </button>
+    </div>
+  </div>
 
     <!-- 桌面环境 -->
-    <div v-else>
+    <div v-if="loggedIn">
       <!-- 桌面 -->
       <div class="desktop fixed inset-0"
            @contextmenu.prevent="showDesktopMenu"
@@ -439,9 +410,9 @@
                 <div class="flex-1 bg-white border px-3 py-1.5 rounded text-sm font-mono overflow-x-auto">
                   {{ window.currentDrive === 'ec_volume' ? '[纠删码卷]' : window.currentDrive }} {{ window.currentPath }}
                 </div>
-                <button @click="refreshFiles(window)"
-                        class="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600"
-                        title="刷新">
+                <button @click="loadFiles(window)"
+                     :disabled="!canRead"
+                     class="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1">
                   🔄
                 </button>
               </div>
@@ -451,8 +422,8 @@
                 <!-- 文件操作 -->
                 <div class="flex items-center gap-1 border-r pr-2">
                   <button @click="openUploadDialog(window)"
-                          class="px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm flex items-center gap-1"
-                          title="上传文件">
+                    :disabled="!canWrite"
+                    class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1">
                     📤 上传
                   </button>
                   <button @click="downloadSelected(window)"
@@ -465,46 +436,40 @@
 
                 <!-- 编辑操作 -->
                 <div class="flex items-center gap-1 border-r pr-2">
-                  <button @click="createNewFolder(window)"
-                          class="px-3 py-1.5 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm flex items-center gap-1"
-                          title="新建文件夹">
-                    📁 新建
-                  </button>
-                  <button @click="renameSelected(window)"
-                          :disabled="window.selectedFiles.length !== 1"
-                          class="px-3 py-1.5 bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
-                          title="重命名">
-                    ✏️ 重命名
-                  </button>
-                  <button @click="deleteSelected(window)"
-                          :disabled="window.selectedFiles.length === 0"
-                          class="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
-                          title="删除">
-                    🗑️ 删除
-                  </button>
-                </div>
+  <button @click="createNewFolder(window)"
+    :disabled="!canWrite"
+    class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1">
+    📁 新建
+  </button>
+  <button @click="renameSelected(window)"
+          :disabled="window.selectedFiles.length !== 1 || !canWrite" class="px-3 py-1.5 bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+          title="重命名">
+    ✏️ 重命名
+  </button>
+  <button @click="deleteSelected(window)"
+          :disabled="window.selectedFiles.length === 0 || !canDelete" class="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+          title="删除">
+    🗑️ 删除
+  </button>
+</div>
 
-                <!-- 剪贴板操作 -->
                 <div class="flex items-center gap-1 border-r pr-2">
-                  <button @click="cutSelected(window)"
-                          :disabled="window.selectedFiles.length === 0"
-                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
-                          title="剪切">
-                    ✂️ 剪切
-                  </button>
-                  <button @click="copySelected(window)"
-                          :disabled="window.selectedFiles.length === 0"
-                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
-                          title="复制">
-                    📋 复制
-                  </button>
-                  <button @click="pasteFiles(window)"
-                          :disabled="!window.clipboard.items.length"
-                          class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
-                          title="粘贴">
-                    📌 粘贴
-                  </button>
-                </div>
+  <button @click="cutSelected(window)"
+          :disabled="window.selectedFiles.length === 0 || !canWrite" class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+          title="剪切">
+    ✂️ 剪切
+  </button>
+  <button @click="copySelected(window)"
+          :disabled="window.selectedFiles.length === 0 || !canRead" class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+          title="复制">
+    📋 复制
+  </button>
+  <button @click="pasteFiles(window)"
+          :disabled="!window.clipboard.items.length || !canWrite" class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-1"
+          title="粘贴">
+    📌 粘贴
+  </button>
+</div>
 
                 <!-- 选择操作 -->
                 <div class="flex items-center gap-1 border-r pr-2">

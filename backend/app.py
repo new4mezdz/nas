@@ -14,6 +14,10 @@ from datetime import datetime, timedelta
 import hashlib
 # ===== Third-Party =====
 from flask import Flask, request, jsonify, send_file, send_from_directory, g
+# ... (在 import hashlib 之后)
+from flask import session             # 导入 Flask session
+from auth import init_auth          # 导入我们新的 auth.py
+from permission_decorator import permission_required # 导入我们新的权限装饰器
 from flask_socketio import SocketIO
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
@@ -44,6 +48,7 @@ from encryption import EncryptionManager, NotUnlockedError
 # ===== 配置 =====
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
+init_auth(app)  # 注册来自 auth.py 的 /api/login, /api/logout 路由
 
 # 初始化SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -64,6 +69,95 @@ EC_CFG_PATH = os.path.join(BACKEND_DIR, "ec_config.json")
 EC_IDX_PATH = os.path.join(BACKEND_DIR, "ec_index.json")
 ENCRYPTION_CFG_PATH = os.path.join(BACKEND_DIR, "encryption_config.json")
 encryption_manager = EncryptionManager(config_path=ENCRYPTION_CFG_PATH)
+
+# ===== 管理端配置 =====
+NAS_CENTER_API_URL = "http://127.0.0.1:8080"  # 管理端地址
+NAS_SHARED_SECRET = "your-shared-secret-key"   # 共享密钥(需与管理端一致)
+
+# backend/app.py (客户端)
+
+import jwt
+
+# 在文件开头添加 (与管理端保持一致)
+ACCESS_TOKEN_SECRET = 'your-access-token-secret-key'
+
+
+# =====================================================
+# 客户端 backend/app.py
+# 完整替换 /api/verify-access-token 路由 (第 87-120 行)
+# =====================================================
+
+@app.route('/api/verify-access-token', methods=['POST'])
+def verify_access_token():
+    """验证来自管理端的访问令牌"""
+    print("[DEBUG] ========== 开始验证访问令牌 ==========")
+
+    try:
+        # 1. 获取请求数据
+        data = request.json
+        print(f"[DEBUG] 请求数据: {data}")
+
+        token = data.get('token') if data else None
+        print(f"[DEBUG] Token: {token[:50] if token else 'None'}...")
+
+        if not token:
+            print("[DEBUG] ❌ 错误: 缺少令牌")
+            return jsonify({'success': False, 'error': '缺少令牌'}), 400
+
+        # 2. 使用 ACCESS_TOKEN_SECRET 解码令牌 (管理端生成的)
+        print(f"[DEBUG] 使用密钥解码令牌: ACCESS_TOKEN_SECRET")
+        payload = jwt.decode(token, ACCESS_TOKEN_SECRET, algorithms=['HS256'])
+        print(f"[DEBUG] ✅ 解码成功! Payload: {payload}")
+
+        # 3. 提取用户信息
+        user_id = payload.get('user_id')
+        username = payload.get('username')
+        role = payload.get('role', 'user')
+        file_permission = payload.get('file_permission', 'readonly')
+
+        print(f"[DEBUG] 用户信息: ID={user_id}, 用户名={username}, 角色={role}, 权限={file_permission}")
+
+        if not username:
+            print("[DEBUG] ❌ 错误: 令牌中缺少用户信息")
+            return jsonify({'success': False, 'error': '令牌中缺少用户信息'}), 401
+
+        # 4. 生成新的长期 token (用于客户端本地存储)
+        print("[DEBUG] 生成新的长期 token...")
+        new_token = jwt.encode({
+            'user_id': user_id,
+            'username': username,
+            'role': role,
+            'file_permission': file_permission,
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+        print(f"[DEBUG] ✅ 新 token 生成成功: {new_token[:50]}...")
+
+        # 5. 返回结果
+        result = {
+            'success': True,
+            'user': {
+                'id': user_id,
+                'username': username,
+                'role': role,
+                'file_permission': file_permission
+            },
+            'token': new_token
+        }
+        print(f"[DEBUG] ✅ 验证成功! 返回结果: {result}")
+        print("[DEBUG] ========== 验证完成 ==========")
+        return jsonify(result)
+
+    except jwt.ExpiredSignatureError:
+        print("[DEBUG] ❌ 错误: Token 已过期")
+        return jsonify({'success': False, 'error': 'Token 已过期'}), 401
+    except jwt.InvalidTokenError as e:
+        print(f"[DEBUG] ❌ 错误: 令牌无效 - {str(e)}")
+        return jsonify({'success': False, 'error': f'令牌无效: {str(e)}'}), 401
+    except Exception as e:
+        print(f"[DEBUG] ❌ 异常: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'验证失败: {str(e)}'}), 400
 def _load_json(path: str, default):
     try:
         if os.path.exists(path):
@@ -79,6 +173,29 @@ def _save_json(path: str, obj):
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
+def verify_user_permission_from_center(username):
+    """
+    向管理端查询用户权限
+    返回: {'file_permission': 'readonly', 'role': 'user'} 或 None
+    """
+    try:
+        response = requests.post(
+            f"{NAS_CENTER_API_URL}/api/internal/get-user-permission",
+            json={'username': username},
+            headers={'X-NAS-Secret': NAS_SHARED_SECRET},
+            timeout=3
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'file_permission': data.get('file_permission', 'readonly'),
+                'role': data.get('role', 'user')
+            }
+        return None
+    except Exception as e:
+        print(f"[ERROR] 向管理端查询权限失败: {e}")
+        return None
 
 
 
@@ -139,29 +256,6 @@ def close_db(error):
         db.close()
 
 
-def init_db():
-    db = get_db()
-    db.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        is_admin INTEGER NOT NULL DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        registered_at TEXT NOT NULL,
-        current_directory TEXT DEFAULT ''
-    )''')
-    # 保证有一个admin账号
-    cur = db.execute("SELECT COUNT(*) FROM users WHERE is_admin=1", ())
-    if cur.fetchone()[0] == 0:
-        db.execute(
-            "INSERT INTO users (username, password, is_admin, is_active, registered_at, current_directory) VALUES (?, ?, ?, ?, ?, ?)",
-            ("admin", generate_password_hash("123"), 1, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "")
-        )
-    db.commit()
-
-
-with app.app_context():
-    init_db()
 
 
 def init_share_table():
@@ -189,75 +283,12 @@ with app.app_context():
 def index():
     static_folder = app.static_folder or 'static'
     return send_from_directory(static_folder, "desktop.html")
-# ========== 确保原有的token_required装饰器支持多种token传递方式 ==========
-def token_required(f=None, admin_only=False):
-    def decorator(func):
-        @wraps(func)
-        def decorated(*args, **kwargs):
-            token = None
 
-            # 方法1: 从Authorization header获取
-            auth_header = request.headers.get('Authorization')
-            if auth_header and auth_header.startswith('Bearer '):
-                token = auth_header.split(' ')[1]
-
-            # 方法2: 从URL参数获取
-            if not token:
-                token = request.args.get('token')
-
-            # 方法3: 从form数据获取
-            if not token and hasattr(request, 'form') and request.form:
-                token = request.form.get('token')
-
-            if not token:
-                print(f"[DEBUG] Token缺失 - 路径: {request.path}")
-                return jsonify({'error': '缺少Token'}), 401
-
-            try:
-                # 验证token
-                data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-                user_id = data.get('id')
-
-                if not user_id:
-                    print(f"[DEBUG] Token中缺少用户ID")
-                    return jsonify({'error': 'Token格式错误'}), 401
-
-                # 检查用户是否存在且活跃
-                db = get_db()
-                user = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-
-                if not user:
-                    print(f"[DEBUG] 用户不存在: {user_id}")
-                    return jsonify({'error': '用户不存在'}), 401
-
-                if not user['is_active']:
-                    print(f"[DEBUG] 用户已禁用: {user['username']}")
-                    return jsonify({'error': '用户已禁用'}), 401
-
-                # 检查管理员权限
-                if admin_only and not user['is_admin']:
-                    print(f"[DEBUG] 权限不足: {user['username']}")
-                    return jsonify({'error': '管理员权限不足'}), 403
-
-                g.user = user_id
-
-            except jwt.ExpiredSignatureError:
-                print("[DEBUG] Token已过期")
-                return jsonify({'error': 'Token已过期'}), 401
-            except jwt.InvalidTokenError as e:
-                print(f"[DEBUG] Token无效: {e}")
-                return jsonify({'error': 'Token无效'}), 401
-            except Exception as e:
-                print(f"[DEBUG] Token验证异常: {e}")
-                return jsonify({'error': 'Token验证失败'}), 401
-
-            return func(*args, **kwargs)
-
-        return decorated
-
-    if callable(f):
-        return decorator(f)
-    return decorator
+@app.route("/desktop")
+def desktop_page():
+    """管理端跳转入口 - 显示桌面页面"""
+    static_folder = app.static_folder or 'static'
+    return send_from_directory(static_folder, "desktop.html")
 
 
 # 在文件末尾 if __name__ == '__main__': 之前添加
@@ -276,6 +307,54 @@ def get_node_info():
         'version': '1.0.0'
     })
 
+
+@app.route('/api/sso-login', methods=['POST'])
+def sso_login():
+    """使用SSO令牌登录"""
+    data = request.json
+    sso_token = data.get('sso_token')
+
+    try:
+        # 验证SSO令牌
+        payload = jwt.decode(sso_token, app.config['SECRET_KEY'], algorithms=['HS256'])
+
+        if payload.get('type') != 'sso_access':
+            return jsonify({'error': '无效的令牌类型'}), 401
+
+        username = payload.get('username')
+
+        # 查找或创建用户
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            # 如果用户不存在,可以选择:
+            # 1. 自动创建用户(推荐)
+            user = User(username=username, is_admin=False)
+            user.set_password(secrets.token_urlsafe(32))  # 随机密码
+            db.session.add(user)
+            db.session.commit()
+            # 2. 或者返回错误
+            # return jsonify({'error': '用户不存在'}), 404
+
+        # 生成正式token
+        regular_token = jwt.encode({
+            'user_id': user.id,
+            'username': user.username,
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+
+        return jsonify({
+            'user': {
+                'username': user.username,
+                'is_admin': user.is_admin,
+                'file_permission': user.file_permission
+            },
+            'token': regular_token
+        })
+
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'SSO令牌已过期'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'error': '无效的SSO令牌'}), 401
 
 @app.route('/api/system-stats', methods=['GET'])
 def get_system_stats():
@@ -374,51 +453,13 @@ def get_disks_info():
     except Exception as e:
         print(f"[ERROR] 获取磁盘信息失败: {e}")
         return jsonify({'error': str(e)}), 500
-# ===== 用户注册/登录 =====
-@app.route('/api/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
-    if not username or not password:
-        return jsonify({'error': '用户名和密码不能为空'}), 400
-    db = get_db()
-    try:
-        db.execute(
-            "INSERT INTO users (username, password, is_admin, is_active, registered_at, current_directory) VALUES (?, ?, 0, 1, ?, ?)",
-            (username, generate_password_hash(password), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "")
-        )
-        db.commit()
-        return jsonify({'success': True, 'message': '注册成功'})
-    except sqlite3.IntegrityError:
-        return jsonify({'error': '用户名已存在'}), 400
 
 
-@app.route('/api/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
-    db = get_db()
-    cur = db.execute("SELECT * FROM users WHERE username=?", (username,))
-    user = cur.fetchone()
-    if not user or not check_password_hash(user['password'], password):
-        return jsonify({'error': '用户名或密码错误'}), 401
-    if not user['is_active']:
-        return jsonify({'error': '账号已被禁用'}), 403
-    token = jwt.encode(
-        {'id': user['id'], 'exp': datetime.utcnow() + timedelta(hours=24)},
-        app.config['SECRET_KEY'],
-        algorithm="HS256"
-    )
-    return jsonify({'success': True, 'token': token, 'user': {
-        'username': user['username'],
-        'is_admin': bool(user['is_admin'])
-    }})
+
 
 # [新增] EC容量预估接口
 @app.route("/api/ec_estimate", methods=["POST"])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def api_ec_estimate():
     """根据传入的k值和磁盘列表，实时估算可用容量"""
     data = request.get_json()
@@ -434,77 +475,13 @@ def api_ec_estimate():
         return jsonify(estimate)
     except Exception as e:
         return jsonify({"error": f"计算容量失败: {str(e)}"}), 500
-# ===== 用户管理后台 =====
-@app.route('/api/users', methods=['GET'])
-@token_required(admin_only=True)
-def get_users():
-    db = get_db()
-    users = db.execute("SELECT id, username, is_admin, is_active, registered_at FROM users ORDER BY id").fetchall()
-    return jsonify([dict(u) for u in users])
 
 
-@app.route('/api/users/<int:user_id>', methods=['PATCH'])
-@token_required(admin_only=True)
-def update_user(user_id):
-    data = request.get_json()
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-    if not user:
-        return jsonify({"error": "用户不存在"}), 404
-    # 防止管理员把自己禁用或降权
-    if user['id'] == g.user:
-        if 'is_active' in data and not data['is_active']:
-            return jsonify({"error": "不能禁用自己"}), 400
-        if 'is_admin' in data and not data['is_admin']:
-            return jsonify({"error": "不能取消自己的管理员权限"}), 400
-    # 只允许更新 is_admin / is_active
-    fields = []
-    params = []
-    if 'is_admin' in data:
-        fields.append("is_admin=?")
-        params.append(1 if data['is_admin'] else 0)
-    if 'is_active' in data:
-        fields.append("is_active=?")
-        params.append(1 if data['is_active'] else 0)
-    if not fields:
-        return jsonify({"error": "无可更新字段"}), 400
-    params.append(user_id)
-    db.execute(f"UPDATE users SET {', '.join(fields)} WHERE id=?", params)
-    db.commit()
-    return jsonify({"success": True})
 
 
-# 更新用户当前目录
-@app.route('/api/current-directory', methods=['POST'])
-@token_required()
-def update_current_directory():
-    data = request.get_json()
-    directory = data.get('directory', '').strip()
-
-    # 验证目录路径是否在BASE_DIR下
-    if directory:
-        abs_path = os.path.abspath(os.path.join(BASE_DIRS[0], directory))
-        if not abs_path.startswith(os.path.abspath(BASE_DIRS[0])):
-            return jsonify({'error': '非法路径'}), 403
-        if not os.path.exists(abs_path) or not os.path.isdir(abs_path):
-            return jsonify({'error': '目录不存在'}), 404
-
-    # 更新用户当前目录
-    db = get_db()
-    db.execute("UPDATE users SET current_directory=? WHERE id=?", (directory, g.user))
-    db.commit()
-
-    return jsonify({'success': True, 'current_directory': directory})
 
 
-# 获取用户当前目录
-@app.route('/api/current-directory', methods=['GET'])
-@token_required()
-def get_current_directory():
-    db = get_db()
-    cur = db.execute("SELECT current_directory FROM users WHERE id=?", (g.user,))
-    user = cur.fetchone()
-    return jsonify({'current_directory': user['current_directory'] or ''})
+
 
 
 # ===== 系统/磁盘信息接口 =====
@@ -519,6 +496,7 @@ from hardware_monitor import hardware_monitor
 # 文件: 客户端 app.py
 
 @app.route('/api/system', methods=['GET'])
+@permission_required('readonly')
 def api_system():
     """获取系统信息，包括硬件监控数据"""
     try:
@@ -543,7 +521,7 @@ def api_system():
         return jsonify({'error': f'获取系统信息时发生内部错误: {str(e)}'}), 500
 
 @app.route('/api/disk', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def api_disk():
     """
     获取磁盘信息，并排除系统盘（C:\ 或 /）
@@ -592,7 +570,7 @@ def api_disk():
 
 # 获取可用盘符
 @app.route('/api/drives', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_drives():
     """获取系统中可用的盘符"""
     available_drives = get_available_drives()
@@ -627,48 +605,13 @@ def get_drives():
 
 
 
-# 修改密码（普通用户）
-@app.route('/api/change_password', methods=['PATCH'])
-@token_required()
-def change_password():
-    data = request.get_json()
-    old = data.get('old_password', '')
-    new = data.get('new_password', '')
-    if not old or not new:
-        return jsonify({"error": "缺少参数"}), 400
-    db = get_db()
-    cur = db.execute("SELECT * FROM users WHERE id=?", (g.user,))
-    user = cur.fetchone()
-    if not check_password_hash(user['password'], old):
-        return jsonify({"error": "原密码错误"}), 400
-    db.execute("UPDATE users SET password=? WHERE id=?", (generate_password_hash(new), g.user))
-    db.commit()
-    return jsonify({"success": True})
 
-
-# 管理员重置其他用户密码
-@app.route('/api/admin/reset_password', methods=['POST'])
-@token_required(admin_only=True)
-def admin_reset_password():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    newpw = data.get('new_password', '').strip()
-    if not username or not newpw:
-        return jsonify({"error": "缺少参数"}), 400
-    db = get_db()
-    cur = db.execute("SELECT id FROM users WHERE username=?", (username,))
-    user = cur.fetchone()
-    if not user:
-        return jsonify({"error": "用户不存在"}), 404
-    db.execute("UPDATE users SET password=? WHERE id=?", (generate_password_hash(newpw), user['id']))
-    db.commit()
-    return jsonify({"success": True})
 
 
 # app.py - 添加以下路由（和之前一样，不需要修改）
 
 @app.route('/api/file/encrypt', methods=['POST'])
-@token_required()
+@permission_required('fullcontrol')
 def encrypt_file_api():
     """加密单个文件或文件夹"""
     data = request.get_json()
@@ -714,7 +657,7 @@ def encrypt_file_api():
 
 
 @app.route('/api/file/decrypt', methods=['POST'])
-@token_required()
+@permission_required('fullcontrol')
 def decrypt_file_api():
     """解密单个文件或文件夹"""
     data = request.get_json()
@@ -761,7 +704,7 @@ def decrypt_file_api():
         return jsonify({'error': f'解密失败: {str(e)}'}), 500
 # 文件: app.py (添加一个新的删除路由，用于单文件删除)
 @app.route('/api/ec_health_check', methods=['GET'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def ec_health_check():
     """
     全面的EC卷健康检查
@@ -821,7 +764,7 @@ def ec_health_check():
 # 文件: app.py (新增 /api/rename 路由)
 
 @app.route('/api/ec_batch_recover', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def ec_batch_recover():
     """
     批量恢复所有可恢复的文件
@@ -933,7 +876,7 @@ def ec_batch_recover():
     })
 
 @app.route('/api/rename', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 # 💡 修改函数名为 api_rename_entry
 def api_rename_entry():
     data = request.get_json()
@@ -1025,7 +968,7 @@ def api_rename_entry():
             return jsonify({"error": f"重命名失败: {str(e)}"}), 500
 
 @app.route('/api/delete', methods=['POST'])
-@token_required()
+@permission_required('fullcontrol')
 def delete_entry():
     data = request.get_json()
     path = data.get('path')
@@ -1082,7 +1025,7 @@ def delete_entry():
         except Exception as e:
             return jsonify({'error': f'删除失败: {str(e)}'}), 500
 @app.route('/api/batch_delete', methods=['POST'])
-@token_required(admin_only=True)  # 或普通用户，按你的需求改
+@permission_required('fullcontrol')
 def batch_delete():
     data = request.get_json()
     paths = data.get('paths', [])
@@ -1104,16 +1047,12 @@ def batch_delete():
     return jsonify({"success": True})
 
 
-# ========== 在 app.py 中修复预览API ==========
 
-# 文件: app.py -> @app.route('/api/preview')
 
-# 文件: app.py -> @app.route('/api/preview')
 
-# app.py -> 完整替換 @app.route('/api/preview', ...)
 
 @app.route('/api/preview')
-@token_required()
+@permission_required('readonly')
 def preview_file():
     path = request.args.get('path', '').strip()
     if not path:
@@ -1206,7 +1145,7 @@ def preview_file():
 
 # ===== [最终修复 2/3] 重写 mkdir 函数 =====
 @app.route('/api/mkdir', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def mkdir():
     data = request.get_json()
     parent = data.get('parent', '')
@@ -1240,7 +1179,7 @@ def mkdir():
 # app.py -> 替换 @app.route('/api/share', methods=['POST'])
 
 @app.route('/api/ec_status', methods=['GET'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def get_ec_status():
     """
     获取纠删码卷的健康状况.
@@ -1279,11 +1218,184 @@ def get_ec_status():
     })
 
 
+@app.route('/api/current-user', methods=['GET'])
+def get_current_user():
+    """获取当前登录用户信息"""
+    try:
+        # 从 session 或 JWT 中获取用户信息
+        user_id = g.get('user')  # 假设你的 auth.py 已经设置了 g.user
+
+        if not user_id:
+            return jsonify({'user': None}), 401
+
+        db = get_db()
+        user = db.execute(
+            "SELECT id, username, is_admin FROM users WHERE id = ?",
+            (user_id,)
+        ).fetchone()
+
+        if user:
+            return jsonify({
+                'user': {
+                    'id': user['id'],
+                    'username': user['username'],
+                    'is_admin': bool(user['is_admin'])
+                }
+            })
+        else:
+            return jsonify({'user': None}), 401
+
+    except Exception as e:
+        print(f"获取用户信息错误: {e}")
+        return jsonify({'user': None}), 401
 
 
+# ========== 来自管理端的访问申请处理 ==========
+
+# 存储待处理的访问申请（实际应用中应该用数据库）
+pending_requests = {}
+
+
+@app.route('/api/internal/access-request', methods=['POST'])
+def receive_access_request():
+    """
+    [新增] 接收来自管理端的访问申请
+    管理端会调用这个 API 来通知客户端有新的访问请求
+    """
+    data = request.json
+
+    # 验证请求来源（简单验证，实际应用中应该用更安全的方式）
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != "your-shared-secret-key":  # 应该在配置文件中设置
+        return jsonify({"success": False, "message": "未授权的请求"}), 403
+
+    request_id = data.get('request_id')
+    username = data.get('username')
+    requested_permission = data.get('permission')
+    node_id = data.get('node_id')
+
+    if not all([request_id, username, requested_permission, node_id]):
+        return jsonify({"success": False, "message": "缺少必要参数"}), 400
+
+    # 存储访问申请
+    pending_requests[request_id] = {
+        'username': username,
+        'permission': requested_permission,
+        'node_id': node_id,
+        'status': 'pending',
+        'created_at': datetime.now().isoformat()
+    }
+
+    print(f"[访问申请] 收到用户 {username} 的访问申请 (权限: {requested_permission})")
+
+    return jsonify({
+        "success": True,
+        "message": "访问申请已接收",
+        "request_id": request_id
+    })
+
+
+@app.route('/api/admin/access-requests', methods=['GET'])
+@permission_required('fullcontrol')
+def get_pending_requests():
+    """
+    [新增] 管理员查看待处理的访问申请
+    """
+    return jsonify({
+        "success": True,
+        "requests": [
+            {
+                "request_id": req_id,
+                **req_data
+            }
+            for req_id, req_data in pending_requests.items()
+            if req_data['status'] == 'pending'
+        ]
+    })
+
+
+@app.route('/api/admin/access-requests/<request_id>/approve', methods=['POST'])
+@permission_required('fullcontrol')
+def approve_access_request(request_id):
+    """
+    [新增] 管理员批准访问申请
+    """
+    if request_id not in pending_requests:
+        return jsonify({"success": False, "message": "申请不存在"}), 404
+
+    request_data = pending_requests[request_id]
+
+    # 更新申请状态
+    request_data['status'] = 'approved'
+    request_data['approved_at'] = datetime.now().isoformat()
+
+    # 通知管理端申请已被批准
+    try:
+        response = requests.post(
+            f"{NAS_CENTER_API_URL}/api/internal/access-approved",
+            json={
+                "request_id": request_id,
+                "username": request_data['username'],
+                "node_id": request_data['node_id']
+            },
+            headers={"X-NAS-Secret": "your-shared-secret-key"},
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            print(f"[访问申请] 已通知管理端：用户 {request_data['username']} 的申请已批准")
+            return jsonify({"success": True, "message": "申请已批准"})
+        else:
+            return jsonify({"success": False, "message": "通知管理端失败"}), 500
+
+    except Exception as e:
+        print(f"[错误] 通知管理端失败: {e}")
+        return jsonify({"success": False, "message": f"通知失败: {str(e)}"}), 500
+
+
+@app.route('/api/admin/access-requests/<request_id>/reject', methods=['POST'])
+@permission_required('fullcontrol')
+def reject_access_request(request_id):
+    """
+    [新增] 管理员拒绝访问申请
+    """
+    if request_id not in pending_requests:
+        return jsonify({"success": False, "message": "申请不存在"}), 404
+
+    request_data = pending_requests[request_id]
+    reason = request.json.get('reason', '管理员拒绝')
+
+    # 更新申请状态
+    request_data['status'] = 'rejected'
+    request_data['rejected_at'] = datetime.now().isoformat()
+    request_data['reject_reason'] = reason
+
+    # 通知管理端申请已被拒绝
+    try:
+        response = requests.post(
+            f"{NAS_CENTER_API_URL}/api/internal/access-rejected",
+            json={
+                "request_id": request_id,
+                "username": request_data['username'],
+                "node_id": request_data['node_id'],
+                "reason": reason
+            },
+            headers={"X-NAS-Secret": "your-shared-secret-key"},
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            print(f"[访问申请] 已通知管理端：用户 {request_data['username']} 的申请已拒绝")
+            return jsonify({"success": True, "message": "申请已拒绝"})
+        else:
+            return jsonify({"success": False, "message": "通知管理端失败"}), 500
+
+    except Exception as e:
+        print(f"[错误] 通知管理端失败: {e}")
+        return jsonify({"success": False, "message": f"通知失败: {str(e)}"}), 500
 # V5 测试版 (正确的)
 @app.route('/api/ec_recover', methods=['POST'])
-@token_required
+@permission_required('fullcontrol')
 def ec_recover_disk():
     # =================================================================
     # V5 - 最终返回值测试版
@@ -1371,7 +1483,7 @@ def ec_recover_disk():
     })
 
 @app.route('/api/share', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def create_share():
     data = request.get_json()
     file_path = data.get('file_path', '')
@@ -1618,7 +1730,7 @@ def api_ngrok_url():
 # ===== /api/ec_config：保存时对 disks 做 _norm_abs 归一化 =====
 # ===== /api/ec_config：支持 GET（查看）、POST（保存）和 DELETE（删除）=====
 @app.route("/api/ec_config", methods=["GET", "POST", "DELETE"])
-@token_required()
+@permission_required('fullcontrol')
 def api_ec_config():
     """
     GET    返回当前纠删码配置与容量评估
@@ -1756,7 +1868,7 @@ def api_ec_config():
 
 
 @app.route('/api/encode', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def api_encode():
     """
     兼容旧接口：接受 {scheme,k,m,disks,file_path}，
@@ -1826,7 +1938,7 @@ def api_encode():
 # app.py -> 完整替換 @app.route('/api/upload', ...)
 
 @app.route('/api/upload', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def upload_file_with_ec():
     uploaded_files = request.files.getlist('file')
     upload_path = request.form.get('path', '/')
@@ -1914,7 +2026,7 @@ def upload_file_with_ec():
 
 # ===== [最终修复 1/3] 重写 list_files 函数 =====
 @app.route('/api/list', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def list_files():
     full_path_from_request = request.args.get('path', '/')
     keyword = request.args.get('q', '').strip().lower()
@@ -1986,7 +2098,7 @@ def list_files():
             return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
 
 @app.route('/api/search')
-@token_required()
+@permission_required('readonly')
 def api_search():
     keyword = request.args.get('keyword', '').strip()
     scope = request.args.get('scope', 'current')
@@ -2035,7 +2147,7 @@ def api_search():
 # app.py -> 完整替換 @app.route("/api/download", ...)
 
 @app.route("/api/download", methods=["GET"])
-@token_required()
+@permission_required('readonly')
 def api_download():
     file_path = request.args.get("path", "").strip()
     if not file_path:
@@ -2098,7 +2210,7 @@ def api_download():
             return jsonify({'error': f'下載文件時出錯: {e}'}), 500
 
 @app.route("/api/volume/rebuild/scan", methods=["POST"])
-@token_required()
+@permission_required('fullcontrol')
 def ec_scan():
         cfg = _load_json(EC_CFG_PATH, {})
         if not cfg:
@@ -2120,7 +2232,7 @@ def ec_scan():
         return jsonify({"success": True, "missing_total": missing_total, "detail": detail})
 
 @app.route("/api/volume/rebuild/start", methods=["POST"])
-@token_required()
+@permission_required('fullcontrol')
 def ec_rebuild():
             cfg = _load_json(EC_CFG_PATH, {})
             if not cfg:
@@ -2333,7 +2445,7 @@ def start_ngrok():
 
 # ===== 文档协作API =====
 @app.route('/api/documents', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_documents():
     """获取用户可访问的文档列表"""
     db = get_db()
@@ -2376,7 +2488,7 @@ def get_documents():
 
 
 @app.route("/api/volume/import", methods=["POST"])
-@token_required()
+@permission_required('fullcontrol')
 def ec_import():
     """
     body:
@@ -2465,7 +2577,7 @@ def ec_import():
 # app.py
 
 @app.route('/api/encryption/status', methods=['GET'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def encryption_status():
     """获取所有物理磁盘及其加密/锁定状态"""
     all_drives = get_available_drives()
@@ -2487,7 +2599,7 @@ def encryption_status():
 
 
 @app.route('/api/encryption/unlock', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def encryption_unlock():
     """解锁单个磁盘"""
     data = request.get_json()
@@ -2504,7 +2616,7 @@ def encryption_unlock():
 
 
 @app.route('/api/encryption/lock', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def encryption_lock():
     """锁定单个磁盘"""
     data = request.get_json()
@@ -2523,7 +2635,7 @@ import threading  # 确保在文件顶部导入 threading 模块
 
 # [新增] 永久解密磁盘的API接口
 @app.route('/api/encryption/decrypt-disk', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def decrypt_disk_permanently_api():
     data = request.get_json()
     drive = data.get('drive')
@@ -2564,7 +2676,7 @@ def decrypt_disk_permanently_api():
 # 文件: app.py -> 再次替换 set_encryption_password 函数
 
 @app.route('/api/encryption/set-password', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def set_encryption_password():
     """为单个或多个磁盘设定/变更密码"""
     data = request.get_json()
@@ -2608,7 +2720,7 @@ def set_encryption_password():
     return jsonify({'success': True, 'message': '密码设定成功'})
 
 @app.route('/api/documents', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def create_document():
     """创建新文档"""
     data = request.get_json()
@@ -2637,7 +2749,7 @@ def create_document():
 
 
 @app.route('/api/documents/<int:doc_id>', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_document(doc_id):
     """获取文档详情"""
     db = get_db()
@@ -2668,7 +2780,7 @@ def get_document(doc_id):
 
 
 @app.route('/api/documents/<int:doc_id>/permissions', methods=['POST'])
-@token_required()
+@permission_required('fullcontrol')
 def share_document(doc_id):
     """分享文档给其他用户"""
     data = request.get_json()
@@ -2714,7 +2826,7 @@ def share_document(doc_id):
 
 
 @app.route('/api/documents/<int:doc_id>/versions', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_document_versions(doc_id):
     """获取文档版本历史"""
     db = get_db()
@@ -2735,7 +2847,7 @@ def get_document_versions(doc_id):
 
 
 @app.route('/api/documents/<int:doc_id>/versions/<int:version_id>', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_document_version(doc_id, version_id):
     """获取特定版本的文档内容"""
     db = get_db()
@@ -2827,7 +2939,7 @@ def collab_load():
 # app.py -> 完整替換 @app.route('/api/collab/save', ...)
 
 @app.route('/api/collab/save', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def collab_save():
     data = request.get_json()
     file = data.get('file', '').strip()
@@ -2906,7 +3018,7 @@ def collab_validate():
 # app.py
 
 @app.route('/api/encryption/add-drive', methods=['POST'])
-@token_required(admin_only=True)
+@permission_required('fullcontrol')
 def add_encrypted_drive():
     data = request.get_json()
     drive_path = data.get('drive')
@@ -2937,7 +3049,7 @@ def collab_edit_page():
 
 # ===== OnlyOffice API =====
 @app.route('/api/onlyoffice/documents', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_onlyoffice_documents():
     """获取OnlyOffice文档列表"""
     documents = onlyoffice_manager.get_user_documents(g.user)
@@ -2945,7 +3057,7 @@ def get_onlyoffice_documents():
 
 
 @app.route('/api/onlyoffice/documents', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def create_onlyoffice_document():
     """创建OnlyOffice文档"""
     data = request.get_json()
@@ -2989,7 +3101,7 @@ def create_onlyoffice_document():
 
 
 @app.route('/api/onlyoffice/upload', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def upload_onlyoffice_document():
     """上传文档到OnlyOffice"""
     if 'file' not in request.files:
@@ -3011,7 +3123,7 @@ def upload_onlyoffice_document():
 
 
 @app.route('/api/onlyoffice/formats', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_supported_formats():
     """获取支持的文件格式"""
     formats = onlyoffice_manager.get_supported_formats()
@@ -3019,7 +3131,7 @@ def get_supported_formats():
 
 
 @app.route('/api/onlyoffice/documents/<int:doc_id>/config', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_onlyoffice_config(doc_id):
     """获取OnlyOffice编辑器配置"""
     action = request.args.get('action', 'edit')
@@ -3032,7 +3144,7 @@ def get_onlyoffice_config(doc_id):
 
 
 @app.route('/api/onlyoffice/documents/<int:doc_id>/share', methods=['POST'])
-@token_required()
+@permission_required('fullcontrol')
 def share_onlyoffice_document(doc_id):
     """分享OnlyOffice文档"""
     data = request.get_json()
@@ -3051,7 +3163,7 @@ def share_onlyoffice_document(doc_id):
 
 
 @app.route('/api/onlyoffice/download/<int:doc_id>')
-@token_required()
+@permission_required('readonly')
 def download_onlyoffice_document(doc_id):
     """下载OnlyOffice文档"""
     db = get_db()
@@ -3107,7 +3219,7 @@ def onlyoffice_edit_page():
 
 # ===== 新协作系统 API =====
 @app.route('/api/collaboration/create', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def create_collaboration_session():
     """创建协作会话"""
     data = request.get_json()
@@ -3129,7 +3241,7 @@ def create_collaboration_session():
 
 
 @app.route('/api/collaboration/sessions', methods=['GET'])
-@token_required()
+@permission_required('readonly')
 def get_collaboration_sessions():
     """获取用户的协作会话"""
     created_sessions = collaboration_v2.get_user_sessions(g.user)
@@ -3142,7 +3254,7 @@ def get_collaboration_sessions():
 
 
 @app.route('/api/collaboration/join', methods=['POST'])
-@token_required()
+@permission_required('readonly')
 def join_collaboration_session():
     data = request.get_json()
     session_token = data.get('session_token', '').strip()
@@ -3171,7 +3283,7 @@ def get_session_info(token):
 
 
 @app.route('/api/collaboration/close/<int:session_id>', methods=['POST'])
-@token_required()
+@permission_required('readwrite')
 def close_collaboration_session(session_id):
     """关闭协作会话"""
     success, message = collaboration_v2.close_session(session_id, g.user)
@@ -3189,7 +3301,7 @@ def collaboration_page():
 
 # ========== 创建预览会话API ==========
 @app.route('/api/create-preview-session', methods=['POST'])
-@token_required()
+@permission_required('readonly')
 def create_preview_session():
     try:
         data = request.get_json()
