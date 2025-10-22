@@ -1138,6 +1138,11 @@ async decryptFileOrFolder(window, file) {
         items: menuItems // 使用我们构建好的带权限检查的数组
       };
     },
+
+
+    showFileContextMenu(event, file, window) {
+  this.showContextMenu(event, file, window);
+},
     showEmptyAreaContextMenu(event, window) {
       event.preventDefault();
 
@@ -2035,6 +2040,29 @@ async checkCurrentUser() {
             }
         }, 2500); // 2.5秒后移除DOM
     }
+},
+
+  computed: {
+  canRead() {
+    const permission = this.user.file_permission;
+    return permission === 'readonly' ||
+           permission === 'readwrite' ||
+           permission === 'fullcontrol';
+  },
+
+  canWrite() {
+    const permission = this.user.file_permission;
+    return permission === 'readwrite' ||
+           permission === 'fullcontrol';
+  },
+
+  canDelete() {
+    return this.user.file_permission === 'fullcontrol';
+  },
+
+  canUpload() {
+    return this.canWrite;
+  }
 },
 
   mounted() {

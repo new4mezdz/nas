@@ -82,10 +82,6 @@ import jwt
 ACCESS_TOKEN_SECRET = 'your-access-token-secret-key'
 
 
-# =====================================================
-# 客户端 backend/app.py
-# 完整替换 /api/verify-access-token 路由 (第 87-120 行)
-# =====================================================
 
 @app.route('/api/verify-access-token', methods=['POST'])
 def verify_access_token():
@@ -121,6 +117,9 @@ def verify_access_token():
             print("[DEBUG] ❌ 错误: 令牌中缺少用户信息")
             return jsonify({'success': False, 'error': '令牌中缺少用户信息'}), 401
 
+        # ✅ 将 role 转换为 is_admin (兼容前端)
+        is_admin = (role == 'admin')
+
         # 4. 生成新的长期 token (用于客户端本地存储)
         print("[DEBUG] 生成新的长期 token...")
         new_token = jwt.encode({
@@ -128,6 +127,7 @@ def verify_access_token():
             'username': username,
             'role': role,
             'file_permission': file_permission,
+            'is_admin': is_admin,  # ✅ 添加 is_admin 字段
             'exp': datetime.utcnow() + timedelta(days=7)
         }, app.config['SECRET_KEY'], algorithm='HS256')
         print(f"[DEBUG] ✅ 新 token 生成成功: {new_token[:50]}...")
@@ -139,7 +139,8 @@ def verify_access_token():
                 'id': user_id,
                 'username': username,
                 'role': role,
-                'file_permission': file_permission
+                'file_permission': file_permission,
+                'is_admin': is_admin  # ✅ 前端需要这个字段
             },
             'token': new_token
         }
@@ -158,6 +159,8 @@ def verify_access_token():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': f'验证失败: {str(e)}'}), 400
+
+
 def _load_json(path: str, default):
     try:
         if os.path.exists(path):
