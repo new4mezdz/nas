@@ -628,52 +628,63 @@
     </div>
 
       <!-- 硬件监控信息 -->
+
 <div class="bg-white p-4 rounded-lg border shadow-sm">
   <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
     <span>🌡️</span> 硬件监控
   </h4>
 
-  <!-- 温度信息 -->
-  <div v-if="systemInfo.temperatures && systemInfo.temperatures.length > 0" class="mb-4">
-    <div class="text-xs font-semibold text-gray-600 mb-2">🌡️ 温度</div>
-    <div class="space-y-2">
-      <div v-for="temp in systemInfo.temperatures" :key="temp.name"
-           class="flex items-center justify-between text-sm">
-        <span class="text-gray-700">{{ temp.name }}</span>
-        <span class="font-bold" :class="temp.value > 80 ? 'text-red-600' : temp.value > 60 ? 'text-yellow-600' : 'text-green-600'">
-          {{ temp.value.toFixed(1) }}°C
-        </span>
+  <div class="grid grid-cols-2 gap-3">
+    <!-- CPU温度 -->
+    <div class="bg-gray-50 p-3 rounded">
+      <div class="text-xs text-gray-600 mb-1">CPU温度</div>
+      <div class="font-bold text-lg">
+        {{ systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value?.toFixed(1) || '--' }}°C
       </div>
     </div>
-  </div>
 
-  <!-- 风扇转速 -->
-  <div v-if="systemInfo.fans && systemInfo.fans.length > 0" class="mb-4">
-    <div class="text-xs font-semibold text-gray-600 mb-2">🌀 风扇转速</div>
-    <div class="space-y-2">
-      <div v-for="fan in systemInfo.fans" :key="fan.name"
-           class="flex items-center justify-between text-sm">
-        <span class="text-gray-700">{{ fan.name }}</span>
-        <span class="font-bold text-blue-600">{{ fan.value.toFixed(0) }} RPM</span>
-      </div>
-    </div>
-  </div>
 
-  <!-- 电压信息 -->
-  <div v-if="systemInfo.voltages && systemInfo.voltages.length > 0">
-    <div class="text-xs font-semibold text-gray-600 mb-2">⚡ 电压</div>
-    <div class="space-y-2">
-      <div v-for="volt in systemInfo.voltages" :key="volt.name"
-           class="flex items-center justify-between text-sm">
-        <span class="text-gray-700">{{ volt.name }}</span>
-        <span class="font-bold text-purple-600">{{ volt.value.toFixed(2) }}V</span>
+    <!-- CPU频率 -->
+<div class="bg-gray-50 p-3 rounded">
+  <div class="text-xs text-gray-600 mb-1">CPU频率</div>
+  <div class="font-bold text-lg">{{ systemInfo.cpu_freq || '--' }} GHz</div>
+</div>
+
+<!-- CPU功耗 -->
+<div class="bg-gray-50 p-3 rounded">
+  <div class="text-xs text-gray-600 mb-1">CPU功耗</div>
+  <div class="font-bold text-lg">{{ systemInfo.cpu_power || '--' }} W</div>
+</div>
+
+    <!-- 风扇转速 -->
+    <div class="bg-gray-50 p-3 rounded">
+      <div class="text-xs text-gray-600 mb-1">风扇转速</div>
+      <div class="font-bold text-lg text-blue-600">
+        {{ systemInfo.fans?.[0]?.value?.toFixed(0) || '--' }} RPM
       </div>
     </div>
+
+    <!-- 硬盘温度 -->
+    <div class="bg-gray-50 p-3 rounded">
+  <div class="text-xs text-gray-600 mb-1">硬盘温度</div>
+  <div class="font-bold text-lg">
+    {{ (systemInfo.disks_temp?.[0]?.value || systemInfo.temperatures?.find(t => t.name === 'Temperature')?.value || 0).toFixed(1) }}°C
+  </div>
+</div>
+
+
+    <!-- 网络带宽 -->
+<div class="bg-gray-50 p-3 rounded">
+  <div class="text-xs text-gray-600 mb-1">网络带宽</div>
+  <div class="font-bold text-sm">
+    ↓ {{ systemInfo.network_download || '--' }} | ↑ {{ systemInfo.network_upload || '--' }} MB/s
+  </div>
+</div>
   </div>
 
   <!-- 如果没有监控数据 -->
-  <div v-if="!systemInfo.temperatures && !systemInfo.fans && !systemInfo.voltages"
-       class="text-center text-gray-400 py-4">
+  <div v-if="!systemInfo.temperatures && !systemInfo.fans"
+       class="text-center text-gray-400 py-4 mt-3">
     <p class="text-sm">📊 暂无硬件监控数据</p>
     <p class="text-xs mt-1">请确保 OpenHardwareMonitor 正在运行</p>
   </div>

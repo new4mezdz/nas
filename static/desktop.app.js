@@ -114,14 +114,14 @@ async getEcCapacityEstimate() {
       }
     },
 
-    async fetchSystemInfo() {
-      try {
-        const res = await axios.get('/api/system');
-        this.systemInfo = res.data;
-      } catch (e) {
-        console.error('获取系统信息失败:', e);
-      }
-    },
+  async fetchSystemInfo() {
+  try {
+    const res = await axios.get('/api/system');
+    this.systemInfo = res.data;
+  } catch (e) {
+    console.error('获取系统信息失败:', e);
+  }
+},
 
     async fetchDiskInfo() {
       try {

@@ -97,6 +97,7 @@ def get_sys_info() -> Dict:
         "memory_total": int(vm.total),
         "memory_used": int(vm.used),
         "memory_free": int(vm.available),
+        "mem_percent": round(vm.percent, 1),
         "uptime_seconds": uptime_seconds,
     }
 

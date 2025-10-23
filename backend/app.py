@@ -359,17 +359,19 @@ def sso_login():
     except jwt.InvalidTokenError:
         return jsonify({'error': '无效的SSO令牌'}), 401
 
+
 @app.route('/api/system-stats', methods=['GET'])
 def get_system_stats():
     """返回系统统计信息 - 供 NAS Center 调用"""
     try:
         from utils import get_sys_info, get_disk_info
+        import psutil
 
-        # 获取系统信息 (这部分不变)
+        # 获取系统信息
         sys_info = get_sys_info()
         disk_info = get_disk_info()
 
-        # 计算磁盘总量和使用量 (这部分不变)
+        # 计算磁盘总量和使用量
         total_gb = 0
         used_gb = 0
         for disk in disk_info:
@@ -380,21 +382,47 @@ def get_system_stats():
                 used_gb += used / (1024 ** 3)
         disk_percent = round((used_gb / total_gb * 100) if total_gb > 0 else 0, 2)
 
-        # 👇 [核心修改] 在这里增加获取硬件温度的逻辑
-        cpu_temp = 0  # 默认值为 0
+        # 获取硬件数据
+        cpu_temp = 0
+        cpu_freq = 0
+        cpu_power = 0
+        network_download = 0
+        network_upload = 0
+
         try:
             hw_data = hardware_monitor.get_hardware_data()
+
+            # CPU温度 - 找 CPU Package
             if hw_data and 'temperatures' in hw_data:
-                # 遍历所有温度传感器，找到包含 "CPU" 的那个
                 for temp_sensor in hw_data['temperatures']:
-                    if 'cpu' in temp_sensor.get('name', '').lower():
+                    if temp_sensor.get('name') == 'CPU Package':
                         cpu_temp = temp_sensor.get('value', 0)
-                        break # 找到第一个就停止
+                        break
+
+            # CPU功耗
+            if hw_data and 'powers' in hw_data:
+                for power in hw_data['powers']:
+                    if power.get('name') == 'CPU Package':
+                        cpu_power = round(power.get('value', 0), 1)
+                        break
+
+            # CPU频率 - 从 clocks 获取第一个核心频率
+            if hw_data and 'clocks' in hw_data:
+                for clock in hw_data['clocks']:
+                    if 'CPU Core #1' in clock.get('name', ''):
+                        cpu_freq = round(clock['value'] / 1000, 2)  # MHz 转 GHz
+                        break
+
+            # 网络带宽
+            net_io_start = psutil.net_io_counters()
+            time.sleep(0.5)
+            net_io_end = psutil.net_io_counters()
+            network_download = round((net_io_end.bytes_recv - net_io_start.bytes_recv) / 1024 / 1024 / 0.5, 2)
+            network_upload = round((net_io_end.bytes_sent - net_io_start.bytes_sent) / 1024 / 1024 / 0.5, 2)
+
         except Exception as hw_error:
-            print(f"[WARNING] 在 /api/system-stats 中获取硬件温度失败: {hw_error}")
+            print(f"[WARNING] 获取硬件信息失败: {hw_error}")
 
-
-        # 👇 [核心修改] 在返回的 JSON 中增加 cpu_temp_celsius 字段
         return jsonify({
             'cpu_percent': sys_info.get('cpu_percent', 0),
             'memory_percent': sys_info.get('mem_percent', 0),
@@ -402,7 +430,11 @@ def get_system_stats():
             'disk_total_gb': round(total_gb, 2),
             'disk_used_gb': round(used_gb, 2),
             'disk_free_gb': round(total_gb - used_gb, 2),
-            'cpu_temp_celsius': cpu_temp,  # <-- 新增的字段
+            'cpu_temp_celsius': cpu_temp,
+            'cpu_freq': cpu_freq,
+            'cpu_power': cpu_power,
+            'network_download': network_download,
+            'network_upload': network_upload,
             'timestamp': datetime.now().isoformat()
         })
 
@@ -415,9 +447,25 @@ def get_system_stats():
             'disk_total_gb': 0,
             'disk_used_gb': 0,
             'disk_free_gb': 0,
-            'cpu_temp_celsius': 0, # <-- 保证出错时也有这个字段
+            'cpu_temp_celsius': 0,
+            'cpu_freq': 0,
+            'cpu_power': 0,
+            'network_download': 0,
+            'network_upload': 0,
             'error': str(e)
         }), 500
+
+
+
+@app.route('/api/hardware-data', methods=['GET'])
+def get_hardware_data():
+    """返回硬件监控详细数据"""
+    try:
+        hw_data = hardware_monitor.get_hardware_data()
+        return jsonify(hw_data)
+    except Exception as e:
+        print(f"[ERROR] 获取硬件数据失败: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/disks', methods=['GET'])
 def get_disks_info():
@@ -500,28 +548,54 @@ from hardware_monitor import hardware_monitor
 
 @app.route('/api/system', methods=['GET'])
 @permission_required('readonly')
-def api_system():
-    """获取系统信息，包括硬件监控数据"""
+def get_system():
+    """返回系统信息 (供前端调用)"""
     try:
+        import psutil
+
         sys_info = get_sys_info()
         hw_data = hardware_monitor.get_hardware_data()
 
-        if hw_data:
-            sys_info['temperatures'] = hw_data.get('temperatures', [])
-            sys_info['fans'] = hw_data.get('fans', [])
-            sys_info['voltages'] = hw_data.get('voltages', [])
-        else:
-            sys_info['temperatures'] = []
-            sys_info['fans'] = []
-            sys_info['voltages'] = []
-            # 👇 [核心修改] 更新这里的错误提示
-            sys_info['hw_monitor_error'] = '无法获取硬件监控数据, 请检查 LibreHardwareMonitor.exe 是否运行正常'
+        # CPU功耗 - 从powers列表获取
+        cpu_power = 0
+        for power in hw_data.get('powers', []):
+            if 'package' in power['name'].lower() or 'cpu' in power['name'].lower():
+                cpu_power = round(power['value'], 1)
+                break
 
-        return jsonify(sys_info)
+        # CPU频率 - 优先从clocks获取实时频率,没有则用psutil
+        cpu_freq_ghz = 0
+        for clock in hw_data.get('clocks', []):
+            if 'core' in clock['name'].lower() and '#1' in clock['name']:  # 取第一个核心频率
+                cpu_freq_ghz = round(clock['value'] / 1000, 2)
+                break
+        if cpu_freq_ghz == 0:  # 如果没找到,用psutil
+            cpu_freq = psutil.cpu_freq()
+            cpu_freq_ghz = round(cpu_freq.current / 1000, 2) if cpu_freq else 0
+        # 网络带宽
+        net_io_start = psutil.net_io_counters()
+        time.sleep(0.5)
+        net_io_end = psutil.net_io_counters()
+        download_speed = round((net_io_end.bytes_recv - net_io_start.bytes_recv) / 1024 / 1024 / 0.5, 2)
+        upload_speed = round((net_io_end.bytes_sent - net_io_start.bytes_sent) / 1024 / 1024 / 0.5, 2)
 
+        # CPU功耗
+        cpu_power = 0
+        for power in hw_data.get('powers', []):
+            if power['name'] == 'CPU Package':  # 精确匹配
+                cpu_power = round(power['value'], 1)
+                break
+
+        combined = {**sys_info, **hw_data}
+        combined['cpu_freq'] = cpu_freq_ghz
+        combined['cpu_power'] = cpu_power
+        combined['network_download'] = download_speed
+        combined['network_upload'] = upload_speed
+
+        return jsonify(combined)
     except Exception as e:
-        print(f"[ERROR] /api/system 接口发生严重错误: {e}")
-        return jsonify({'error': f'获取系统信息时发生内部错误: {str(e)}'}), 500
+        print(f"[ERROR] 获取系统信息失败: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/disk', methods=['GET'])
 @permission_required('readonly')

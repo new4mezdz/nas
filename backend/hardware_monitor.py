@@ -39,17 +39,28 @@ class HardwareMonitor:
     def _parse_ohm_data(self, data):
         """
         解析 OpenHardwareMonitor 返回的 JSON 数据
-        提取温度、风扇转速、电压等信息
+        提取温度、风扇转速、电压、功耗等信息
         """
         temperatures = []
         fans = []
         voltages = []
+        powers = []
+        clocks = []
+        disks_temp = []
+        memory_load = None  # 新增：内存使用率
 
         # 递归遍历硬件树
-        def traverse(node):
+        def traverse(node, parent_type=''):
+            nonlocal memory_load  # 声明使用外部变量
+
+            # 判断节点类型
+            node_text = node.get('Text', '')
+            if 'HDD' in node_text or 'SSD' in node_text or 'NVMe' in node_text or 'SATA' in node_text:
+                parent_type = 'disk'
+
             if 'Children' in node:
                 for child in node['Children']:
-                    traverse(child)
+                    traverse(child, parent_type)
 
             # 提取传感器数据
             if 'Text' in node and 'Value' in node:
@@ -60,11 +71,27 @@ class HardwareMonitor:
                 try:
                     if '°C' in value_str:
                         value = float(value_str.replace(' °C', ''))
-                        temperatures.append({'name': name, 'value': value})
+                        temp_data = {'name': name, 'value': value}
+
+                        if parent_type == 'disk':
+                            disks_temp.append(temp_data)
+                        else:
+                            temperatures.append(temp_data)
                     elif 'RPM' in value_str:
                         value = float(value_str.replace(' RPM', ''))
                         fans.append({'name': name, 'value': value})
-                    elif 'V' in value_str and 'RPM' not in value_str:
+                    elif ' W' in value_str:
+                        value = float(value_str.replace(' W', ''))
+                        powers.append({'name': name, 'value': value})
+                    elif 'MHz' in value_str:
+                        value = float(value_str.replace(' MHz', ''))
+                        clocks.append({'name': name, 'value': value})
+                    elif '%' in value_str:  # 新增：解析百分比（内存使用率）
+                        value = float(value_str.replace(' %', ''))
+                        # 判断是否为内存负载
+                        if 'Memory' in name or 'RAM' in name or 'Load' in name:
+                            memory_load = value
+                    elif 'V' in value_str and 'RPM' not in value_str and 'MHz' not in value_str:
                         value = float(value_str.replace(' V', ''))
                         voltages.append({'name': name, 'value': value})
                 except ValueError:
@@ -76,7 +103,11 @@ class HardwareMonitor:
         return {
             'temperatures': temperatures,
             'fans': fans,
-            'voltages': voltages
+            'voltages': voltages,
+            'powers': powers,
+            'clocks': clocks,
+            'disks_temp': disks_temp,
+            'memory_load': memory_load  # 新增：返回内存使用率
         }
 
 
