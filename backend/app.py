@@ -12,6 +12,8 @@ from pathlib import Path
 from functools import wraps
 from datetime import datetime, timedelta
 import hashlib
+import ctypes  # 添加这行
+import sys     # 添加这行（如果已有就不用添加）
 # ===== Third-Party =====
 from flask import Flask, request, jsonify, send_file, send_from_directory, g
 # ... (在 import hashlib 之后)
@@ -81,7 +83,25 @@ import jwt
 # 在文件开头添加 (与管理端保持一致)
 ACCESS_TOKEN_SECRET = 'your-access-token-secret-key'
 
+# ===== 权限检查函数 =====
+def is_admin():
+    """检查是否有管理员权限"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
 
+def run_as_admin(script_path):
+    """以管理员权限重启程序"""
+    try:
+        if sys.platform == 'win32':
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, script_path, None, 1
+            )
+            return True
+    except:
+        return False
+    return False
 
 @app.route('/api/verify-access-token', methods=['POST'])
 def verify_access_token():
@@ -2365,54 +2385,52 @@ ngrok_url_global = None
 ohm_process = None
 
 
-
-# ===== (请完整替换您原来的 start_openhardwaremonitor 函数) =====
-# 文件: 客户端 app.py
-
-# ===== (请完整替换您原来的 start_openhardwaremonitor 函数) =====
 def start_librehardwaremonitor():
-    """
-    启动 LibreHardwareMonitor 并等待其 HTTP 服务就绪。
-    使用 subprocess 和组合 creation flags 实现后台隐藏启动。
-    """
+    """启动 LibreHardwareMonitor，自动处理权限问题"""
     global ohm_process
     print("🌡️  正在启动 LibreHardwareMonitor (后台隐藏模式)...")
+
+    # 检查是否已在运行
+    try:
+        response = requests.get(f'http://localhost:{OHM_PORT}/data.json', timeout=2)
+        if response.status_code == 200:
+            print("✅  LibreHardwareMonitor 已在运行！")
+            return "already_running"
+    except requests.exceptions.ConnectionError:
+        pass
 
     if not os.path.exists(OHM_PATH):
         print(f"⚠️  LibreHardwareMonitor.exe 未找到, 路径: {OHM_PATH}")
         return None
 
+    # 清理旧进程
     try:
         if os.name == 'nt':
-            subprocess.run(
-                ['taskkill', '/F', '/IM', 'LibreHardwareMonitor.exe'],
-                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            subprocess.run(['taskkill', '/F', '/IM', 'LibreHardwareMonitor.exe'],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("🧹  已清理旧的 LibreHardwareMonitor 进程。")
-    except Exception:
+    except:
         pass
 
+    # 尝试启动
     try:
         DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
         flags = DETACHED_PROCESS | CREATE_NO_WINDOW
 
         ohm_proc = subprocess.Popen(
-            [OHM_PATH],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=os.path.dirname(OHM_PATH),
-            creationflags=flags
+            [OHM_PATH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=os.path.dirname(OHM_PATH), creationflags=flags
         )
         print("   - 已在后台发送启动指令。")
-
         print("⏳  正在等待 LibreHardwareMonitor HTTP 服务就绪...")
+
         for i in range(15):
             time.sleep(1)
             try:
                 response = requests.get(f'http://localhost:{OHM_PORT}/data.json', timeout=2)
                 if response.status_code == 200:
-                    print(f"✅  LibreHardwareMonitor HTTP 服务已就绪 (后台隐藏)。")
+                    print(f"✅  LibreHardwareMonitor HTTP 服务已就绪。")
                     return ohm_proc
             except requests.exceptions.ConnectionError:
                 continue
@@ -2421,8 +2439,29 @@ def start_librehardwaremonitor():
         return ohm_proc
 
     except Exception as e:
+        error_code = getattr(e, 'winerror', None)
+
+        # 如果是权限错误，自动请求管理员权限
+        if error_code == 740 or isinstance(e, PermissionError):
+            print(f'❌  LibreHardwareMonitor 需要管理员权限！')
+
+            if not is_admin():
+                print('🔐  正在请求管理员权限，请在 UAC 对话框中点击"是"...')
+
+                if run_as_admin(' '.join(sys.argv)):
+                    print('✅  程序即将以管理员权限重启...')
+                    time.sleep(2)
+                    sys.exit(0)
+                else:
+                    print('❌  无法获取管理员权限')
+                    print('请右键 app.py -> "以管理员身份运行"')
+                    input('按 Enter 退出...')
+                    sys.exit(1)
+
         print(f'❌  LibreHardwareMonitor 启动时发生严重错误: {e}')
         return None
+
+
 def start_ngrok():
     """
     一个更健壮的 ngrok 启动函数。
