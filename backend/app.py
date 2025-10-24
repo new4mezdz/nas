@@ -15,7 +15,7 @@ import hashlib
 import ctypes  # 添加这行
 import sys     # 添加这行（如果已有就不用添加）
 # ===== Third-Party =====
-from flask import Flask, request, jsonify, send_file, send_from_directory, g
+from flask import Flask, request, jsonify, send_file, send_from_directory, g, make_response
 # ... (在 import hashlib 之后)
 from flask import session             # 导入 Flask session
 from auth import init_auth          # 导入我们新的 auth.py
@@ -75,6 +75,10 @@ encryption_manager = EncryptionManager(config_path=ENCRYPTION_CFG_PATH)
 # ===== 管理端配置 =====
 NAS_CENTER_API_URL = "http://127.0.0.1:8080"  # 管理端地址
 NAS_SHARED_SECRET = "your-shared-secret-key"   # 共享密钥(需与管理端一致)
+
+# [✅ 新增] 管理端公网URL和本节点ID (请根据您的实际情况修改)
+NAS_CENTER_PUBLIC_URL = None # ‼️ 将在启动时从管理端动态获取
+THIS_NODE_ID = "node-5"                     # ‼️ 替换为本节点的唯一ID
 
 # backend/app.py (客户端)
 
@@ -305,13 +309,25 @@ with app.app_context():
 @app.route("/")
 def index():
     static_folder = app.static_folder or 'static'
-    return send_from_directory(static_folder, "desktop.html")
+    # [✅ 修改] 创建响应对象
+    response = make_response(send_from_directory(static_folder, "desktop.html"))
+    # [✅ 新增] 添加禁止缓存的头部
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route("/desktop")
 def desktop_page():
     """管理端跳转入口 - 显示桌面页面"""
     static_folder = app.static_folder or 'static'
-    return send_from_directory(static_folder, "desktop.html")
+    # [✅ 修改] 创建响应对象
+    response = make_response(send_from_directory(static_folder, "desktop.html"))
+    # [✅ 新增] 添加禁止缓存的头部
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 # 在文件末尾 if __name__ == '__main__': 之前添加
@@ -1580,7 +1596,7 @@ def ec_recover_disk():
     })
 
 @app.route('/api/share', methods=['POST'])
-@permission_required('readwrite')
+@permission_required('readonly')
 def create_share():
     data = request.get_json()
     file_path = data.get('file_path', '')
@@ -1621,18 +1637,24 @@ def create_share():
     )
     db.commit()
 
-    # 返回外链地址
-    # 注意：ngrok_url_global 需要在您的代码中正确设置
+    # [✅ 修改后的代码]
+
+    # 检查公网URL是否已获取
+    if not NAS_CENTER_PUBLIC_URL:
+        return jsonify({
+            'success': False,
+            'error': '无法生成公网分享链接，管理端公网地址未配置或获取失败。'
+        }), 503
+
+    # 使用新的配置变量拼接一个指向管理端的公网URL
+    # 格式为: [管理端公网URL]/share/[节点ID]/[本地Token]
+    public_share_url = f"{NAS_CENTER_PUBLIC_URL}/share/{THIS_NODE_ID}/{token}"
+
     return jsonify({
         'success': True,
-        'share_url': f'/share/{token}',
-        'full_url': f'{ngrok_url_global}/share/{token}' if 'ngrok_url_global' in globals() and ngrok_url_global else None
+        'share_url': f'/share/{token}',  # 本地路径(主要用于调试)
+        'full_url': public_share_url  # [✅ 关键] 这是返回给用户的公网分享链接
     })
-# ===== PWA 支持路由 =====
-# 将以下代码添加到您的 app.py 文件中，放在其他 @app.route 附近
-# 在 backend/app.py 中添加或修改这些PWA路由
-
-# ===== 完整的PWA路由（放在backend/app.py中）=====
 
 @app.route('/static/pwa/manifest.json')
 def pwa_manifest():
@@ -1816,14 +1838,8 @@ def access_share(token):
             # 非加密盤，正常下載
             return send_file(actual_path, as_attachment=True)
 
-@app.route('/api/ngrok-url')
-def api_ngrok_url():
-    if ngrok_url_global:
-        return jsonify({'url': ngrok_url_global})
-    return jsonify({'error': 'ngrok 地址暂不可用'}), 503
 
 
-# ====== /api/ec_config：支持 GET（查看）与 POST（保存）======
 # ===== /api/ec_config：保存时对 disks 做 _norm_abs 归一化 =====
 # ===== /api/ec_config：支持 GET（查看）、POST（保存）和 DELETE（删除）=====
 @app.route("/api/ec_config", methods=["GET", "POST", "DELETE"])
@@ -2375,13 +2391,13 @@ def ec_rebuild():
         # ===== NGROK 配置 =====
 
 
-NGROK_PATH = str(Path(__file__).with_name('ngrok.exe'))
+
 FLASK_PORT = 5000
 PROJECT_ROOT = Path(__file__).parent # <-- 注意，这里只有一个 .parent
 OHM_PATH = str(PROJECT_ROOT / 'LibreHardwareMonitor-net472' / 'LibreHardwareMonitor.exe')
 
 OHM_PORT = 8085
-ngrok_url_global = None
+
 ohm_process = None
 
 
@@ -2462,104 +2478,225 @@ def start_librehardwaremonitor():
         return None
 
 
-def start_ngrok():
+def fetch_nas_center_config():
     """
-    一个更健壮的 ngrok 启动函数。
-    它会清理旧进程、轮询API状态,并在失败时提供调试信息。
+    [新增] 启动时从管理端获取配置 (如公网URL)
     """
-    global ngrok_url_global
-    print("⚙️ 正在启动 ngrok...")
+    global NAS_CENTER_PUBLIC_URL
 
-    # 确保 ngrok.exe 存在
-    if not os.path.exists(NGROK_PATH):
-        print(f"❌ ngrok.exe 未找到,路径: {NGROK_PATH}")
-        print("💡 提示:ngrok 不是必需的,程序将在本地模式下运行")
-        return None, None
+    # 目标URL是管理端的局域网API
+    target_url = f"{NAS_CENTER_API_URL}/api/ngrok-url"
 
-    # 尝试终止已有的 ngrok 进程,避免冲突
-    try:
-        if os.name == 'nt':
-            subprocess.run(['taskkill', '/F', '/IM', 'ngrok.exe'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(['killall', 'ngrok'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("🧹 已清理旧的 ngrok 进程。")
-    except Exception:
-        pass # 忽略错误,因为可能没有旧进程在运行
+    print(f"🔗  正在从管理端 {NAS_CENTER_API_URL} 获取公网地址...")
 
-    ngrok_proc = None
-    try:
-        # 启动 ngrok 进程
-        ngrok_proc = subprocess.Popen(
-            [NGROK_PATH, 'http', str(FLASK_PORT)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8',
-            errors='replace'
-        )
+    max_retries = 30  # 最多重试30次 (约5分钟)
+    for i in range(max_retries):
+        try:
+            response = requests.get(target_url, timeout=5)
 
-        ngrok_url = None
-        # 等待 ngrok API 可用 (最多等待约15秒)
-        for i in range(15):
-            time.sleep(1)
-            try:
-                # 检查 ngrok 进程是否意外退出
-                if ngrok_proc.poll() is not None:
-                    print("❌ ngrok 进程意外终止。")
-                    break
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('url'):
+                    NAS_CENTER_PUBLIC_URL = data['url']
+                    print(f"✅  成功获取公网地址: {NAS_CENTER_PUBLIC_URL}")
+                    return True
+                else:
+                    print(f"⚠️  管理端返回了数据，但缺少 'url' 字段。")
 
-                # 尝试连接 ngrok 的本地 API
-                r = requests.get('http://127.0.0.1:4040/api/tunnels', timeout=2)
-                r.raise_for_status()
-                data = r.json()
+            else:
+                print(f"⚠️  管理端返回状态 {response.status_code}。")
 
-                # 解析 HTTPS 隧道地址
-                for tunnel in data.get('tunnels', []):
-                    if tunnel.get('proto') == 'https' and tunnel.get('public_url'):
-                        ngrok_url = tunnel['public_url']
-                        break
-                if ngrok_url:
-                    break
-            except requests.exceptions.RequestException:
-                if i < 14:
-                    print(f"⏳ ngrok API 尚未就绪,正在重试... ({i+1}/15)")
-                continue # API 还未就绪,继续等待
-            except Exception as e:
-                print(f"❌ 获取 ngrok 地址时出错: {e}")
-                break
+        except requests.ConnectionError:
+            print(f"🔌  无法连接到管理端... ({i + 1}/{max_retries})")
+        except Exception as e:
+            print(f"❌  获取配置时发生错误: {e}")
 
-        if ngrok_url:
-            print(f"✅ ngrok 公网地址: {ngrok_url}")
-            ngrok_url_global = ngrok_url
-            return ngrok_url, ngrok_proc
-        else:
-            print('❌ ngrok 启动失败,无法获取公网地址。')
-            if ngrok_proc:
-                print("--- ngrok 输出日志 ---")
-                ngrok_proc.terminate() # 终止进程以释放资源
-                try:
-                    # 等待并获取所有输出
-                    stdout, _ = ngrok_proc.communicate(timeout=5)
-                    print(stdout if stdout else "(无输出)")
-                except subprocess.TimeoutExpired:
-                    print("(读取输出超时)")
-                print("--------------------")
-            return None, None
+        if i < max_retries - 1:
+            print(f"   将在 10 秒后重试...")
+            time.sleep(10)  # 等待10秒重试
 
-    except FileNotFoundError:
-        print(f"❌ ngrok 启动失败: 未找到 ngrok.exe。请确保它位于 '{NGROK_PATH}'")
-        return None, None
-    except Exception as e:
-        print(f'❌ ngrok 启动时发生严重错误: {e}')
-        if ngrok_proc:
-            ngrok_proc.terminate()
-        return None, None
-# ========== 你的 Flask 路由、逻辑在这里 ==========
+    print("❌  获取管理端配置失败。公网分享功能将不可用。")
+    return False
 
 
+@app.route('/api/move', methods=['POST'])
+@permission_required('readwrite') # 'cut' 是一种写入操作
+def move_entry():
+    """[新增] 移动文件或文件夹 (剪切-粘贴)"""
+    data = request.get_json()
+    source_full_path = data.get('source_path')
+    target_full_path = data.get('target_path') # 包含新文件名的完整目标路径
+
+    if not source_full_path or not target_full_path:
+        return jsonify({"error": "参数缺失"}), 400
+
+    # --- 分支 1: EC 卷移动 (逻辑重命名) ---
+    if _is_ec_volume(source_full_path):
+        try:
+            # 提取逻辑路径
+            source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+            target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+
+            if not source_logical or not target_logical:
+                 return jsonify({"error": "EC 逻辑路径无效"}), 400
+
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+            if source_logical not in idx.get("files", {}):
+                return jsonify({"error": "EC源文件不存在"}), 404
+            if target_logical in idx.get("files", {}):
+                return jsonify({"error": "EC目标文件已存在"}), 400
+
+            file_meta = idx["files"][source_logical]
+            disks = file_meta.get("disks", [])
+            base_old_name = os.path.basename(source_logical)
+            base_new_name = os.path.basename(target_logical)
+
+            # 在所有物理磁盘上移动(重命名)分片
+            for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
+                old_enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
+                new_enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
+                os.makedirs(new_enc_dir, exist_ok=True) # 确保目标目录存在
+
+                # 移动 .blk 文件
+                old_blk = os.path.join(old_enc_dir, f"{base_old_name}.blk_{i}")
+                new_blk = os.path.join(new_enc_dir, f"{base_new_name}.blk_{i}")
+                if os.path.exists(old_blk):
+                    os.rename(old_blk, new_blk)
+
+                # 移动 .meta 文件
+                old_meta = os.path.join(old_enc_dir, f"{base_old_name}.meta.json")
+                new_meta = os.path.join(new_enc_dir, f"{base_new_name}.meta.json")
+                if os.path.exists(old_meta):
+                    os.rename(old_meta, new_meta)
+
+            # 更新索引
+            idx["files"][target_logical] = idx["files"].pop(source_logical)
+            _save_json(EC_IDX_PATH, idx)
+
+            return jsonify({"success": True, "message": "EC文件移动成功"})
+        except Exception as e:
+            return jsonify({"error": f"EC文件移动失败: {str(e)}"}), 500
+
+    # --- 分支 2: 物理磁盘移动 ---
+    else:
+        try:
+            from common import get_actual_file_path, is_path_allowed, get_base_dir_for_path
+            source_actual = get_actual_file_path(source_full_path)
+
+            # 安全地构建目标路径
+            target_drive = os.path.splitdrive(target_full_path)[0]
+            target_base_dir = get_base_dir_for_path(target_drive) # 获取 D:/
+            if not target_base_dir:
+                 return jsonify({"error": "目标路径无效"}), 403
+
+            target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
+            target_actual = os.path.join(target_base_dir, target_rel_path)
 
 
-# ===== 文档协作API =====
+            if not source_actual or not os.path.exists(source_actual):
+                return jsonify({"error": "源文件不存在"}), 404
+            if not is_path_allowed(source_actual) or not is_path_allowed(target_actual):
+                return jsonify({"error": "路径不在允许的目录中"}), 403
+            if os.path.exists(target_actual):
+                return jsonify({"error": "目标文件已存在"}), 400
+
+            os.rename(source_actual, target_actual) # os.rename 在同盘符是重命名，跨盘符是移动
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": f"移动失败: {str(e)}"}), 500
+
+
+@app.route('/api/copy', methods=['POST'])
+@permission_required('readwrite') # 'copy' 是一种写入操作
+def copy_entry():
+    """[新增] 复制文件或文件夹 (复制-粘贴)"""
+    data = request.get_json()
+    source_full_path = data.get('source_path')
+    target_full_path = data.get('target_path')
+
+    if not source_full_path or not target_full_path:
+        return jsonify({"error": "参数缺失"}), 400
+
+    # --- 分支 1: EC 卷复制 (复制分片和索引) ---
+    if _is_ec_volume(source_full_path):
+        # 简化版：假设在同一EC卷内复制，我们只复制分片和索引
+        try:
+            source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+            target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+
+            if not source_logical or not target_logical:
+                 return jsonify({"error": "EC 逻辑路径无效"}), 400
+
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+            if source_logical not in idx.get("files", {}):
+                return jsonify({"error": "EC源文件不存在"}), 404
+            if target_logical in idx.get("files", {}):
+                return jsonify({"error": "EC目标文件已存在"}), 400
+
+            file_meta = idx["files"][source_logical].copy() # 复制元数据
+            disks = file_meta.get("disks", [])
+            base_old_name = os.path.basename(source_logical)
+            base_new_name = os.path.basename(target_logical)
+
+            # 复制所有物理分片
+            for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
+                old_enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
+                new_enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
+                os.makedirs(new_enc_dir, exist_ok=True)
+
+                old_blk = os.path.join(old_enc_dir, f"{base_old_name}.blk_{i}")
+                new_blk = os.path.join(new_enc_dir, f"{base_new_name}.blk_{i}")
+                if os.path.exists(old_blk):
+                    shutil.copy2(old_blk, new_blk)
+
+                old_meta = os.path.join(old_enc_dir, f"{base_old_name}.meta.json")
+                new_meta = os.path.join(new_enc_dir, f"{base_new_name}.meta.json")
+                if os.path.exists(old_meta):
+                    shutil.copy2(old_meta, new_meta)
+
+            # 更新索引
+            file_meta['ctime'] = int(time.time()) # 更新创建时间
+            idx["files"][target_logical] = file_meta
+            _save_json(EC_IDX_PATH, idx)
+
+            return jsonify({"success": True, "message": "EC文件复制成功"})
+        except Exception as e:
+            return jsonify({"error": f"EC文件复制失败: {str(e)}"}), 500
+
+    # --- 分支 2: 物理磁盘复制 ---
+    else:
+        try:
+            from common import get_actual_file_path, is_path_allowed, get_base_dir_for_path
+            source_actual = get_actual_file_path(source_full_path)
+
+            target_drive = os.path.splitdrive(target_full_path)[0]
+            target_base_dir = get_base_dir_for_path(target_drive)
+            if not target_base_dir:
+                 return jsonify({"error": "目标路径无效"}), 403
+
+            target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
+            target_actual = os.path.join(target_base_dir, target_rel_path)
+
+
+            if not source_actual or not os.path.exists(source_actual):
+                return jsonify({"error": "源文件不存在"}), 404
+            if not is_path_allowed(source_actual) or not is_path_allowed(target_actual):
+                return jsonify({"error": "路径不在允许的目录中"}), 403
+            if os.path.exists(target_actual):
+                return jsonify({"error": "目标文件已存在"}), 400
+
+            # 使用 shutil.copy2 (文件) 或 shutil.copytree (目录)
+            if os.path.isdir(source_actual):
+                shutil.copytree(source_actual, target_actual)
+            else:
+                shutil.copy2(source_actual, target_actual)
+
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": f"复制失败: {str(e)}"}), 500
+
+
+
 @app.route('/api/documents', methods=['GET'])
 @permission_required('readonly')
 def get_documents():
@@ -2685,12 +2822,7 @@ def ec_import():
     return jsonify({"success": True, "imported": imported, "failed": failed, "skipped": skipped})
 
 
-# app.py (添加新的路由)
 
-# ======================================================
-#                 加密驱动器 API
-# ======================================================
-# app.py
 
 @app.route('/api/encryption/status', methods=['GET'])
 @permission_required('fullcontrol')
@@ -2743,13 +2875,11 @@ def encryption_lock():
     return jsonify({'success': True, 'message': f'磁盘 {drive} 已锁定'})
 
 
-# 文件: backend/app.py
+
 import threading  # 确保在文件顶部导入 threading 模块
 
 
-# ... (您已有的其他路由) ...
 
-# [新增] 永久解密磁盘的API接口
 @app.route('/api/encryption/decrypt-disk', methods=['POST'])
 @permission_required('fullcontrol')
 def decrypt_disk_permanently_api():
@@ -2789,7 +2919,7 @@ def decrypt_disk_permanently_api():
     return jsonify(
         {'success': True, 'message': f'已开始在后台对磁盘 {drive} 进行永久解密，请通过服务器后台日志查看进度。'})
 
-# 文件: app.py -> 再次替换 set_encryption_password 函数
+
 
 @app.route('/api/encryption/set-password', methods=['POST'])
 @permission_required('fullcontrol')
@@ -3600,22 +3730,18 @@ if __name__ == '__main__':
     print("✅  数据库初始化完成。")
     print("🚀  正在启动文件管理系统...")
 
-    ngrok_url, ngrok_proc = None, None
     ohm_proc = None
 
     try:
         # 1. 启动 LibreHardwareMonitor
         # 👇 [核心修改] 调用新的函数名
         ohm_proc = start_librehardwaremonitor()
-
-        # 2. 启动 ngrok (如果可用)
-        ngrok_url, ngrok_proc = start_ngrok()
+        fetch_nas_center_config()
+        # 2. (ngrok 启动逻辑已移除)
 
         # 3. 打印启动信息
         print(f"🔧  Flask 服务器启动在端口: {FLASK_PORT}")
         print("=" * 50)
-        if ngrok_url:
-            print(f"🌐  外网访问地址: {ngrok_url}")
         print(f"🏠  本地访问地址: http://localhost:{FLASK_PORT}")
         print(f"🔗  局域网访问地址: http://您的IP地址:{FLASK_PORT}")
         if ohm_proc:
@@ -3648,10 +3774,6 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f"   ⚠️  关闭 LibreHardwareMonitor 时出错: {e}")
 
-        # 6. 关闭 ngrok
-        if ngrok_proc:
-            print("   - 正在关闭 ngrok...")
-            ngrok_proc.terminate()
-            print("   ✅  ngrok 已关闭。")
+        # 6. (ngrok 关闭逻辑已移除)
 
         print("✅  清理完成, 程序已退出。")

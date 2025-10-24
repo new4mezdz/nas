@@ -91,7 +91,7 @@ async getEcCapacityEstimate() {
   delete axios.defaults.headers.common['Authorization'];
 
   // ✅ 跳转到管理端登录页
-  window.location.href = '/admin/login'; // 根据你的管理端路由调整
+  window.close();
 },
 
     // ==========================================
@@ -1104,7 +1104,7 @@ async decryptFileOrFolder(window, file) {
           label: '删除',
           action: () => {
             // 注意：这里调用的是 deleteItem, 它内部会调用我们改好的 deleteFile
-             this.deleteItem(window, file);
+             this.deleteFile(window, file);
              // deleteItem 内部会调用 closeContextMenu，所以这里不用再调
           },
           // 删除 需要完全控制权限
@@ -1242,16 +1242,111 @@ async decryptFileOrFolder(window, file) {
 
     async pasteFiles(window) {
       if (!window.clipboard.items.length) {
-        alert('剪贴板为空');
+        this.showToast('ℹ️ 剪贴板为空', 'info');
+        return;
+      }
+      if (!this.canWrite) {
+          this.showToast('❌ 权限不足，无法粘贴', 'error');
+          return;
+      }
+
+      const { mode, items, sourceDrive, sourcePath } = window.clipboard;
+      const targetDrive = window.currentDrive;
+      const targetPath = window.currentPath;
+
+      // 1. 检查是否在同一目录进行无意义操作
+      if (mode === 'cut' && sourceDrive === targetDrive && sourcePath === targetPath) {
+        this.showToast('ℹ️ 源目录和目标目录相同', 'info');
+        window.clipboard = { mode: null, items: [], sourceDrive: null, sourcePath: null };
+        this.closeContextMenu();
         return;
       }
 
-      const mode = window.clipboard.mode;
-      const count = window.clipboard.items.length;
+      // 检查复制到同目录
+      if (mode === 'copy' && sourceDrive === targetDrive && sourcePath === targetPath) {
+        this.showToast('ℹ️ 暂不支持在同一位置粘贴副本', 'info');
+        // (未来可以实现 "file (copy).txt")
+        return;
+      }
 
-      alert(`粘贴功能开发中...\n将${mode === 'cut' ? '移动' : '复制'} ${count} 项到当前位置`);
+      this.showToast(`🚀 正在 ${mode === 'cut' ? '移动' : '复制'} ${items.length} 个项目...`, 'info');
 
-      // TODO: 实现实际的粘贴逻辑
+      let successCount = 0;
+      let failCount = 0;
+      const failedItems = [];
+
+      for (const itemName of items) {
+        try {
+          // 2. 构建源路径
+          let sourceFullPath;
+          if (sourceDrive === 'ec_volume') {
+            const path = sourcePath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
+            sourceFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
+          } else {
+            const cleanPath = sourcePath.replace(/^\//, '');
+            sourceFullPath = cleanPath ? `${sourceDrive}${cleanPath}/${itemName}` : `${sourceDrive}${itemName}`;
+          }
+
+          // 3. 构建目标路径
+          let targetFullPath;
+          if (targetDrive === 'ec_volume') {
+            const path = targetPath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
+            targetFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
+          } else {
+            const cleanPath = targetPath.replace(/^\//, '');
+            targetFullPath = cleanPath ? `${targetDrive}${cleanPath}/${itemName}` : `${targetDrive}${itemName}`;
+          }
+
+          // 4. 检查跨卷操作 (EC <-> 物理盘)
+          if ((sourceDrive === 'ec_volume' && targetDrive !== 'ec_volume') ||
+              (sourceDrive !== 'ec_volume' && targetDrive === 'ec_volume')) {
+              failedItems.push(`${itemName} (暂不支持跨卷操作)`);
+              failCount++;
+              continue; // 不支持EC卷和物理盘之间复制
+          }
+
+          // 5. 选择API
+          const apiUrl = mode === 'cut' ? '/api/move' : '/api/copy';
+
+          const response = await axios.post(apiUrl, {
+            source_path: sourceFullPath.replace(/\/\//g, '/'),
+            target_path: targetFullPath.replace(/\/\//g, '/')
+          });
+
+          if (response.data.success) {
+            successCount++;
+          } else {
+            failCount++;
+            failedItems.push(`${itemName} (${response.data.error})`);
+          }
+        } catch (error) {
+          failCount++;
+          failedItems.push(`${itemName} (${error.response?.data?.error || error.message})`);
+        }
+      }
+
+      // 6. 报告结果
+      if (failCount > 0) {
+        this.showToast(`⚠️ 操作完成: 成功 ${successCount}, 失败 ${failCount}`, 'warning');
+        console.error("粘贴失败详情:", failedItems);
+      } else {
+        this.showToast(`✅ 操作成功: ${successCount} 个项目已${mode === 'cut' ? '移动' : '复制'}`, 'success');
+      }
+
+      // 7. 清理剪贴板
+      window.clipboard = { mode: null, items: [], sourceDrive: null, sourcePath: null };
+
+      // 8. 刷新当前窗口
+      this.loadFiles(window);
+
+      // 9. 如果是移动，并且源窗口还开着，也刷新源窗口
+      if (mode === 'cut' && sourceDrive) {
+        const sourceWindow = this.windows.find(w => w.type === 'files' && w.currentDrive === sourceDrive && w.currentPath === sourcePath);
+        if (sourceWindow && sourceWindow.id !== window.id) {
+          this.loadFiles(sourceWindow);
+        }
+      }
+
       this.closeContextMenu();
     },
 
