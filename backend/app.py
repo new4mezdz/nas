@@ -4,8 +4,7 @@ import io
 import json
 import time
 import secrets
-import sqlite3
-import threading
+import psutil, requests, threading, time
 import subprocess
 import mimetypes
 from pathlib import Path
@@ -1656,6 +1655,28 @@ def create_share():
         'full_url': public_share_url  # [✅ 关键] 这是返回给用户的公网分享链接
     })
 
+
+@app.route('/api/initialize', methods=['POST'])
+def initialize():
+    """
+    客户端接收主控发来的身份信息
+    """
+    global NODE_ID, MASTER_URL
+    data = request.json
+    NODE_ID = data.get("node_id")
+    master_ip = data.get("master_ip")
+    master_port = data.get("master_port")
+
+    MASTER_URL = f"http://{master_ip}:{master_port}/api/nodes/update-disks"
+
+    print(f"[节点] 已初始化身份: {NODE_ID}")
+    print(f"[节点] 主控中心: {MASTER_URL}")
+
+    # 启动上报线程
+    threading.Thread(target=report_disks, daemon=True).start()
+
+    return jsonify({"success": True, "node_id": NODE_ID})
+
 @app.route('/static/pwa/manifest.json')
 def pwa_manifest():
     """PWA应用清单 - 确保正确的HTTP头"""
@@ -3260,8 +3281,140 @@ def collab_validate():
 
 
 
+# ========== 管理端远程控制加密接口 ==========
+@app.route('/api/internal/encryption/encrypt-disk', methods=['POST'])
+def internal_encrypt_disk():
+    """
+    [新增] 供管理端调用：启用磁盘加密
+    需在Header中携带 X-NAS-Secret 验证
+    """
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({"error": "权限不足"}), 403
 
-# app.py
+    data = request.get_json()
+    drive = data.get('drive')
+    password = data.get('password')
+
+    if not drive or not password:
+        return jsonify({"error": "缺少参数"}), 400
+
+    try:
+        result = encryption_manager.encrypt_drive(drive, password)
+        if result.get("success"):
+            return jsonify({"success": True, "message": f"磁盘 {drive} 已启用加密"})
+        else:
+            return jsonify({"error": result.get("error", "加密失败")}), 500
+    except Exception as e:
+        return jsonify({"error": f"执行加密失败: {str(e)}"}), 500
+
+
+@app.route('/api/internal/encryption/unlock-disk', methods=['POST'])
+def internal_unlock_disk():
+    """
+    [新增] 供管理端调用：远程解锁磁盘
+    """
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({"error": "权限不足"}), 403
+
+    data = request.get_json()
+    drive = data.get('drive')
+    password = data.get('password')
+
+    if not drive or not password:
+        return jsonify({"error": "缺少参数"}), 400
+
+    success = encryption_manager.unlock(drive, password)
+    if success:
+        return jsonify({"success": True, "message": f"磁盘 {drive} 已解锁"})
+    else:
+        return jsonify({"error": f"磁盘 {drive} 解锁失败"}), 403
+
+
+@app.route('/api/internal/encryption/decrypt-disk', methods=['POST'])
+def internal_decrypt_disk():
+    """
+    供管理端调用：永久解密磁盘
+    """
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({"error": "权限不足"}), 403
+
+    data = request.get_json()
+    drive = data.get('drive')
+    password = data.get('password')   # ✅ 补上密码参数
+
+    if not drive or not password:
+        return jsonify({"error": "缺少参数 drive 或 password"}), 400
+
+    def background_task():
+        try:
+            result = encryption_manager.decrypt_disk_permanently(drive, password)
+            print(f"[远程解密完成] {drive}: {result}")
+        except Exception as e:
+            print(f"[远程解密错误] {drive}: {e}")
+
+    threading.Thread(target=background_task, daemon=True).start()
+    return jsonify({"success": True, "message": f"已开始远程永久解密 {drive}。"})
+
+# ==============================================================
+# 🔒 供管理端远程调用：锁定磁盘
+# ==============================================================
+@app.route('/api/internal/encryption/lock-disk', methods=['POST'])
+def internal_lock_disk():
+    """[新增] 供管理端调用：锁定磁盘"""
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({"error": "权限不足"}), 403
+
+    data = request.get_json()
+    drive = data.get('drive')
+    if not drive:
+        return jsonify({"error": "缺少参数 drive"}), 400
+
+    try:
+        success = encryption_manager.lock(drive)
+        if success:
+            print(f"[节点] 已锁定磁盘: {drive}")
+            return jsonify({"success": True, "message": f"磁盘 {drive} 已锁定"})
+        else:
+            return jsonify({"error": f"磁盘 {drive} 锁定失败"}), 500
+    except Exception as e:
+        print(f"[节点] 锁定磁盘错误: {e}")
+        return jsonify({"error": f"执行锁定失败: {e}"}), 500
+
+
+# ==============================================================
+# 🔑 供管理端远程调用：修改加密密码
+# ==============================================================
+@app.route('/api/internal/encryption/change-password', methods=['POST'])
+def internal_change_password():
+    """[新增] 供管理端调用：修改磁盘加密密码"""
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({"error": "权限不足"}), 403
+
+    data = request.get_json()
+    drive = data.get('drive')
+    new_password = data.get('new_password')
+
+    if not (drive and new_password):
+        return jsonify({"error": "缺少参数 drive 或 new_password"}), 400
+
+    try:
+        result = encryption_manager.set_password(drive, new_password)
+        if result.get("success"):
+            print(f"[节点] 磁盘 {drive} 密码修改成功")
+            return jsonify({"success": True, "message": f"磁盘 {drive} 密码已更新"})
+        else:
+            return jsonify({"error": result.get("error", "修改密码失败")}), 500
+    except Exception as e:
+        print(f"[节点] 修改密码错误: {e}")
+        return jsonify({"error": f"修改密码异常: {e}"}), 500
+
+
+
 
 @app.route('/api/encryption/add-drive', methods=['POST'])
 @permission_required('fullcontrol')
@@ -3672,6 +3825,51 @@ def access_preview_session(session_id):
         traceback.print_exc()
         return jsonify({'error': '文件访问失败'}), 500
 
+def collect_disks():
+    disks = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+            disks.append({
+                "mount": part.mountpoint,
+                "status": "online",
+                "capacity_gb": round(usage.total / (1024**3), 2),
+                "is_encrypted": 0,
+                "is_locked": 0
+            })
+        except Exception:
+            continue
+    return disks
+def register_to_master():
+    """客户端启动时主动向主控端注册"""
+    global NODE_ID, MASTER_URL
+    try:
+        data = {
+            "ip": "127.0.0.1",
+            "port": 5000
+        }
+        res = requests.post(f"{NAS_CENTER_API_URL}/api/nodes/register", json=data, timeout=5)
+        if res.status_code == 200:
+            resp_json = res.json()
+            NODE_ID = resp_json.get("node_id")
+            MASTER_URL = f"{NAS_CENTER_API_URL}/api/nodes/update-disks"
+            print(f"[注册成功] 节点ID={NODE_ID} 主控={MASTER_URL}")
+            threading.Thread(target=report_disks, daemon=True).start()
+        else:
+            print(f"[注册失败] 管理端返回状态 {res.status_code}: {res.text}")
+    except Exception as e:
+        print(f"[注册异常] 无法连接管理端: {e}")
+
+def report_disks():
+    """每隔 60 秒上报一次磁盘信息"""
+    while True:
+        try:
+            payload = {"node_id": NODE_ID, "disks": collect_disks()}
+            res = requests.post(MASTER_URL, json=payload, timeout=5)
+            print(f"[节点上报] {NODE_ID}: {res.status_code}")
+        except Exception as e:
+            print(f"[节点上报失败] {e}")
+        time.sleep(60)
 
 # ========== 定期清理过期会话 ==========
 def cleanup_expired_sessions():
@@ -3717,6 +3915,7 @@ def start_cleanup_thread():
         print(f"[DEBUG] 启动清理线程失败: {e}")
 
 
+
 # 在应用启动时调用
 start_cleanup_thread()
 # ===== 注册文件管理蓝图 =====
@@ -3731,7 +3930,7 @@ if __name__ == '__main__':
     print("🚀  正在启动文件管理系统...")
 
     ohm_proc = None
-
+    register_to_master()
     try:
         # 1. 启动 LibreHardwareMonitor
         # 👇 [核心修改] 调用新的函数名

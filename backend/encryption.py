@@ -338,3 +338,66 @@ class EncryptionManager:
             "processed_files": processed_files,
             "failed_files": failed_files
         }
+
+    # =============================================================
+    # 🔐 新增: encrypt_drive()
+    # =============================================================
+    def encrypt_drive(self, drive_path: str, password: str) -> dict:
+        """
+        启用整盘加密。
+        本质上只是生成盐和哈希，并记录到配置文件。
+        真正的数据加密可在后续按需触发。
+        """
+        try:
+            norm_drive = _norm_abs(drive_path)
+            salt = os.urandom(16)
+            password_hash = hashlib.pbkdf2_hmac(
+                'sha256', password.encode('utf-8'), salt, 100000
+            )
+
+            # 保存配置
+            self.disk_configs[norm_drive] = {
+                "password_salt": salt.hex(),
+                "password_hash": password_hash.hex()
+            }
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump({"disks": self.disk_configs}, f, indent=2, ensure_ascii=False)
+
+            print(f"✅ 磁盘 {norm_drive} 加密初始化完成。")
+            return {"success": True, "message": f"磁盘 {norm_drive} 加密成功"}
+
+        except Exception as e:
+            print(f"❌ encrypt_drive() 错误: {e}")
+            return {"success": False, "error": str(e)}
+
+    # =============================================================
+    # 🔑 新增: set_password()
+    # =============================================================
+    def set_password(self, drive_path: str, new_password: str) -> dict:
+        """
+        修改磁盘加密密码。
+        """
+        try:
+            norm_drive = _norm_abs(drive_path)
+            if norm_drive not in self.disk_configs:
+                return {"success": False, "error": "磁盘未加密"}
+
+            salt = os.urandom(16)
+            new_hash = hashlib.pbkdf2_hmac(
+                'sha256', new_password.encode('utf-8'), salt, 100000
+            )
+
+            self.disk_configs[norm_drive] = {
+                "password_salt": salt.hex(),
+                "password_hash": new_hash.hex()
+            }
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump({"disks": self.disk_configs}, f, indent=2, ensure_ascii=False)
+
+            print(f"🔑 磁盘 {norm_drive} 密码已更新。")
+            return {"success": True, "message": f"密码修改成功: {norm_drive}"}
+
+        except Exception as e:
+            print(f"❌ set_password() 错误: {e}")
+            return {"success": False, "error": str(e)}

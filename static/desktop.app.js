@@ -151,6 +151,7 @@ async getEcCapacityEstimate() {
     },
 
     async fetchEcStatus() {
+      if (!this.user.is_admin) return; // [!code ++] ✅ 添加管理员检查
       try {
         const res = await axios.get('/api/ec_status');
         this.ecStatus = res.data;
