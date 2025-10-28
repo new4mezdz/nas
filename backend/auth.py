@@ -41,7 +41,6 @@ def load_user():
     # 方式1: 检查 session (本地登录)
     if 'user' in session:
         g.user = session['user']
-        print(f"[AUTH] 从session加载用户: {g.user}")
         return
 
     # 方式2: 检查 URL 参数中的 token (管理端跳转)
@@ -58,7 +57,7 @@ def load_user():
         payload = verify_access_token(token)
 
         if payload:
-            # ✅ 从 payload 中提取用户信息
+            # 从 payload 中提取用户信息
             g.user = payload.get('user_id')
 
             # 将用户信息存入 session (保持登录状态)
@@ -66,10 +65,6 @@ def load_user():
             session['username'] = payload.get('username')
             session['file_permission'] = payload.get('file_permission', 'readonly')
             session['role'] = payload.get('role', 'user')
-
-            print(f"[AUTH] 从令牌加载用户: {payload.get('username')} (权限: {session['file_permission']})")
-        else:
-            print("[AUTH] 令牌验证失败")
 
 
 def login_required(f):
@@ -149,12 +144,14 @@ def init_auth(app):
     def current_user():
         """获取当前登录用户"""
         if g.user:
+            role = session.get('role', 'user')
             return jsonify({
                 'user': {
                     'id': g.user,
                     'username': session.get('username'),
                     'file_permission': session.get('file_permission', 'readonly'),
-                    'is_admin': session.get('is_admin', False)
+                    'role': role,
+                    'is_admin': (role == 'admin')
                 }
             })
         return jsonify({'user': None}), 401

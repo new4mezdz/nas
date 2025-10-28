@@ -46,10 +46,19 @@ from collaboration import CollaborationManager
 from collaboration_v2 import CollaborationV2
 from onlyoffice import OnlyOfficeManager
 from encryption import EncryptionManager, NotUnlockedError
-# ===== 配置 =====
+
+encryption_tasks_status = {}
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config['SECRET_KEY'] = 'super-secret-key'  # 建议换成更随机的密钥
-init_auth(app)  # 注册来自 auth.py 的 /api/login, /api/logout 路由
+# ✅✅✅ 添加这些 Session 配置 ✅✅✅
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # 开发环境用 False
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)  # 7天有效期
+app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_NAME'] = 'client_session'  # 客户端使用不同的 session 名
+# ✅✅✅ 添加结束 ✅✅✅
+init_auth(app)
 
 # 初始化SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -79,7 +88,7 @@ NAS_SHARED_SECRET = "your-shared-secret-key"   # 共享密钥(需与管理端一
 NAS_CENTER_PUBLIC_URL = None # ‼️ 将在启动时从管理端动态获取
 THIS_NODE_ID = "node-5"                     # ‼️ 替换为本节点的唯一ID
 
-# backend/app.py (客户端)
+
 
 import jwt
 
@@ -316,20 +325,40 @@ def index():
     response.headers['Expires'] = '0'
     return response
 
+
 @app.route("/desktop")
 def desktop_page():
     """管理端跳转入口 - 显示桌面页面"""
+    # auth.py 的 load_user() 已经处理了认证
+    # 直接检查 g.user 即可
+
+    if not hasattr(g, 'user') or not g.user:
+        print("❌ 未登录或 session 已失效")
+        return redirect(f'http://127.0.0.1:8080/login?redirect=client&node_id={THIS_NODE_ID}')
+
+    # 返回页面
     static_folder = app.static_folder or 'static'
-    # [✅ 修改] 创建响应对象
     response = make_response(send_from_directory(static_folder, "desktop.html"))
-    # [✅ 新增] 添加禁止缓存的头部
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+
     return response
 
+@app.route('/api/check-session', methods=['GET'])
+def check_session():
+    """检查当前 session 是否有效"""
+    if session.get('authenticated') and 'user_id' in session:
+        return jsonify({
+            "authenticated": True,
+            "username": session.get('username'),
+            "role": session.get('role'),
+            "file_permission": session.get('file_permission')
+        })
+    else:
+        return jsonify({"authenticated": False}), 401
 
-# 在文件末尾 if __name__ == '__main__': 之前添加
+
 
 # ========== NAS Center 集成接口 ==========
 
@@ -2911,41 +2940,59 @@ def decrypt_disk_permanently_api():
     if not drive or not password:
         return jsonify({'error': '需要提供磁盘和密码'}), 400
 
-    def background_task(app, drive_path, pwd):
+    norm_drive = _norm_abs(drive) # 标准化路径作为Key
+
+    # ✅ 定义状态更新回调函数
+    def update_status_callback(drive_key, message, percent):
+        global encryption_tasks_status
+        if percent == -1: # 发生错误
+            encryption_tasks_status[drive_key] = {'message': message, 'percent': 0, 'status': 'error'}
+        elif percent == 100: # 完成
+            encryption_tasks_status[drive_key] = {'message': message, 'percent': 100, 'status': 'complete'}
+        else:
+            encryption_tasks_status[drive_key] = {'message': message, 'percent': percent, 'status': 'running'}
+
+    def background_task(app, drive_path, drive_key, pwd):
         with app.app_context():
             try:
-                result = encryption_manager.decrypt_disk_permanently(drive_path, pwd)
+                result = encryption_manager.decrypt_disk_permanently(
+                    drive_path,
+                    pwd,
+                    status_callback=lambda d, m, p: update_status_callback(drive_key, m, p) # 传递回调
+                )
 
-                # 解密成功后，从配置文件中移除该磁盘的加密设置
                 if not result.get("failed_files"):
                     config_path = encryption_manager.config_path
                     config = _load_json(config_path, {"disks": {}})
-                    norm_drive = _norm_abs(drive_path)
-                    if norm_drive in config.get("disks", {}):
-                        del config["disks"][norm_drive]
+                    if drive_key in config.get("disks", {}):
+                        del config["disks"][drive_key]
                         _save_json(config_path, config)
-                        # 重新加载配置以更新服务器状态
                         encryption_manager.load_config()
                         print(f"🎉 已从加密配置中移除磁盘 {drive_path}")
 
-            except ValueError as e:  # 捕获密码错误
+            except ValueError as e:
                 print(f"后台解密任务失败: {e}")
+                update_status_callback(drive_key, f"❌ {drive_path}：解密失败: {e}", -1)
             except Exception as e:
                 print(f"后台解密任务发生严重错误: {e}")
+                update_status_callback(drive_key, f"❌ {drive_path}：解密失败: {e}", -1)
 
-    # 在后台线程中运行解密任务
-    thread = threading.Thread(target=background_task, args=(app, drive, password))
+    thread = threading.Thread(target=background_task, args=(app, drive, norm_drive, password))
     thread.start()
 
     return jsonify(
-        {'success': True, 'message': f'已开始在后台对磁盘 {drive} 进行永久解密，请通过服务器后台日志查看进度。'})
+        {'success': True, 'message': f'已开始在后台对磁盘 {drive} 进行永久解密。'})
 
-
+@app.route('/api/encryption/progress', methods=['GET'])
+@permission_required('fullcontrol')
+def encryption_progress():
+    """获取当前所有加密/解密任务的进度"""
+    return jsonify(encryption_tasks_status)
 
 @app.route('/api/encryption/set-password', methods=['POST'])
 @permission_required('fullcontrol')
 def set_encryption_password():
-    """为单个或多个磁盘设定/变更密码"""
+    """为单个或多个磁盘设定/变更密码 (✅ 异步加密版 + 进度报告)"""
     data = request.get_json()
     drives = data.get('drives', [])
     old_password = data.get('old_password')
@@ -2955,23 +3002,24 @@ def set_encryption_password():
         return jsonify({'error': '需要提供磁盘列表和新密码'}), 400
 
     config = _load_json(encryption_manager.config_path, {"disks": {}})
-
-    # [✅ 关键修复] 在循环之前，就确保 'disks' 键一定存在且是一个字典。
-    # 这样可以安全地处理空的或格式不完整的配置文件。
     if "disks" not in config or not isinstance(config.get("disks"), dict):
         config["disks"] = {}
 
+    keys_for_encryption = {}
+    tasks_started = False
+
     for drive_path in drives:
         norm_drive = _norm_abs(drive_path)
+        is_new_encryption = True
 
-        # 经过上面的修复，现在这一行是绝对安全的了
         if norm_drive in config["disks"] and config["disks"][norm_drive].get("password_hash"):
+            is_new_encryption = False
             if not old_password:
                 return jsonify({'error': f'磁盘 {drive_path} 已有密码，需要提供旧密码才能变更'}), 403
-
             temp_manager = EncryptionManager(encryption_manager.config_path)
             if not temp_manager.unlock(drive_path, old_password):
                 return jsonify({'error': f'磁盘 {drive_path} 的旧密码不正确'}), 403
+            print(f"⚠️ 正在为磁盘 {drive_path} 更改密码，但不重加密现有文件。")
 
         new_salt = os.urandom(16)
         new_hash = hashlib.pbkdf2_hmac('sha256', new_password.encode('utf-8'), new_salt, 100000)
@@ -2981,10 +3029,54 @@ def set_encryption_password():
             "password_hash": new_hash.hex()
         }
 
+        if is_new_encryption:
+            derived_key = hashlib.pbkdf2_hmac(
+                'sha256', new_password.encode('utf-8'), new_salt, 100000, dklen=32
+            )
+            keys_for_encryption[norm_drive] = (drive_path, derived_key) # 存储原始路径和密钥
+
     _save_json(encryption_manager.config_path, config)
     encryption_manager.load_config()
 
-    return jsonify({'success': True, 'message': '密码设定成功'})
+    if keys_for_encryption:
+
+        # ✅ 定义状态更新回调函数
+        def update_status_callback(drive_key, message, percent):
+            global encryption_tasks_status
+            if percent == -1: # 发生错误
+                encryption_tasks_status[drive_key] = {'message': message, 'percent': 0, 'status': 'error'}
+            elif percent == 100: # 完成
+                encryption_tasks_status[drive_key] = {'message': message, 'percent': 100, 'status': 'complete'}
+            else:
+                encryption_tasks_status[drive_key] = {'message': message, 'percent': percent, 'status': 'running'}
+
+        def background_task(app_context, drives_to_encrypt):
+            with app_context:
+                for norm_drive, (original_drive_path, key) in drives_to_encrypt.items():
+                    print(f"🚀 (后台线程) 开始加密任务: {original_drive_path}")
+                    try:
+                        result = encryption_manager.encrypt_disk_permanently(
+                            original_drive_path,
+                            key,
+                            status_callback=lambda d, m, p: update_status_callback(norm_drive, m, p) # 传递回调
+                        )
+                        if result.get("failed_files"):
+                            print(f"⚠️ (后台线程) 加密完成 (有失败): {original_drive_path}")
+                        else:
+                            print(f"✅ (后台线程) 加密成功: {original_drive_path}")
+                    except Exception as e:
+                        print(f"❌ (后台线程) 加密任务失败: {original_drive_path}, 错误: {str(e)}")
+                        update_status_callback(norm_drive, f"❌ {original_drive_path}：加密失败: {e}", -1)
+
+        thread_app_context = app.app_context()
+        thread = threading.Thread(target=background_task, args=(thread_app_context, keys_for_encryption))
+        thread.start()
+        tasks_started = True
+
+    if tasks_started:
+        return jsonify({'success': True, 'message': '密码设置成功，后台加密任务已启动'})
+    else:
+        return jsonify({'success': True, 'message': '密码变更成功'})
 
 @app.route('/api/documents', methods=['POST'])
 @permission_required('readwrite')
@@ -3343,23 +3435,44 @@ def internal_decrypt_disk():
 
     data = request.get_json()
     drive = data.get('drive')
-    password = data.get('password')   # ✅ 补上密码参数
+    password = data.get('password')
 
     if not drive or not password:
         return jsonify({"error": "缺少参数 drive 或 password"}), 400
 
-    def background_task():
-        try:
-            result = encryption_manager.decrypt_disk_permanently(drive, password)
-            print(f"[远程解密完成] {drive}: {result}")
-        except Exception as e:
-            print(f"[远程解密错误] {drive}: {e}")
+    print(f"[客户端] 🔓 收到解密请求: {drive}")
 
-    threading.Thread(target=background_task, daemon=True).start()
-    return jsonify({"success": True, "message": f"已开始远程永久解密 {drive}。"})
+    try:
+        # ✅ 同步执行,不使用后台线程
+        result = encryption_manager.decrypt_disk_permanently(drive, password)
 
-# ==============================================================
-# 🔒 供管理端远程调用：锁定磁盘
+        processed = result.get('processed_files', 0)
+        failed = len(result.get('failed_files', []))
+
+        print(f"[客户端] ✅ 解密完成!")
+        print(f"  磁盘: {drive}")
+        print(f"  成功: {processed} 个文件")
+        print(f"  失败: {failed} 个文件")
+
+        return jsonify({
+            "success": True,
+            "message": f"磁盘 {drive} 已永久解密",
+            "details": {
+                "processed": processed,
+                "failed": failed
+            }
+        })
+
+    except ValueError as e:
+        print(f"[客户端] ❌ 密码错误: {drive}")
+        return jsonify({"success": False, "error": "密码错误"}), 400
+
+    except Exception as e:
+        print(f"[客户端] ❌ 解密失败: {drive}")
+        print(f"  错误: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 # ==============================================================
 @app.route('/api/internal/encryption/lock-disk', methods=['POST'])
 def internal_lock_disk():

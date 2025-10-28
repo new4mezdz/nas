@@ -948,15 +948,38 @@
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <button v-if="disk.is_configured && !disk.is_unlocked" @click="unlockDisk(disk.drive)" class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">解锁</button>
-                    <button v-if="disk.is_configured && disk.is_unlocked" @click="lockDisk(disk.drive)" class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">锁定</button>
-                    <button @click="setEncryptionPassword(disk.drive, disk.is_configured)" class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">{{ disk.is_configured ? '改密码' : '设密码' }}</button>
-                     <button v-if="disk.is_configured"
-                @click="decryptDiskPermanently(disk.drive)"
-                class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
-          移除加密
-        </button>
-                </div>
+  <!-- 🔹 1. 解锁磁盘 -->
+  <button
+    v-if="disk.is_configured && !disk.is_unlocked"
+    @click="unlockDisk(disk.drive)"
+    class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+    解锁
+  </button>
+
+  <!-- 🔹 2. 锁定磁盘 -->
+  <button
+    v-if="disk.is_configured && disk.is_unlocked"
+    @click="lockDisk(disk.drive)"
+    class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">
+    锁定
+  </button>
+
+  <!-- 🔹 3. 设密码 / 改密码 -->
+  <button
+    @click="setEncryptionPassword(disk.drive, disk.is_configured)"
+    class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
+    {{ disk.is_configured ? '改密码' : '设密码' }}
+  </button>
+
+  <!-- 🔹 4. 移除加密（永久解密） -->
+  <button
+    v-if="disk.is_configured"
+    @click="decryptDiskPermanently(disk.drive)"
+    class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
+    移除加密
+  </button>
+</div>
+
             </div>
         </div>
     </div>
@@ -1372,6 +1395,28 @@
         </div>
       </div>
 
+  <!-- 🔵 加密进度条 -->
+      <div v-if="encryptionProgress.show"
+           class="fixed bottom-5 right-5 w-[350px] bg-gray-800 text-white p-4 rounded-lg shadow-2xl z-[5000] border-t-4"
+           :class="{
+             'border-blue-500': encryptionProgress.status === 'running',
+             'border-green-500': encryptionProgress.status === 'complete',
+             'border-red-500': encryptionProgress.status === 'error'
+           }">
+        <div class="mb-2 text-sm font-semibold flex justify-between">
+          <span>🔐 {{ encryptionProgress.title || '正在加密磁盘...' }}</span>
+          <span>{{ encryptionProgress.percent }}%</span>
+        </div>
+        <div class="w-full bg-gray-600 rounded-full h-2.5 overflow-hidden">
+          <div class="h-2.5 rounded-full transition-all duration-300"
+               :class="{
+                 'bg-blue-500': encryptionProgress.status === 'running',
+                 'bg-green-500': encryptionProgress.status === 'complete',
+                 'bg-red-500': encryptionProgress.status === 'error'
+               }"
+               :style="{ width: encryptionProgress.percent + '%' }"></div>
+        </div>
+      </div>
       <!-- 任务栏 -->
       <div class="taskbar">
         <!-- 开始按钮 -->

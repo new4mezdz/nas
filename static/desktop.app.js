@@ -32,6 +32,13 @@ user: { username: '', is_admin: false },
     ecStatus: { is_configured: false },
     encryptionStatus: [],
 
+
+    encryptionProgress: {
+      show: false,
+      percent: 0,
+      status: 'running',  // running | complete | error
+      title: ''
+    },
     // ========== 文件上传 ==========
     showUploadDialog: false,
     uploadFiles: [],
@@ -1926,7 +1933,35 @@ async submitEcConfig() {
   }
 },
 
-    // 在 methods 对象中，找到并替换 openECDetailConfig
+   startEncryption(drive) {
+  this.encryptionProgress.show = true;
+  this.encryptionProgress.status = 'running';
+  this.encryptionProgress.title = `正在加密 ${drive}...`;
+  this.encryptionProgress.percent = 0;
+
+  const interval = setInterval(() => {
+    if (this.encryptionProgress.percent < 100)
+      this.encryptionProgress.percent += 5;
+  }, 500);
+
+  axios.post('/api/encryption/disk/encrypt', { drive })
+    .then(res => {
+      this.encryptionProgress.status = 'complete';
+      this.encryptionProgress.percent = 100;
+      this.encryptionProgress.title = '加密完成 ✅';
+    })
+    .catch(() => {
+      this.encryptionProgress.status = 'error';
+      this.encryptionProgress.title = '加密失败 ❌';
+    })
+    .finally(() => {
+      setTimeout(() => {
+        clearInterval(interval);
+        this.encryptionProgress.show = false;
+      }, 3000);
+    });
+},
+
 openECDetailConfig() {
   // 不再是 alert，而是创建一个新类型的窗口
   const window = this.createWindow('ec-detail', '纠删码详细配置', '🛡️', {

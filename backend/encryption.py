@@ -4,6 +4,9 @@ import os
 import json
 import hashlib
 from utils import _norm_abs
+import os, hashlib, json
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 
 # ===== 异常类 =====
@@ -51,6 +54,15 @@ class EncryptionManager:
         except Exception:
             pass
         return default
+
+    def _save_config(self):
+        """保存配置到文件"""
+        try:
+            config = {"disks": self.disk_configs}
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ 保存加密配置失败: {e}")
 
     def load_config(self):
         """加载每个磁盘的加密配置"""
@@ -285,46 +297,208 @@ class EncryptionManager:
             results['errors'].append(f"遍历文件夹失败: {str(e)}")
             return results
 
-    # ===== 5. 永久解密磁盘 =====
-    def decrypt_disk_permanently(self, drive_path: str, password: str) -> dict:
+    # ===== 5. 磁盘加密(供管理端调用) =====
+    def encrypt_drive(self, drive_path: str, password: str, status_callback=None) -> dict:
         """
-        永久解密一个磁盘上的所有文件。这是一个耗时且危险的操作。
-        返回一个包含处理结果的字典。
+        为磁盘启用加密(供管理端调用的包装方法)
+
+        Args:
+            drive_path: 磁盘路径,如 'D:\\'
+            password: 用户密码(字符串)
+            status_callback: 进度回调函数
+
+        Returns:
+            dict: {"success": bool, "message": str, "details": {...}}
+        """
+        try:
+            norm_drive = _norm_abs(drive_path)
+
+            # 1. 检查是否已经配置过加密
+            if norm_drive in self.disk_configs:
+                return {
+                    "success": False,
+                    "error": f"磁盘 {norm_drive} 已启用加密"
+                }
+
+            # 2. 生成盐和哈希
+            salt = os.urandom(32)
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+            password_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+
+            # 3. 保存配置
+            self.disk_configs[norm_drive] = {
+                "password_salt": salt.hex(),
+                "password_hash": password_hash.hex()
+            }
+            self._save_config()
+            # ✅ 重新加载配置,确保内存和文件同步
+            self.load_config()
+            print(f"✅ 已为磁盘 {norm_drive} 配置加密")
+
+            # 4. 解锁磁盘(将密钥存入内存)
+            self.unlocked_keys[norm_drive] = key
+
+            # 5. 执行加密
+            result = self.encrypt_disk_permanently(norm_drive, key, status_callback)
+
+            return {
+                "success": True,
+                "message": f"磁盘 {norm_drive} 加密完成",
+                "details": {
+                    "total": result.get("processed_files", 0),
+                    "success": result.get("processed_files", 0),
+                    "failed": len(result.get("failed_files", []))
+                }
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"加密失败: {str(e)}"
+            }
+
+    def encrypt_disk_permanently(self, drive_path: str, key: bytes, status_callback=None) -> dict:
+        """
+        永久加密一个磁盘上的所有明文文件。
+        (✅ 新增 status_callback 参数用于报告进度)
+        """
+        norm_drive = _norm_abs(drive_path)
+        if not key:
+            raise EncryptionError("必须提供有效的加密密钥")
+
+        if status_callback:
+            status_callback(norm_drive, f"🚀 磁盘 {norm_drive}：开始加密...", 0)
+
+        processed_files = 0
+        failed_files = []
+        total_files_to_scan = 0  # 粗略估计
+
+        # 为了提供粗略的百分比，我们先快速统计一下文件总数
+        # (这会消耗一些时间，但对于进度条是必要的)
+        try:
+            for root, dirs, files in os.walk(norm_drive):
+                dirs[:] = [d for d in dirs if
+                           not d.startswith('.') and d not in ('node_modules', '__pycache__', '$RECYCLE.BIN')]
+                total_files_to_scan += len([f for f in files if not f.endswith('.encrypted')])
+            if status_callback:
+                status_callback(norm_drive, f"🚀 磁盘 {norm_drive}：扫描到 {total_files_to_scan} 个文件，开始加密...",
+                                0)
+        except Exception as e:
+            print(f"扫描文件总数失败: {e}")
+            total_files_to_scan = 0  # 如果扫描失败，则不显示百分比
+
+        # 2. 遍历磁盘上的所有文件
+        for root, dirs, files in os.walk(norm_drive):
+            dirs[:] = [d for d in dirs if
+                       not d.startswith('.') and d not in ('node_modules', '__pycache__', '$RECYCLE.BIN')]
+
+            for filename in files:
+                if filename.endswith('.encrypted'):
+                    continue
+
+                file_path = os.path.join(root, filename)
+
+                try:
+                    with open(file_path, "rb") as f:
+                        plaintext_data = f.read()
+                    if not plaintext_data:
+                        continue
+
+                    encrypted_data = xor_cipher(plaintext_data, key)
+
+                    with open(file_path, "wb") as f:
+                        f.write(encrypted_data)
+
+                    processed_files += 1
+
+                    # 报告进度
+                    if status_callback and processed_files % 20 == 0:  # 每处理20个文件报告一次
+                        percent = (processed_files / total_files_to_scan * 100) if total_files_to_scan > 0 else 0
+                        status_callback(norm_drive,
+                                        f"🔄 磁盘 {norm_drive}：正在加密... ({processed_files} / {total_files_to_scan})",
+                                        percent)
+
+                except Exception as e:
+                    print(f"  ❌ 加密失败: {file_path}, 错误: {e}")
+                    failed_files.append({"path": file_path, "error": str(e)})
+
+        if status_callback:
+            status_callback(norm_drive, f"✅ 磁盘 {norm_drive}：加密完成。共处理 {processed_files} 个文件", 100)
+
+        print(f"✅ 磁盘 {norm_drive} 加密完成。")
+        return {
+            "processed_files": processed_files,
+            "failed_files": failed_files
+        }
+
+    # ===== 6. 永久解密磁盘 =====
+    def decrypt_disk_permanently(self, drive_path: str, password: str, status_callback=None) -> dict:
+        """
+        永久解密一个磁盘上的所有文件。
+        (✅ 新增 status_callback 参数用于报告进度)
         """
         norm_drive = _norm_abs(drive_path)
 
         # 1. 验证密码并获取密钥
         if not self.unlock(norm_drive, password):
-            self.lock(norm_drive)
+            self.lock(norm_drive)  # 确保锁上
+            if status_callback:
+                status_callback(norm_drive, f"❌ 磁盘 {norm_drive}：密码错误", -1)
             raise ValueError("密码错误")
 
         key = self.unlocked_keys.get(norm_drive)
         if not key:
+            if status_callback:
+                status_callback(norm_drive, f"❌ 磁盘 {norm_drive}：无法获取密钥", -1)
             raise EncryptionError("无法获取密钥,即使密码正确")
 
-        print(f"⚠️ 开始对磁盘 {norm_drive} 进行永久解密操作...")
+        if status_callback:
+            status_callback(norm_drive, f"🚀 磁盘 {norm_drive}：开始解密...", 0)
 
         processed_files = 0
         failed_files = []
+        total_files_to_scan = 0
+
+        # 同样，先扫描总文件数
+        try:
+            for root, dirs, files in os.walk(norm_drive):
+                dirs[:] = [d for d in dirs if
+                           not d.startswith('.') and d not in ('node_modules', '__pycache__', '$RECYCLE.BIN')]
+                total_files_to_scan += len([f for f in files if not f.endswith('.encrypted')])
+            if status_callback:
+                status_callback(norm_drive, f"🚀 磁盘 {norm_drive}：扫描到 {total_files_to_scan} 个文件，开始解密...",
+                                0)
+        except Exception as e:
+            print(f"扫描文件总数失败: {e}")
+            total_files_to_scan = 0
 
         # 2. 遍历磁盘上的所有文件
         for root, dirs, files in os.walk(norm_drive):
+            dirs[:] = [d for d in dirs if
+                       not d.startswith('.') and d not in ('node_modules', '__pycache__', '$RECYCLE.BIN')]
+
             for filename in files:
+                if filename.endswith('.encrypted'):
+                    continue
+
                 file_path = os.path.join(root, filename)
                 try:
-                    # 读取加密内容
                     with open(file_path, "rb") as f:
                         encrypted_data = f.read()
 
-                    # 在内存中解密
                     decrypted_data = xor_cipher(encrypted_data, key)
 
-                    # 将解密后的明文写回原文件
                     with open(file_path, "wb") as f:
                         f.write(decrypted_data)
 
                     processed_files += 1
-                    print(f"  ✅ 已解密: {file_path}")
+
+                    # 报告进度
+                    if status_callback and processed_files % 20 == 0:
+                        percent = (processed_files / total_files_to_scan * 100) if total_files_to_scan > 0 else 0
+                        status_callback(norm_drive,
+                                        f"🔄 磁盘 {norm_drive}：正在解密... ({processed_files} / {total_files_to_scan})",
+                                        percent)
 
                 except Exception as e:
                     print(f"  ❌ 解密失败: {file_path}, 错误: {e}")
@@ -333,71 +507,19 @@ class EncryptionManager:
         # 3. 操作完成后,立即将密钥从内存中移除
         self.lock(norm_drive)
 
+        # 4. ✅ 删除加密配置(完全移除加密)
+        if norm_drive in self.disk_configs:
+            del self.disk_configs[norm_drive]
+            self._save_config()
+            print(f"🗑️  已删除磁盘 {norm_drive} 的加密配置")
+            # ✅ 重新加载配置,确保内存和文件同步
+            self.load_config()
+
+        if status_callback:
+            status_callback(norm_drive, f"✅ 磁盘 {norm_drive}：解密完成。共处理 {processed_files} 个文件", 100)
+
         print(f"✅ 磁盘 {norm_drive} 解密完成。")
         return {
             "processed_files": processed_files,
             "failed_files": failed_files
         }
-
-    # =============================================================
-    # 🔐 新增: encrypt_drive()
-    # =============================================================
-    def encrypt_drive(self, drive_path: str, password: str) -> dict:
-        """
-        启用整盘加密。
-        本质上只是生成盐和哈希，并记录到配置文件。
-        真正的数据加密可在后续按需触发。
-        """
-        try:
-            norm_drive = _norm_abs(drive_path)
-            salt = os.urandom(16)
-            password_hash = hashlib.pbkdf2_hmac(
-                'sha256', password.encode('utf-8'), salt, 100000
-            )
-
-            # 保存配置
-            self.disk_configs[norm_drive] = {
-                "password_salt": salt.hex(),
-                "password_hash": password_hash.hex()
-            }
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump({"disks": self.disk_configs}, f, indent=2, ensure_ascii=False)
-
-            print(f"✅ 磁盘 {norm_drive} 加密初始化完成。")
-            return {"success": True, "message": f"磁盘 {norm_drive} 加密成功"}
-
-        except Exception as e:
-            print(f"❌ encrypt_drive() 错误: {e}")
-            return {"success": False, "error": str(e)}
-
-    # =============================================================
-    # 🔑 新增: set_password()
-    # =============================================================
-    def set_password(self, drive_path: str, new_password: str) -> dict:
-        """
-        修改磁盘加密密码。
-        """
-        try:
-            norm_drive = _norm_abs(drive_path)
-            if norm_drive not in self.disk_configs:
-                return {"success": False, "error": "磁盘未加密"}
-
-            salt = os.urandom(16)
-            new_hash = hashlib.pbkdf2_hmac(
-                'sha256', new_password.encode('utf-8'), salt, 100000
-            )
-
-            self.disk_configs[norm_drive] = {
-                "password_salt": salt.hex(),
-                "password_hash": new_hash.hex()
-            }
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump({"disks": self.disk_configs}, f, indent=2, ensure_ascii=False)
-
-            print(f"🔑 磁盘 {norm_drive} 密码已更新。")
-            return {"success": True, "message": f"密码修改成功: {norm_drive}"}
-
-        except Exception as e:
-            print(f"❌ set_password() 错误: {e}")
-            return {"success": False, "error": str(e)}
