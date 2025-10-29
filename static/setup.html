@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>节点配置向导</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .setup-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #374151;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status-message {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .status-message.success {
+            background: #d1fae5;
+            color: #065f46;
+            display: block;
+        }
+        .status-message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+        .status-message.info {
+            background: #dbeafe;
+            color: #1e40af;
+            display: block;
+        }
+        .icon {
+            font-size: 48px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-card">
+        <div class="icon">🚀</div>
+        <h1 style="text-align: center; margin-bottom: 10px; color: #1f2937; font-size: 24px;">NAS 节点配置向导</h1>
+        <p style="text-align: center; color: #6b7280; margin-bottom: 30px;">首次启动需要配置管理端连接信息</p>
+
+        <div id="statusMessage" class="status-message"></div>
+
+        <form id="setupForm">
+            <div class="input-group">
+                <label for="masterUrl">管理端地址</label>
+                <input
+                    type="text"
+                    id="masterUrl"
+                    name="masterUrl"
+                    placeholder="http://192.168.1.100:8080"
+                    required
+                />
+                <small style="color: #6b7280; font-size: 12px;">例如: http://192.168.1.100:8080</small>
+            </div>
+
+            <div class="input-group">
+                <label for="nodeId">节点ID</label>
+                <input
+                    type="text"
+                    id="nodeId"
+                    name="nodeId"
+                    placeholder="node-1"
+                    required
+                />
+                <small style="color: #6b7280; font-size: 12px;">节点的唯一标识,例如: node-1</small>
+            </div>
+
+            <div class="input-group">
+                <label for="sharedSecret">共享密钥</label>
+                <input
+                    type="password"
+                    id="sharedSecret"
+                    name="sharedSecret"
+                    placeholder="请输入与管理端一致的密钥"
+                    autocomplete="current-password"
+                    required
+                />
+                <small style="color: #6b7280; font-size: 12px;">需与管理端配置的密钥一致</small>
+            </div>
+
+            <button type="button" class="btn btn-secondary" onclick="testConnection()">
+                🔍 测试连接
+            </button>
+
+            <button type="submit" class="btn btn-primary" id="saveBtn">
+                💾 保存配置并注册
+            </button>
+        </form>
+
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <p style="color: #6b7280; font-size: 12px; text-align: center;">
+                💡 提示: 配置保存后将跳转到管理端进行登录
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // 显示状态消息
+        function showMessage(message, type = 'info') {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.textContent = message;
+            statusDiv.className = `status-message ${type}`;
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // 测试连接
+        async function testConnection() {
+            const masterUrl = document.getElementById('masterUrl').value.trim();
+            const sharedSecret = document.getElementById('sharedSecret').value.trim();
+
+            if (!masterUrl) {
+                showMessage('请先填写管理端地址', 'error');
+                return;
+            }
+
+            showMessage('正在测试连接...', 'info');
+
+            try {
+                const response = await axios.post(`${masterUrl}/api/internal/test-connection`, {
+                    shared_secret: sharedSecret
+                }, {
+                    timeout: 5000
+                });
+
+                if (response.data.success) {
+                    showMessage('✅ 连接成功!', 'success');
+                } else {
+                    showMessage('❌ 连接失败: ' + (response.data.error || '未知错误'), 'error');
+                }
+            } catch (error) {
+                if (error.code === 'ECONNABORTED') {
+                    showMessage('❌ 连接超时,请检查管理端地址是否正确', 'error');
+                } else if (error.response) {
+                    showMessage('❌ 连接失败: ' + (error.response.data?.error || error.message), 'error');
+                } else {
+                    showMessage('❌ 无法连接到管理端: ' + error.message, 'error');
+                }
+            }
+        }
+
+        // 保存配置
+        document.getElementById('setupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const masterUrl = document.getElementById('masterUrl').value.trim();
+            const nodeId = document.getElementById('nodeId').value.trim();
+            const sharedSecret = document.getElementById('sharedSecret').value.trim();
+
+            if (!masterUrl || !nodeId || !sharedSecret) {
+                showMessage('请填写所有必填项', 'error');
+                return;
+            }
+
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳ 保存中...';
+
+            try {
+                const response = await axios.post('/api/setup/save', {
+                    master_url: masterUrl,
+                    node_id: nodeId,
+                    shared_secret: sharedSecret
+                });
+
+                if (response.data.success) {
+                    showMessage('✅ 配置保存成功!', 'success');
+
+                    setTimeout(() => {
+                        document.body.innerHTML = `
+                            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+                                <div style="background: white; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 40px; max-width: 500px; text-align: center;">
+                                    <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
+                                    <h1 style="font-size: 24px; color: #1f2937; margin-bottom: 16px;">配置完成!</h1>
+                                    <p style="color: #6b7280; margin-bottom: 24px;">节点已成功注册到管理端</p>
+                                    <p style="color: #374151; margin-bottom: 32px; font-weight: 600;">
+                                        节点ID: ${nodeId}
+                                    </p>
+                                    <button onclick="window.location.href='${masterUrl}'"
+                                           style="background: #667eea; color: white; padding: 12px 32px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; font-size: 16px; margin-bottom: 12px; width: 100%;">
+                                        前往管理端查看 →
+                                    </button>
+                                    <p style="color: #9ca3af; font-size: 14px; margin-top: 16px;">
+                                        💡 在管理端"节点管理"中可以看到 "${nodeId}"
+                                    </p>
+                                    <p style="color: #9ca3af; font-size: 12px; margin-top: 24px;">
+                                        3秒后自动跳转...
+                                    </p>
+                                </div>
+                            </div>
+                        `;
+
+                        // ✅ 3秒后自动跳转
+                        setTimeout(() => {
+                            window.location.href = masterUrl;
+                        }, 3000);
+                    }, 1000);
+                } else {
+                    showMessage('❌ 保存失败: ' + response.data.error, 'error');
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 保存配置并注册';
+                }
+            } catch (error) {
+                showMessage('❌ 保存失败: ' + error.message, 'error');
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 保存配置并注册';
+            }
+        });
+
+        // 页面加载时自动聚焦第一个输入框
+        window.addEventListener('load', () => {
+            document.getElementById('masterUrl').focus();
+        });
+    </script>
+</body>
+</html>

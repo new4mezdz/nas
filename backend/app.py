@@ -89,7 +89,7 @@ NAS_CENTER_PUBLIC_URL = None # ‼️ 将在启动时从管理端动态获取
 THIS_NODE_ID = "node-5"                     # ‼️ 替换为本节点的唯一ID
 
 
-
+CONFIG_PATH = os.path.join(BACKEND_DIR, "node_config.json")
 import jwt
 
 # 在文件开头添加 (与管理端保持一致)
@@ -312,14 +312,45 @@ with app.app_context():
     init_share_table()
 
 
+@app.route('/api/setup/save', methods=['POST'])
+def save_setup():
+    """保存节点配置"""
+    try:
+        data = request.json
+        master_url = data.get('master_url')
+        node_id = data.get('node_id')
+        shared_secret = data.get('shared_secret')
+
+        if not all([master_url, node_id, shared_secret]):
+            return jsonify({'success': False, 'error': '缺少必填参数'}), 400
+
+        # 保存配置
+        config = {
+            'master_url': master_url,
+            'node_id': node_id,
+            'shared_secret': shared_secret
+        }
+        save_node_config(config)
+
+        return jsonify({'success': True, 'message': '配置保存成功'})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ===== 静态页面路由 =====
 @app.route("/")
 def index():
     static_folder = app.static_folder or 'static'
-    # [✅ 修改] 创建响应对象
-    response = make_response(send_from_directory(static_folder, "desktop.html"))
-    # [✅ 新增] 添加禁止缓存的头部
+
+    # 检查是否为配置向导模式
+    if app.config.get('SETUP_MODE'):
+        # 返回配置向导页面
+        response = make_response(send_from_directory(static_folder, "setup.html"))
+    else:
+        # 返回正常桌面页面
+        response = make_response(send_from_directory(static_folder, "desktop.html"))
+
+    # 添加禁止缓存的头部
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -359,20 +390,50 @@ def check_session():
         return jsonify({"authenticated": False}), 401
 
 
+@app.route('/api/setup/restart')
+def restart_service():
+    """重启服务"""
+    try:
+        # 返回提示页面
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>重启中</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-gradient-to-br from-purple-500 to-purple-700 min-h-screen flex items-center justify-center">
+            <div class="bg-white rounded-2xl shadow-2xl p-12 text-center">
+                <div class="text-6xl mb-4">🔄</div>
+                <h1 class="text-2xl font-bold text-gray-800 mb-4">正在重启服务...</h1>
+                <p class="text-gray-600 mb-4">请稍候,页面将自动跳转</p>
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+            </div>
+            <script>
+                // 5秒后自动跳转到首页
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 5000);
+            </script>
+        </body>
+        </html>
+        """
 
+        # 在后台线程中重启服务
+        def restart():
+            import time
+            time.sleep(2)  # 等待2秒让响应返回
+            os.execl(sys.executable, sys.executable, *sys.argv)
+
+        threading.Thread(target=restart, daemon=True).start()
+
+        return html
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 # ========== NAS Center 集成接口 ==========
 
-@app.route('/api/node-info', methods=['GET'])
-def get_node_info():
-    """返回节点基本信息 - 供 NAS Center 调用"""
-    return jsonify({
-        'id': 'node-5',
-        'name': '我的本地节点',
-        'ip': '127.0.0.1',
-        'port': 5000,
-        'status': 'online',
-        'version': '1.0.0'
-    })
 
 
 @app.route('/api/sso-login', methods=['POST'])
@@ -3953,37 +4014,62 @@ def collect_disks():
         except Exception:
             continue
     return disks
+
+
 def register_to_master():
     """客户端启动时主动向主控端注册"""
-    global NODE_ID, MASTER_URL
     try:
+        # 获取本机IP(如果需要的话)
+        import socket
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+
         data = {
-            "ip": "127.0.0.1",
-            "port": 5000
+            "node_id": THIS_NODE_ID,  # 使用配置的节点ID
+            "ip": local_ip,  # 本机IP
+            "port": FLASK_PORT,  # 使用配置的端口
+            "status": "online"
         }
-        res = requests.post(f"{NAS_CENTER_API_URL}/api/nodes/register", json=data, timeout=5)
+
+        res = requests.post(
+            f"{NAS_CENTER_API_URL}/api/nodes/register",
+            json=data,
+            headers={'X-NAS-Secret': NAS_SHARED_SECRET},  # 添加认证
+            timeout=5
+        )
+
         if res.status_code == 200:
             resp_json = res.json()
-            NODE_ID = resp_json.get("node_id")
-            MASTER_URL = f"{NAS_CENTER_API_URL}/api/nodes/update-disks"
-            print(f"[注册成功] 节点ID={NODE_ID} 主控={MASTER_URL}")
+            print(f"[注册成功] 节点ID={THIS_NODE_ID}")
+            # 启动磁盘上报线程
             threading.Thread(target=report_disks, daemon=True).start()
         else:
             print(f"[注册失败] 管理端返回状态 {res.status_code}: {res.text}")
     except Exception as e:
         print(f"[注册异常] 无法连接管理端: {e}")
+        import traceback
+        traceback.print_exc()
 
+
+# ✅ 保留这个新的
 def report_disks():
     """每隔 60 秒上报一次磁盘信息"""
     while True:
         try:
-            payload = {"node_id": NODE_ID, "disks": collect_disks()}
-            res = requests.post(MASTER_URL, json=payload, timeout=5)
-            print(f"[节点上报] {NODE_ID}: {res.status_code}")
+            payload = {
+                "node_id": THIS_NODE_ID,
+                "disks": collect_disks()
+            }
+            res = requests.post(
+                f"{NAS_CENTER_API_URL}/api/nodes/update-disks",
+                json=payload,
+                headers={'X-NAS-Secret': NAS_SHARED_SECRET},
+                timeout=5
+            )
+            print(f"[节点上报] {THIS_NODE_ID}: {res.status_code}")
         except Exception as e:
             print(f"[节点上报失败] {e}")
         time.sleep(60)
-
 # ========== 定期清理过期会话 ==========
 def cleanup_expired_sessions():
     """清理过期的预览会话"""
@@ -4027,7 +4113,18 @@ def start_cleanup_thread():
     except Exception as e:
         print(f"[DEBUG] 启动清理线程失败: {e}")
 
+# 节点配置相关(全局函数)
+def load_node_config():
+    """加载节点配置"""
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return None
 
+def save_node_config(config):
+    """保存节点配置"""
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
 
 # 在应用启动时调用
 start_cleanup_thread()
@@ -4042,50 +4139,77 @@ if __name__ == '__main__':
     print("✅  数据库初始化完成。")
     print("🚀  正在启动文件管理系统...")
 
-    ohm_proc = None
-    register_to_master()
-    try:
-        # 1. 启动 LibreHardwareMonitor
-        # 👇 [核心修改] 调用新的函数名
-        ohm_proc = start_librehardwaremonitor()
-        fetch_nas_center_config()
-        # 2. (ngrok 启动逻辑已移除)
+    # 加载节点配置
+    node_config = load_node_config()
 
-        # 3. 打印启动信息
-        print(f"🔧  Flask 服务器启动在端口: {FLASK_PORT}")
-        print("=" * 50)
-        print(f"🏠  本地访问地址: http://localhost:{FLASK_PORT}")
-        print(f"🔗  局域网访问地址: http://您的IP地址:{FLASK_PORT}")
-        if ohm_proc:
-            print(f"🌡️   硬件监控服务: http://localhost:{OHM_PORT} (由程序自动管理)")
-        else:
-            print("⚠️   硬件监控服务启动失败，相关功能将不可用。")
-        print("=" * 50)
+    if not node_config:
+        # ========== 配置向导模式 ==========
+        print("🔧  首次启动,请先配置管理端连接...")
+        app.config['SETUP_MODE'] = True
 
-        # 4. 启动 SocketIO 服务器
-        socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
+        # 只启动基础服务,不连接管理端
+        try:
+            print(f"🔧  配置向导启动在端口: {FLASK_PORT}")
+            print("=" * 50)
+            print(f"🏠  请访问: http://localhost:{FLASK_PORT}")
+            print("=" * 50)
+            socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
+        except KeyboardInterrupt:
+            print("\n👋  程序正在退出...")
+        except Exception as e:
+            print(f"❌  启动失败: {e}")
 
-    except KeyboardInterrupt:
-        print("\n👋  程序正在退出...")
-    except Exception as e:
-        print(f"❌  启动失败: {e}")
-    finally:
-        print("\n🛑  正在执行清理程序...")
+    else:
+        # ========== 正常启动模式 ==========
+        # 使用配置文件的参数
 
-        # 5. 关闭 LibreHardwareMonitor
-        if ohm_proc:
-            # 👇 [核心修改] 更新这里的日志信息
-            print("   - 正在关闭 LibreHardwareMonitor...")
-            try:
-                ohm_proc.terminate()
-                ohm_proc.wait(timeout=5)
-                print("   ✅  LibreHardwareMonitor 已关闭。")
-            except subprocess.TimeoutExpired:
-                ohm_proc.kill()
-                print("   ✅  LibreHardwareMonitor 已强制关闭。")
-            except Exception as e:
-                print(f"   ⚠️  关闭 LibreHardwareMonitor 时出错: {e}")
+        NAS_CENTER_API_URL = node_config['master_url']
+        THIS_NODE_ID = node_config['node_id']
+        NAS_SHARED_SECRET = node_config['shared_secret']
 
-        # 6. (ngrok 关闭逻辑已移除)
+        print(f"📡  管理端地址: {NAS_CENTER_API_URL}")
+        print(f"🆔  节点ID: {THIS_NODE_ID}")
 
-        print("✅  清理完成, 程序已退出。")
+        ohm_proc = None
+        register_to_master()
+
+        try:
+            # 1. 启动 LibreHardwareMonitor
+            ohm_proc = start_librehardwaremonitor()
+            fetch_nas_center_config()
+
+            # 2. 打印启动信息
+            print(f"🔧  Flask 服务器启动在端口: {FLASK_PORT}")
+            print("=" * 50)
+            print(f"🏠  本地访问地址: http://localhost:{FLASK_PORT}")
+            print(f"🔗  局域网访问地址: http://您的IP地址:{FLASK_PORT}")
+            if ohm_proc:
+                print(f"🌡️   硬件监控服务: http://localhost:{OHM_PORT} (由程序自动管理)")
+            else:
+                print("⚠️   硬件监控服务启动失败，相关功能将不可用。")
+            print("=" * 50)
+
+            # 3. 启动 SocketIO 服务器
+            socketio.run(app, host='0.0.0.0', port=FLASK_PORT, debug=False)
+
+        except KeyboardInterrupt:
+            print("\n👋  程序正在退出...")
+        except Exception as e:
+            print(f"❌  启动失败: {e}")
+        finally:
+            print("\n🛑  正在执行清理程序...")
+
+            # 4. 关闭 LibreHardwareMonitor
+            if ohm_proc:
+                print("   - 正在关闭 LibreHardwareMonitor...")
+                try:
+                    ohm_proc.terminate()
+                    ohm_proc.wait(timeout=5)
+                    print("   ✅  LibreHardwareMonitor 已关闭。")
+                except subprocess.TimeoutExpired:
+                    ohm_proc.kill()
+                    print("   ✅  LibreHardwareMonitor 已强制关闭。")
+                except Exception as e:
+                    print(f"   ⚠️  关闭 LibreHardwareMonitor 时出错: {e}")
+
+            print("✅  清理完成, 程序已退出。")

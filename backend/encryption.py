@@ -1,13 +1,8 @@
 # backend/encryption.py (V2 - Per-Disk Encryption)
-
 import os
 import json
 import hashlib
 from utils import _norm_abs
-import os, hashlib, json
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad, unpad
-
 
 # ===== 异常类 =====
 class EncryptionError(Exception):
