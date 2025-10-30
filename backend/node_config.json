@@ -1,5 +1,7 @@
 {
   "master_url": "http://127.0.0.1:8080",
   "node_id": "node-1",
-  "shared_secret": "your-shared-secret-key"
+  "shared_secret": "your-shared-secret-key",
+  "ip": "26.26.26.1",
+  "port": 5000
 }
