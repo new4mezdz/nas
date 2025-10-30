@@ -320,15 +320,30 @@ def save_setup():
         master_url = data.get('master_url')
         node_id = data.get('node_id')
         shared_secret = data.get('shared_secret')
+        local_ip = data.get('ip')  # 前端可以传入
+        local_port = data.get('port', FLASK_PORT)  # ← 添加端口，默认用FLASK_PORT
+
+        # 如果前端没传IP，尝试自动获取
+        if not local_ip:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(('8.8.8.8', 80))
+                local_ip = s.getsockname()[0]
+            except:
+                local_ip = "127.0.0.1"
+            finally:
+                s.close()
 
         if not all([master_url, node_id, shared_secret]):
             return jsonify({'success': False, 'error': '缺少必填参数'}), 400
 
-        # 保存配置
         config = {
             'master_url': master_url,
             'node_id': node_id,
-            'shared_secret': shared_secret
+            'shared_secret': shared_secret,
+            'ip': local_ip,
+            'port': local_port  # ← 添加端口
         }
         save_node_config(config)
 
@@ -4019,22 +4034,32 @@ def collect_disks():
 def register_to_master():
     """客户端启动时主动向主控端注册"""
     try:
-        # 获取本机IP(如果需要的话)
-        import socket
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
+        # 从配置文件读取IP和端口
+        node_config = load_node_config()
+
+        if node_config and 'ip' in node_config:
+            local_ip = node_config['ip']
+            local_port = node_config.get('port', FLASK_PORT)  # ← 从配置读取端口
+            print(f"[使用配置] IP={local_ip}, Port={local_port}")
+        else:
+            print("⚠️  警告：node_config.json 中未配置 'ip' 字段")
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            local_port = FLASK_PORT
+            print(f"⚠️  自动获取的IP可能不准确: {local_ip}")
 
         data = {
-            "node_id": THIS_NODE_ID,  # 使用配置的节点ID
-            "ip": local_ip,  # 本机IP
-            "port": FLASK_PORT,  # 使用配置的端口
+            "node_id": THIS_NODE_ID,
+            "ip": local_ip,
+            "port": local_port,  # ← 使用从配置读取的端口
             "status": "online"
         }
 
         res = requests.post(
             f"{NAS_CENTER_API_URL}/api/nodes/register",
             json=data,
-            headers={'X-NAS-Secret': NAS_SHARED_SECRET},  # 添加认证
+            headers={'X-NAS-Secret': NAS_SHARED_SECRET},
             timeout=5
         )
 
