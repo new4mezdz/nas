@@ -648,7 +648,7 @@ async changePassword(window) {
     downloadFile(win, file) { // <--- 修改这里
   const fullPath = this.buildFullPath(win, file.name); // <--- 修改这里
   const token = localStorage.getItem('token');
-  const url = `/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
+  const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
   // 直接调用全局的 window.open()，或者省略 window. 也是一样的效果
   window.open(url);
 },
@@ -706,7 +706,7 @@ renameSelected(window) {
       for (const fileName of window.selectedFiles) {
         try {
           const fullPath = this.buildFullPath(window, fileName);
-          const response = await fetch('/api/delete', {
+          const response = await fetch((axios.defaults.baseURL || '') + '/api/delete', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -856,9 +856,26 @@ async createNewFolder(window) { // 假设这是您的方法
     },
 
 
-    // ==========================================
-// 文件/文件夹加密功能
-// ==========================================
+  toggleSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+
+  if (sidebar && overlay) {
+    sidebar.classList.toggle('show');
+    overlay.classList.toggle('show');
+  }
+},
+
+// 关闭侧边栏
+closeSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+
+  if (sidebar && overlay) {
+    sidebar.classList.remove('show');
+    overlay.classList.remove('show');
+  }
+},
 
 async encryptFileOrFolder(window, file) {
   const itemType = file.is_dir ? '文件夹' : '文件';
@@ -986,7 +1003,7 @@ async decryptFileOrFolder(window, file) {
         formData.append('path', uploadPath);
 
         try {
-          const res = await fetch('/api/upload', {
+          const res = await fetch((axios.defaults.baseURL || '') + '/api/upload', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`
@@ -1029,127 +1046,284 @@ async decryptFileOrFolder(window, file) {
       }
     },
 
-    // ==========================================
+
     // 右键菜单
     // ==========================================
-    showContextMenu(event, file, window) { // 确保方法名是 showContextMenu
-      event.preventDefault(); // 阻止浏览器默认右键菜单
+showFileContextMenu(event, file, window) {
+  event.preventDefault();
 
-      // 判断文件是否已加密 (这部分逻辑保留)
-      const isEncrypted = file.name.endsWith('.encrypted');
+  const isEncrypted = file.name.endsWith('.encrypted');
 
-      // 构建菜单项数组，并加入权限检查
-      const menuItems = [
-        {
-          icon: file.is_dir ? '📂' : '👁️',
-          label: file.is_dir ? '打开' : '预览',
-          action: () => {
-            if (file.is_dir) {
-              this.handleDoubleClick(window, file); // 假设 handleDoubleClick 用于打开文件夹
-            } else {
-              this.previewFile(window, file); // 假设 previewFile 用于预览文件
-            }
-            this.closeContextMenu(); // 操作后关闭菜单
-          },
-          // 打开/预览 只需要读取权限
-          disabled: !this.canRead || isEncrypted // 加密文件禁用预览
-        },
-        {
-          icon: '📥',
-          label: '下载',
-          action: () => {
-             this.downloadFile(window, file); // 假设 downloadFile 用于下载
-             this.closeContextMenu();
-          },
-          // 下载 只需要读取权限，但不能下载文件夹或加密文件
-          disabled: !this.canRead || file.is_dir || isEncrypted
-        },
-        {
-          icon: '🔗',
-          label: '分享',
-          action: () => {
-             this.shareFile(window, file); // 假设 shareFile 用于分享
-             this.closeContextMenu();
-          },
-          // 分享 通常需要至少读权限，也不能分享文件夹或加密文件 (根据您的 shareFile 逻辑调整)
-          disabled: !this.canRead || file.is_dir || isEncrypted
-        },
-        { separator: true }, // 分隔线
-        {
-          icon: '✂️',
-          label: '剪切',
-          action: () => {
-             this.cutFile(window, file); // 假设 cutFile 处理剪切
-             this.closeContextMenu();
-          },
-          // 剪切 需要写入权限 (因为后续需要粘贴，可能涉及删除原文件)
-          disabled: !this.canWrite
-        },
-        {
-          icon: '📋',
-          label: '复制',
-          action: () => {
-             this.copyFile(window, file); // 假设 copyFile 处理复制
-             this.closeContextMenu();
-          },
-          // 复制 只需要读取权限
-          disabled: !this.canRead
-        },
-         // 粘贴 通常不在这里，而是在文件夹空白处右键，或者直接用工具栏按钮
-        { separator: true }, // 分隔线
-        {
-          icon: '✏️',
-          label: '重命名',
-          action: () => {
-             this.renameFile(window, file); // 假设 renameFile 处理重命名
-             this.closeContextMenu();
-          },
-          // 重命名 需要写入权限
-          disabled: !this.canWrite
-        },
-        {
-          icon: '🗑️',
-          label: '删除',
-          action: () => {
-            // 注意：这里调用的是 deleteItem, 它内部会调用我们改好的 deleteFile
-             this.deleteFile(window, file);
-             // deleteItem 内部会调用 closeContextMenu，所以这里不用再调
-          },
-          // 删除 需要完全控制权限
-          disabled: !this.canDelete
-        },
-        // --- 加密/解密 ---
-        // (将加密/解密放到最后，或者根据您的喜好调整顺序)
-        { separator: true },
-        {
-          icon: isEncrypted ? '🔓' : '🔒',
-          label: isEncrypted ? '解密文件' : '加密文件',
-          action: () => {
-            if (isEncrypted) {
-              this.decryptFileOrFolder(window, file); // 假设处理解密
-            } else {
-              this.encryptFileOrFolder(window, file); // 假设处理加密
-            }
-            this.closeContextMenu();
-          },
-          // 加密/解密 通常需要较高权限，我们用 '完全控制' (canDelete) 来控制
-          // 文件夹的加密/解密逻辑可能更复杂，这里暂时统一处理
-          disabled: !this.canDelete
+  const menuItems = [
+    {
+      icon: file.is_dir ? '📂' : '👁️',
+      label: file.is_dir ? '打开' : '预览',
+      action: () => {
+        if (file.is_dir) {
+          this.handleDoubleClick(window, file);
+        } else {
+          this.previewFile(window, file);
         }
-      ];
-
-      // 更新 contextMenu 数据以显示菜单
-      this.contextMenu = {
-        show: true,
-        x: event.clientX,
-        y: event.clientY,
-        items: menuItems // 使用我们构建好的带权限检查的数组
-      };
+        this.closeContextMenu();
+      },
+      disabled: !this.canRead || isEncrypted
     },
+    {
+      icon: '📥',
+      label: '下载',
+      action: () => {
+         this.downloadFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead || file.is_dir || isEncrypted
+    },
+    {
+      icon: '🔗',
+      label: '分享',
+      action: () => {
+         this.shareFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead || file.is_dir || isEncrypted
+    },
+    { separator: true },
+    {
+      icon: '✂️',
+      label: '剪切',
+      action: () => {
+         this.cutFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canWrite
+    },
+    {
+      icon: '📋',
+      label: '复制',
+      action: () => {
+         this.copyFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead
+    },
+    { separator: true },
+    {
+      icon: '✏️',
+      label: '重命名',
+      action: () => {
+         this.renameFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canWrite
+    },
+    {
+      icon: '🗑️',
+      label: '删除',
+      action: () => {
+         this.deleteFile(window, file);
+      },
+      disabled: !this.canDelete
+    },
+    { separator: true },
+    {
+      icon: isEncrypted ? '🔓' : '🔒',
+      label: isEncrypted ? '解密文件' : '加密文件',
+      action: () => {
+        if (isEncrypted) {
+          this.decryptFileOrFolder(window, file);
+        } else {
+          this.encryptFileOrFolder(window, file);
+        }
+        this.closeContextMenu();
+      },
+      disabled: !this.canDelete
+    }
+  ];
 
+  // 计算菜单尺寸
+  const menuWidth = 200;
+  const menuItemHeight = 44;
+  const separatorHeight = 1;
 
+  let menuHeight = 16; // padding
+  menuItems.forEach(item => {
+    menuHeight += item.separator ? separatorHeight : menuItemHeight;
+  });
+
+  // 获取点击位置
+  let x = event.clientX;
+  let y = event.clientY;
+
+  // 可用高度(减去任务栏60px和标题栏44px)
+  const availableHeight = window.innerHeight - 104;
+  const availableWidth = window.innerWidth;
+
+  // 智能定位:如果右侧空间不足,显示在左边
+  if (x + menuWidth > availableWidth - 20) {
+    x = x - menuWidth - 10; // 显示在按钮左边
+  } else {
+    x = x + 10; // 显示在按钮右边
+  }
+
+  // 防止左侧超出
+  if (x < 10) {
+    x = 10;
+  }
+
+  // 智能定位:如果下方空间不足,显示在上边
+  if (y + menuHeight > availableHeight) {
+    y = y - menuHeight; // 显示在按钮上方
+  }
+
+  // 防止顶部超出
+  if (y < 50) {
+    y = 50;
+  }
+
+  // 防止底部超出
+  if (y + menuHeight > availableHeight) {
+    y = availableHeight - menuHeight - 10;
+  }
+
+  this.contextMenu = {
+    show: true,
+    x: x,
+    y: y,
+    items: menuItems
+  };
+},
     showFileContextMenu(event, file, window) {
-  this.showContextMenu(event, file, window);
+  event.preventDefault();
+
+  const isEncrypted = file.name.endsWith('.encrypted');
+
+  const menuItems = [
+    {
+      icon: file.is_dir ? '📂' : '👁️',
+      label: file.is_dir ? '打开' : '预览',
+      action: () => {
+        if (file.is_dir) {
+          this.handleDoubleClick(window, file);
+        } else {
+          this.previewFile(window, file);
+        }
+        this.closeContextMenu();
+      },
+      disabled: !this.canRead || isEncrypted
+    },
+    {
+      icon: '📥',
+      label: '下载',
+      action: () => {
+         this.downloadFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead || file.is_dir || isEncrypted
+    },
+    {
+      icon: '🔗',
+      label: '分享',
+      action: () => {
+         this.shareFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead || file.is_dir || isEncrypted
+    },
+    { separator: true },
+    {
+      icon: '✂️',
+      label: '剪切',
+      action: () => {
+         this.cutFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canWrite
+    },
+    {
+      icon: '📋',
+      label: '复制',
+      action: () => {
+         this.copyFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canRead
+    },
+    { separator: true },
+    {
+      icon: '✏️',
+      label: '重命名',
+      action: () => {
+         this.renameFile(window, file);
+         this.closeContextMenu();
+      },
+      disabled: !this.canWrite
+    },
+    {
+      icon: '🗑️',
+      label: '删除',
+      action: () => {
+         this.deleteFile(window, file);
+      },
+      disabled: !this.canDelete
+    },
+    { separator: true },
+    {
+      icon: isEncrypted ? '🔓' : '🔒',
+      label: isEncrypted ? '解密文件' : '加密文件',
+      action: () => {
+        if (isEncrypted) {
+          this.decryptFileOrFolder(window, file);
+        } else {
+          this.encryptFileOrFolder(window, file);
+        }
+        this.closeContextMenu();
+      },
+      disabled: !this.canDelete
+    }
+  ];
+
+  const menuWidth = 200;
+  const menuItemHeight = 44;
+  const separatorHeight = 1;
+
+  let menuHeight = 16;
+  menuItems.forEach(item => {
+    menuHeight += item.separator ? separatorHeight : menuItemHeight;
+  });
+
+  let x = event.clientX;
+  let y = event.clientY;
+
+  const availableHeight = window.innerHeight - 104;
+  const availableWidth = window.innerWidth;
+
+  if (x + menuWidth > availableWidth - 20) {
+    x = x - menuWidth - 10;
+  } else {
+    x = x + 10;
+  }
+
+  if (x < 10) {
+    x = 10;
+  }
+
+  if (y + menuHeight > availableHeight) {
+    y = y - menuHeight;
+  }
+
+  if (y < 50) {
+    y = 50;
+  }
+
+  if (y + menuHeight > availableHeight) {
+    y = availableHeight - menuHeight - 10;
+  }
+
+  this.contextMenu = {
+    show: true,
+    x: x,
+    y: y,
+    items: menuItems
+  };
 },
     showEmptyAreaContextMenu(event, window) {
       event.preventDefault();
@@ -1473,7 +1647,7 @@ async previewFile(window, file) {
   }
 
   // 其他文件类型逻辑
-  const url = `/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
+  const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
   if (this.isImage(file) || this.isVideo(file) || this.isAudio(file)) {
     previewWindow.previewContent = url;
     previewWindow.isLoading = false;
@@ -1527,7 +1701,7 @@ async shareFile(window, file) {
   if (expireHours === null) return; // 用户取消
 
   try {
-    const response = await fetch('/api/share', {
+    const response = await fetch((axios.defaults.baseURL || '') + '/api/share', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -1543,8 +1717,12 @@ async shareFile(window, file) {
     const data = await response.json();
 
     if (data.success) {
-      // 显示分享链接
-      const shareUrl = data.full_url || window.location.origin + data.share_url;
+      // 显示分享链接 - ✅ 修改这里
+      let shareUrl = data.full_url;
+      if (!shareUrl) {
+        const proxyPrefix = axios.defaults.baseURL || '';
+        shareUrl = window.location.origin + proxyPrefix + data.share_url;
+      }
 
       // 创建分享结果窗口
       const shareWindow = this.createWindow('share-result', '分享链接', '🔗', {
@@ -2214,8 +2392,18 @@ async checkCurrentUser() {
       this.showStartMenu = false;
     }
   });
-
+  const currentPath = window.location.pathname;
+  if (currentPath.includes('/proxy/node/')) {
+    const match = currentPath.match(/^(\/proxy\/node\/[^\/]+)/);
+    if (match) {
+      axios.defaults.baseURL = match[1];
+      console.log('[DEBUG] 设置axios baseURL:', match[1]);
+    }
+  }
   // ✅ 改为调用新的检查用户方法
   this.checkCurrentUser();
+
+
+
 }
 }).mount('#app');

@@ -115,82 +115,7 @@ def run_as_admin(script_path):
         return False
     return False
 
-@app.route('/api/verify-access-token', methods=['POST'])
-def verify_access_token():
-    """验证来自管理端的访问令牌"""
-    print("[DEBUG] ========== 开始验证访问令牌 ==========")
 
-    try:
-        # 1. 获取请求数据
-        data = request.json
-        print(f"[DEBUG] 请求数据: {data}")
-
-        token = data.get('token') if data else None
-        print(f"[DEBUG] Token: {token[:50] if token else 'None'}...")
-
-        if not token:
-            print("[DEBUG] ❌ 错误: 缺少令牌")
-            return jsonify({'success': False, 'error': '缺少令牌'}), 400
-
-        # 2. 使用 ACCESS_TOKEN_SECRET 解码令牌 (管理端生成的)
-        print(f"[DEBUG] 使用密钥解码令牌: ACCESS_TOKEN_SECRET")
-        payload = jwt.decode(token, ACCESS_TOKEN_SECRET, algorithms=['HS256'])
-        print(f"[DEBUG] ✅ 解码成功! Payload: {payload}")
-
-        # 3. 提取用户信息
-        user_id = payload.get('user_id')
-        username = payload.get('username')
-        role = payload.get('role', 'user')
-        file_permission = payload.get('file_permission', 'readonly')
-
-        print(f"[DEBUG] 用户信息: ID={user_id}, 用户名={username}, 角色={role}, 权限={file_permission}")
-
-        if not username:
-            print("[DEBUG] ❌ 错误: 令牌中缺少用户信息")
-            return jsonify({'success': False, 'error': '令牌中缺少用户信息'}), 401
-
-        # ✅ 将 role 转换为 is_admin (兼容前端)
-        is_admin = (role == 'admin')
-
-        # 4. 生成新的长期 token (用于客户端本地存储)
-        print("[DEBUG] 生成新的长期 token...")
-        new_token = jwt.encode({
-            'user_id': user_id,
-            'username': username,
-            'role': role,
-            'file_permission': file_permission,
-            'is_admin': is_admin,  # ✅ 添加 is_admin 字段
-            'exp': datetime.utcnow() + timedelta(days=7)
-        }, app.config['SECRET_KEY'], algorithm='HS256')
-        print(f"[DEBUG] ✅ 新 token 生成成功: {new_token[:50]}...")
-
-        # 5. 返回结果
-        result = {
-            'success': True,
-            'user': {
-                'id': user_id,
-                'username': username,
-                'role': role,
-                'file_permission': file_permission,
-                'is_admin': is_admin  # ✅ 前端需要这个字段
-            },
-            'token': new_token
-        }
-        print(f"[DEBUG] ✅ 验证成功! 返回结果: {result}")
-        print("[DEBUG] ========== 验证完成 ==========")
-        return jsonify(result)
-
-    except jwt.ExpiredSignatureError:
-        print("[DEBUG] ❌ 错误: Token 已过期")
-        return jsonify({'success': False, 'error': 'Token 已过期'}), 401
-    except jwt.InvalidTokenError as e:
-        print(f"[DEBUG] ❌ 错误: 令牌无效 - {str(e)}")
-        return jsonify({'success': False, 'error': f'令牌无效: {str(e)}'}), 401
-    except Exception as e:
-        print(f"[DEBUG] ❌ 异常: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': f'验证失败: {str(e)}'}), 400
 
 
 def _load_json(path: str, default):
@@ -3955,6 +3880,29 @@ def create_preview_session():
         return jsonify({'error': f'创建预览会话失败: {str(e)}'}), 500
 
 
+@app.route('/api/verify-access-token', methods=['POST'])
+def verify_access_token_proxy():
+    """转发令牌验证请求到管理端"""
+    try:
+        print(f"[DEBUG] 转发token验证请求到管理端: {NAS_CENTER_API_URL}")
+        print(f"[DEBUG] 请求数据: {request.json}")
+
+        # 转发到管理端
+        response = requests.post(
+            f"{NAS_CENTER_API_URL}/api/verify-access-token",
+            json=request.json,
+            timeout=10
+        )
+
+        print(f"[DEBUG] 管理端响应状态: {response.status_code}")
+        print(f"[DEBUG] 管理端响应内容: {response.text}")
+
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        print(f"[ERROR] 转发失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 # ========== 预览会话访问API ==========
 @app.route('/api/preview-session/<session_id>')
 def access_preview_session(session_id):
@@ -4075,6 +4023,14 @@ def register_to_master():
         import traceback
         traceback.print_exc()
 
+def update_nas_center_url_periodically():
+    """定期更新管理端公网地址(每5分钟)"""
+    while True:
+        time.sleep(60)  # 5分钟 = 300秒
+        try:
+            fetch_nas_center_config()
+        except Exception as e:
+            print(f"⚠️ 更新管理端地址失败: {e}")
 
 # ✅ 保留这个新的
 def report_disks():
@@ -4202,6 +4158,11 @@ if __name__ == '__main__':
             # 1. 启动 LibreHardwareMonitor
             ohm_proc = start_librehardwaremonitor()
             fetch_nas_center_config()
+
+            # ✅ 启动定期更新线程
+            update_thread = threading.Thread(target=update_nas_center_url_periodically, daemon=True)
+            update_thread.start()
+            print("✅  已启动公网地址定期更新任务(每5分钟)")
 
             # 2. 打印启动信息
             print(f"🔧  Flask 服务器启动在端口: {FLASK_PORT}")
