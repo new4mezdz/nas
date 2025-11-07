@@ -16,7 +16,9 @@ user: { username: '', is_admin: false },
     // ========== 任务栏 ==========
     showStartMenu: false,
     currentTime: '',
-
+  canRead: true,   // 添加这个
+        canWrite: true,  // 添加这个
+        canDelete: true,
     // ========== 右键菜单 ==========
     contextMenu: {
       show: false,
@@ -139,15 +141,20 @@ async getEcCapacityEstimate() {
       }
     },
     async fetchEncryptionStatus() {
-        if (!this.user.is_admin) return; // 仅管理员可获取
-        try {
-            const res = await axios.get('/api/encryption/status');
-            this.encryptionStatus = res.data;
-        } catch (e) {
-            console.error('获取加密状态失败:', e);
-            this.showToast('❌ 获取加密状态失败', 'error');
+    try {
+        const response = await axios.get('/api/encryption/status', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        if (response.data) {
+            this.encryptionStatus = response.data.drives || [];  // 改这里,确保是数组
         }
-    },
+    } catch (error) {
+        console.error('获取加密状态失败:', error);
+        this.encryptionStatus = [];  // 改这里,设为空数组
+    }
+},
     async fetchAvailableDrives() {
       try {
         const res = await axios.get('/api/drives');
@@ -158,18 +165,22 @@ async getEcCapacityEstimate() {
     },
 
     async fetchEcStatus() {
-      if (!this.user.is_admin) return; // [!code ++] ✅ 添加管理员检查
-      try {
-        const res = await axios.get('/api/ec_status');
-        this.ecStatus = res.data;
-      } catch (e) {
-        console.error('获取纠删码状态失败:', e);
-      }
-    },
+    try {
+        const response = await axios.get('/api/ec_status', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        if (response.data) {
+            this.ecStatus = response.data;  // 这个保持对象
+        }
+    } catch (error) {
+        console.error('获取纠删码状态失败:', error);
+        this.ecStatus = { is_configured: false };  // 改这里,设为对象
+    }
+},
 
-    // ==========================================
-    // 窗口管理
-    // ==========================================
+
     // 在 createWindow 方法中添加初始化
 createWindow(type, title, icon, data = {}) {
   const window = {
@@ -1047,152 +1058,18 @@ async decryptFileOrFolder(window, file) {
     },
 
 
-    // 右键菜单
-    // ==========================================
-showFileContextMenu(event, file, window) {
-  event.preventDefault();
 
-  const isEncrypted = file.name.endsWith('.encrypted');
 
-  const menuItems = [
-    {
-      icon: file.is_dir ? '📂' : '👁️',
-      label: file.is_dir ? '打开' : '预览',
-      action: () => {
-        if (file.is_dir) {
-          this.handleDoubleClick(window, file);
-        } else {
-          this.previewFile(window, file);
-        }
-        this.closeContextMenu();
-      },
-      disabled: !this.canRead || isEncrypted
-    },
-    {
-      icon: '📥',
-      label: '下载',
-      action: () => {
-         this.downloadFile(window, file);
-         this.closeContextMenu();
-      },
-      disabled: !this.canRead || file.is_dir || isEncrypted
-    },
-    {
-      icon: '🔗',
-      label: '分享',
-      action: () => {
-         this.shareFile(window, file);
-         this.closeContextMenu();
-      },
-      disabled: !this.canRead || file.is_dir || isEncrypted
-    },
-    { separator: true },
-    {
-      icon: '✂️',
-      label: '剪切',
-      action: () => {
-         this.cutFile(window, file);
-         this.closeContextMenu();
-      },
-      disabled: !this.canWrite
-    },
-    {
-      icon: '📋',
-      label: '复制',
-      action: () => {
-         this.copyFile(window, file);
-         this.closeContextMenu();
-      },
-      disabled: !this.canRead
-    },
-    { separator: true },
-    {
-      icon: '✏️',
-      label: '重命名',
-      action: () => {
-         this.renameFile(window, file);
-         this.closeContextMenu();
-      },
-      disabled: !this.canWrite
-    },
-    {
-      icon: '🗑️',
-      label: '删除',
-      action: () => {
-         this.deleteFile(window, file);
-      },
-      disabled: !this.canDelete
-    },
-    { separator: true },
-    {
-      icon: isEncrypted ? '🔓' : '🔒',
-      label: isEncrypted ? '解密文件' : '加密文件',
-      action: () => {
-        if (isEncrypted) {
-          this.decryptFileOrFolder(window, file);
-        } else {
-          this.encryptFileOrFolder(window, file);
-        }
-        this.closeContextMenu();
-      },
-      disabled: !this.canDelete
-    }
-  ];
-
-  // 计算菜单尺寸
-  const menuWidth = 200;
-  const menuItemHeight = 44;
-  const separatorHeight = 1;
-
-  let menuHeight = 16; // padding
-  menuItems.forEach(item => {
-    menuHeight += item.separator ? separatorHeight : menuItemHeight;
-  });
-
-  // 获取点击位置
-  let x = event.clientX;
-  let y = event.clientY;
-
-  // 可用高度(减去任务栏60px和标题栏44px)
-  const availableHeight = window.innerHeight - 104;
-  const availableWidth = window.innerWidth;
-
-  // 智能定位:如果右侧空间不足,显示在左边
-  if (x + menuWidth > availableWidth - 20) {
-    x = x - menuWidth - 10; // 显示在按钮左边
-  } else {
-    x = x + 10; // 显示在按钮右边
-  }
-
-  // 防止左侧超出
-  if (x < 10) {
-    x = 10;
-  }
-
-  // 智能定位:如果下方空间不足,显示在上边
-  if (y + menuHeight > availableHeight) {
-    y = y - menuHeight; // 显示在按钮上方
-  }
-
-  // 防止顶部超出
-  if (y < 50) {
-    y = 50;
-  }
-
-  // 防止底部超出
-  if (y + menuHeight > availableHeight) {
-    y = availableHeight - menuHeight - 10;
-  }
-
-  this.contextMenu = {
-    show: true,
-    x: x,
-    y: y,
-    items: menuItems
-  };
-},
     showFileContextMenu(event, file, window) {
   event.preventDefault();
+
+   // 添加调试信息
+  console.log('权限状态:', {
+    canRead: this.canRead,
+    canWrite: this.canWrite,
+    canDelete: this.canDelete,
+    isEncrypted: file.name.endsWith('.encrypted')
+  });
 
   const isEncrypted = file.name.endsWith('.encrypted');
 
@@ -1296,7 +1173,11 @@ showFileContextMenu(event, file, window) {
   const availableHeight = window.innerHeight - 104;
   const availableWidth = window.innerWidth;
 
-  if (x + menuWidth > availableWidth - 20) {
+  // 手机端让菜单显示在点击位置左边
+
+  if (availableWidth < 768) {  // 手机端
+    x = availableWidth - menuWidth - 10;
+  } else if (x + menuWidth > availableWidth - 20) {
     x = x - menuWidth - 10;
   } else {
     x = x + 10;
@@ -1672,7 +1553,7 @@ createPdfPreviewSession: async function(filePath, token) {
       file_type: 'pdf'
     });
     if (response.data.success && response.data.session_id) {
-      return `/api/preview-session/${response.data.session_id}`;
+      const baseURL = axios.defaults.baseURL || ''; return `${baseURL}/api/preview-session/${response.data.session_id}`;
     } else {
       throw new Error(response.data.error || '创建预览会话失败');
     }
@@ -2151,8 +2032,7 @@ openECDetailConfig() {
   this.showStartMenu = false;
 },
 
-// ====== 客户端 desktop_app.js 的 checkCurrentUser 方法 ======
-// 完整替换原有的 checkCurrentUser 方法
+
 
 async checkCurrentUser() {
   // 1. 检查 URL 中是否有 token 参数
@@ -2189,8 +2069,14 @@ async checkCurrentUser() {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       // ✅ 跳转回管理端登录页,带上 redirect=client 参数
-      setTimeout(() => {
-        window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client&node_id=node-5';
+      setTimeout(async () => {
+        try {
+          const nodeInfo = await axios.get('/api/node-info').then(res => res.data);
+          window.location.href = `${nodeInfo.center_url}/login.html?redirect=client&node_id=${nodeInfo.node_id}`;
+        } catch (err) {
+          console.error('获取节点信息失败:', err);
+          window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client';
+        }
       }, 2000);
       return;
     }
@@ -2218,9 +2104,14 @@ async checkCurrentUser() {
 
   // 3. 都没有,跳转回管理端登录页
   this.showToast('❌ 未登录,请先登录', 'warning');
-  setTimeout(() => {
-    // ✅ 跳转回管理端登录页,带上 redirect=client 参数
-    window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client&node_id=node-5';
+  setTimeout(async () => {
+    try {
+      const nodeInfo = await axios.get('/api/node-info').then(res => res.data);
+      window.location.href = `${nodeInfo.center_url}/login.html?redirect=client&node_id=${nodeInfo.node_id}`;
+    } catch (err) {
+      console.error('获取节点信息失败:', err);
+      window.location.href = 'http://127.0.0.1:8080/login.html?redirect=client';
+    }
   }, 1000);
 },
     openEncryptionConfig() {
@@ -2228,9 +2119,6 @@ async checkCurrentUser() {
     },
 
 
-    // ==========================================
-    // 任务栏
-    // ==========================================
     toggleStartMenu() {
       this.showStartMenu = !this.showStartMenu;
     },

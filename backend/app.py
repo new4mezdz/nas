@@ -86,7 +86,7 @@ NAS_SHARED_SECRET = "your-shared-secret-key"   # 共享密钥(需与管理端一
 
 # [✅ 新增] 管理端公网URL和本节点ID (请根据您的实际情况修改)
 NAS_CENTER_PUBLIC_URL = None # ‼️ 将在启动时从管理端动态获取
-THIS_NODE_ID = "node-5"                     # ‼️ 替换为本节点的唯一ID
+THIS_NODE_ID = None                 # ‼️ 替换为本节点的唯一ID
 
 
 CONFIG_PATH = os.path.join(BACKEND_DIR, "node_config.json")
@@ -440,6 +440,7 @@ def get_system_stats():
         total_gb = 0
         used_gb = 0
         for disk in disk_info:
+
             if disk.get('mount', '').upper() not in ['C:/', '/']:
                 total = disk.get('bytes_total', 0) or disk.get('total', 0)
                 used = disk.get('bytes_used', 0) or disk.get('used', 0)
@@ -512,6 +513,7 @@ def get_system_stats():
             'disk_total_gb': 0,
             'disk_used_gb': 0,
             'disk_free_gb': 0,
+            'disks': disk_info,
             'cpu_temp_celsius': 0,
             'cpu_freq': 0,
             'cpu_power': 0,
@@ -3137,8 +3139,41 @@ def get_document(doc_id):
         'document': dict(doc),
         'versions': [dict(v) for v in versions]
     })
+@app.route('/api/encryption/status')
+def api_get_encryption_status():  # 改函数名
+    """获取加密状态"""
+    try:
+        drives_status = []
+        for drive in get_available_drives():
+            drives_status.append({
+                'drive': drive,
+                'is_configured': False,
+                'is_unlocked': False
+            })
+        return jsonify({'drives': drives_status})
+    except Exception as e:
+        return jsonify({'drives': []}), 500
+
+@app.route('/api/ec_status')
+def api_get_ec_status():  # 改函数名
+    """获取纠删码状态"""
+    try:
+        return jsonify({
+            'is_configured': False,
+            'status': 'inactive'
+        })
+    except Exception as e:
+        return jsonify({'is_configured': False}), 500
 
 
+@app.route('/api/node-info', methods=['GET'])
+def get_node_info():
+    """返回当前节点的信息"""
+    node_config = load_node_config()
+    return jsonify({
+        'node_id': node_config.get('node_id') if node_config else THIS_NODE_ID,
+        'center_url': NAS_CENTER_PUBLIC_URL or NAS_CENTER_API_URL
+    })
 @app.route('/api/documents/<int:doc_id>/permissions', methods=['POST'])
 @permission_required('fullcontrol')
 def share_document(doc_id):
@@ -4145,7 +4180,8 @@ if __name__ == '__main__':
         # 使用配置文件的参数
 
         NAS_CENTER_API_URL = node_config['master_url']
-        THIS_NODE_ID = node_config['node_id']
+
+        THIS_NODE_ID = node_config.get('node_id', 'unknown-node')
         NAS_SHARED_SECRET = node_config['shared_secret']
 
         print(f"📡  管理端地址: {NAS_CENTER_API_URL}")

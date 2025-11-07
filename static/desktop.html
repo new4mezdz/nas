@@ -255,9 +255,9 @@
 
     /* 文件列表样式 */
     .file-item {
-      display: flex;
-      align-items: center;
-      padding: 8px 12px;
+      /* display: flex; */
+      /* align-items: center; */
+      /* padding: 8px 12px; */ /* 这一行也可以移除，因为 padding 是在 <td> 上设置的 */
       border-radius: 6px;
       cursor: pointer;
       transition: background 0.15s;
@@ -822,7 +822,7 @@
         <th class="text-left p-2 cursor-pointer hover:bg-gray-100" @click="toggleSort(window, 'name')">名称 {{ window.sortBy === 'name' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}</th>
         <th class="text-left p-2 cursor-pointer hover:bg-gray-100" @click="toggleSort(window, 'size')">大小 {{ window.sortBy === 'size' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}</th>
         <th class="text-left p-2 cursor-pointer hover:bg-gray-100" @click="toggleSort(window, 'mtime')">修改时间 {{ window.sortBy === 'mtime' ? (window.sortOrder === 'asc' ? '↑' : '↓') : '' }}</th>
-        <th class="text-center p-2 w-10 md:hidden">操作</th>
+        <th class="text-center p-2 pr-4 w-10 md:hidden">操作</th>
       </tr>
     </thead>
     <tbody>
@@ -832,14 +832,16 @@
           :class="{ 'bg-blue-50': window.selectedFiles.includes(file.name) }"
           :data-filename="file.name"
           @click="toggleFileSelection(window, file.name, $event)"
-          @dblclick="handleDoubleClick(window, file)">
+          @dblclick="handleDoubleClick(window, file)"
+      @contextmenu.prevent="showFileContextMenu($event, file, window)">
+
         <td class="p-2"><input type="checkbox" :checked="window.selectedFiles.includes(file.name)" @click.stop @change="toggleFileSelection(window, file.name, $event)"></td>
         <td class="p-2"><span class="mr-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</span>{{ file.name }}</td>
         <td class="p-2">{{ file.is_dir ? '-' : formatSize(file.size) }}</td>
         <td class="p-2">{{ formatTime(file.mtime) }}</td>
 
         <!-- 更多按钮 -->
-        <td class="p-2 text-center md:hidden">
+        <td class="p-2 pr-4 text-center md:hidden">
           <button @click.stop="showFileContextMenu($event, file, window)"
                   class="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-200 text-gray-600 text-xl">
             ⋮
