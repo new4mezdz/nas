@@ -1060,7 +1060,7 @@ async decryptFileOrFolder(window, file) {
 
 
 
-    showFileContextMenu(event, file, window) {
+   showFileContextMenu(event, file, win) {
   event.preventDefault();
 
    // 添加调试信息
@@ -1176,7 +1176,7 @@ async decryptFileOrFolder(window, file) {
   // 手机端让菜单显示在点击位置左边
 
   if (availableWidth < 768) {  // 手机端
-    x = availableWidth - menuWidth - 10;
+    x = 10;
   } else if (x + menuWidth > availableWidth - 20) {
     x = x - menuWidth - 10;
   } else {
