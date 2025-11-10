@@ -148,11 +148,11 @@ async getEcCapacityEstimate() {
             }
         });
         if (response.data) {
-            this.encryptionStatus = response.data.drives || [];  // 改这里,确保是数组
+            this.encryptionStatus = response.data;  // 直接使用 response.data,不要 .drives
         }
     } catch (error) {
         console.error('获取加密状态失败:', error);
-        this.encryptionStatus = [];  // 改这里,设为空数组
+        this.encryptionStatus = [];
     }
 },
     async fetchAvailableDrives() {
@@ -349,11 +349,31 @@ async submitPasswordChange(window) {
       return window;
     },
 
-    buildStorageList() {
+   buildStorageList() {
   const storage = [];
+
+  console.log('[DEBUG] ecStatus:', this.ecStatus);
+  console.log('[DEBUG] is_configured:', this.ecStatus.is_configured);
+  console.log('[DEBUG] config_disks:', this.ecStatus.config_disks);
+  console.log('[DEBUG] config_disks 内容:', JSON.stringify(this.ecStatus.config_disks));
+
+  // ✅ 标准化 config_disks 路径格式：统一转为大写的正斜杠格式
+  const normalizedConfigDisks = this.ecStatus.config_disks?.map(d =>
+    d.toUpperCase().replace(/\\/g, '/')
+  ) || [];
+  console.log('[DEBUG] 标准化后的 config_disks:', normalizedConfigDisks);
 
   // 添加物理磁盘
   this.availableDrives.forEach(drive => {
+    console.log('[DEBUG] 检查磁盘:', drive.drive);
+
+    // ✅ 使用标准化后的数组进行比较
+    if (this.ecStatus.is_configured &&
+        normalizedConfigDisks.includes(drive.drive)) {
+      console.log('[DEBUG] ✅ 跳过纠删码磁盘:', drive.drive);
+      return; // 跳过这个磁盘
+    }
+
     const diskInfo = this.disks.find(d => d.mount === drive.drive);
     const driveLabel = drive.drive.replace(':/', '');
     const encStatus = this.encryptionStatus.find(s => s.drive === drive.drive);
@@ -383,10 +403,10 @@ async submitPasswordChange(window) {
     });
   }
 
+  console.log('[DEBUG] 最终存储列表:', storage);
   return storage;
 },
 
-    // 在 desktop.app.js 的 methods 中添加
 
 // 打开个人设置
 openPersonalSettings() {
@@ -681,7 +701,7 @@ async changePassword(window) {
       }
     },
 
-    // 重命名选中项(工具栏按钮)
+
 renameSelected(window) {
   if (window.selectedFiles.length !== 1) {
     this.showToast('⚠️ 请选择一个文件或文件夹进行重命名', 'warning');
@@ -696,7 +716,7 @@ renameSelected(window) {
     return;
   }
 
-  // 调用重命名方法(会弹出输入框)
+
   this.renameFile(window, file);
 },
 
@@ -1543,8 +1563,7 @@ async previewFile(window, file) {
     }
   }
 },
-    // 文件: static/desktop.app.js
-// ... 在 methods 对象内 ...
+
 
 createPdfPreviewSession: async function(filePath, token) {
   try {
@@ -1742,7 +1761,7 @@ async batchRecover(window) {
     }
 },
 
-// ... (您已有的其他方法) ...
+
 
 // [新增] 永久解密磁盘的方法
 async decryptDiskPermanently(drive) {
@@ -1927,14 +1946,14 @@ async decryptDiskPermanently(drive) {
 
     openDiskWindow() {
       this.createWindow('disks', '磁盘管理', '💿', {
-        activeTab: 'ec',  // 默认标签页: ec, encryption, raid
+        activeTab: 'encryption',
         width: 900,
         height: 650
       });
       this.showStartMenu = false;
     },
 
-    // 找到并替换原来的 openECConfig 方法
+
 openECConfig() {
   // 不再重新打开窗口，而是调用新的方法打开配置对话框
   this.openEcSetupDialog();
@@ -1989,6 +2008,58 @@ async submitEcConfig() {
     const errorMsg = error.response?.data?.error || error.message;
     this.ecSetupForm.error = `配置失败: ${errorMsg}`;
     this.showToast(`❌ 配置失败: ${errorMsg}`, 'error');
+  }
+},
+
+    // 硬盘恢复：替换丢失的硬盘
+async recoverLostDisk() {
+  if (!this.ecStatus.lost_disks || this.ecStatus.lost_disks.length === 0) {
+    this.showToast('❌ 没有检测到丢失的硬盘', 'error');
+    return;
+  }
+
+  const lostDisk = this.ecStatus.lost_disks[0]; // 取第一个丢失的硬盘
+
+  // 显示可用的新硬盘列表
+  const availableDisks = this.ecStatus.available_new_disks || [];
+  if (availableDisks.length === 0) {
+    this.showToast('❌ 没有可用的新硬盘来替换', 'error');
+    return;
+  }
+
+  const diskOptions = availableDisks.map((d, i) => `${i + 1}. ${d}`).join('\n');
+  const selection = prompt(
+    `检测到丢失的硬盘: ${lostDisk}\n\n请选择用于替换的新硬盘（输入序号）:\n${diskOptions}`
+  );
+
+  if (!selection) return;
+
+  const index = parseInt(selection) - 1;
+  if (index < 0 || index >= availableDisks.length) {
+    this.showToast('❌ 无效的选择', 'error');
+    return;
+  }
+
+  const newDisk = availableDisks[index];
+
+  if (!confirm(`确认用 ${newDisk} 替换丢失的硬盘 ${lostDisk}?\n\n此操作将重建所有丢失的数据分片，可能需要较长时间。`)) {
+    return;
+  }
+
+  try {
+    this.showToast('🚀 正在恢复硬盘数据...', 'info');
+
+    const response = await axios.post('/api/ec_recover', {
+      lost_disk: lostDisk,
+      new_disk: newDisk
+    });
+
+    this.showToast(`✅ ${response.data.message}`, 'success');
+
+    // 刷新状态
+    await this.loadData();
+  } catch (error) {
+    this.showToast(`❌ 恢复失败: ${error.response?.data?.error || error.message}`, 'error');
   }
 },
 
@@ -2131,9 +2202,7 @@ async checkCurrentUser() {
       });
     },
 
-    // ==========================================
-    // 工具方法
-    // ==========================================
+
     formatSize(bytes) {
       if (!bytes) return '-';
       const units = ['B', 'KB', 'MB', 'GB', 'TB'];

@@ -1349,6 +1349,21 @@ def get_ec_status():
     is_healthy = not bool(lost_disks)
     can_rebuild = 0 < len(lost_disks) <= m
 
+    # ✅ 计算可用容量（基于最小磁盘的可用空间）
+    usable_bytes = 0
+    if config_disks:
+        min_free = float('inf')
+        for disk in get_disk_info():
+            mount_point = _norm_abs(disk.get("mount"))
+            if mount_point in config_disks:
+                free = disk.get("bytes_free", 0)
+                if free < min_free:
+                    min_free = free
+
+        # 可用容量 = 最小磁盘可用空间 * k
+        if min_free != float('inf'):
+            usable_bytes = min_free * k
+
     return jsonify({
         "is_configured": True,
         "is_healthy": is_healthy,
@@ -1357,10 +1372,10 @@ def get_ec_status():
         "config_disks": list(config_disks),
         "lost_disks": lost_disks,
         "can_rebuild": can_rebuild,
+        "usable_bytes": usable_bytes,  # ✅ 新增可用容量字段
         # "available_new_disks" 列出可用于替换的、未被EC卷占用的新硬盘
         "available_new_disks": [d for d in available_disks if d not in config_disks]
     })
-
 
 @app.route('/api/current-user', methods=['GET'])
 def get_current_user():

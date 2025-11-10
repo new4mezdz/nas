@@ -74,17 +74,42 @@
     }
 
     .window-controls button {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      border: none;
-      margin-left: 8px;
-      cursor: pointer;
-    }
+  width: 46px;
+  height: 32px;
+  border-radius: 0;
+  border: none;
+  margin-left: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
 
-    .window-controls .close { background: #ff5f57; }
-    .window-controls .minimize { background: #ffbd2e; }
-    .window-controls .maximize { background: #28ca42; }
+.window-controls .minimize {
+  background: transparent;
+  color: #000;
+}
+.window-controls .minimize:hover {
+  background: #e5e5e5;
+}
+
+.window-controls .maximize {
+  background: transparent;
+  color: #000;
+}
+.window-controls .maximize:hover {
+  background: #e5e5e5;
+}
+
+.window-controls .close {
+  background: transparent;
+  color: #000;
+}
+.window-controls .close:hover {
+  background: #e81123;
+  color: white;
+}
 
     .window-content {
       flex: 1;
@@ -599,9 +624,9 @@
               <span class="font-semibold text-sm">{{ window.title }}</span>
             </div>
             <div class="window-controls flex">
-              <button class="minimize" @click.stop="minimizeWindow(window.id)"></button>
-              <button class="maximize" @click.stop="toggleMaximize(window.id)"></button>
-              <button class="close" @click.stop="closeWindow(window.id)"></button>
+              <button class="minimize" @click.stop="minimizeWindow(window.id)">─</button>
+<button class="maximize" @click.stop="toggleMaximize(window.id)">□</button>
+<button class="close" @click.stop="closeWindow(window.id)">✕</button>
             </div>
           </div>
 
@@ -1067,13 +1092,7 @@
 
                 <!-- 标签页切换 -->
                 <div class="flex gap-2 border-b pb-2">
-                    <!-- 标签页切换
-                  <button @click="window.activeTab = 'ec'"
-                          :class="window.activeTab === 'ec' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
-                          class="px-4 py-2 rounded-t-lg font-semibold transition">
-                    🛡️ 纠删码配置
 
-                  </button>-->
                   <button @click="window.activeTab = 'encryption'"
                           :class="window.activeTab === 'encryption' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
                           class="px-4 py-2 rounded-t-lg font-semibold transition">
@@ -1087,101 +1106,7 @@
                 </div>
 
 
-                <!-- 纠删码配置
-                <div v-if="window.activeTab === 'ec'" class="space-y-4">
-                  <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                    <div class="flex items-start gap-3">
-                      <span class="text-2xl">ℹ️</span>
-                      <div>
-                        <h4 class="font-semibold text-blue-900 mb-1">什么是纠删码?</h4>
-                        <p class="text-sm text-blue-800">纠删码(Erasure Coding)是一种数据保护技术,可以在部分硬盘损坏时恢复数据。配置后,数据会被分散存储在多个硬盘上。</p>
-                      </div>
-                    </div>
-                  </div>
 
-
-                  <div class="bg-white border rounded-lg p-4 shadow-sm">
-                    <h4 class="font-semibold mb-3">当前配置状态</h4>
-                    <div v-if="ecStatus.is_configured" class="space-y-2">
-                      <div class="flex items-center gap-2">
-                        <span :class="ecStatus.is_healthy ? 'text-green-600' : 'text-red-600'" class="text-2xl">
-                          {{ ecStatus.is_healthy ? '✅' : '⚠️' }}
-                        </span>
-                        <span class="font-semibold">{{ ecStatus.is_healthy ? '系统健康' : '系统异常' }}</span>
-                      </div>
-                      <div class="text-sm text-gray-600">
-                        配置方案: Reed-Solomon ({{ ecStatus.k }}+{{ ecStatus.m }})
-                      </div>
-                      <div class="text-sm text-gray-600">
-                        参与磁盘: {{ ecStatus.config_disks?.length || 0 }} 个
-                      </div>
-                      <button @click="openECDetailConfig()"
-                              class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
-                        查看详细配置
-                      </button>
-                    </div>
-                    <div v-else class="text-gray-500">
-                      <p class="mb-3">尚未配置纠删码</p>
-                      <button @click="openECConfig()"
-                              class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
-                        开始配置
-                      </button>
-                    </div>
-                  </div>
-
-
-                  <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
-                       class="bg-red-50 border-l-4 border-red-500 p-4 rounded">
-                    <h4 class="font-semibold text-red-900 mb-2">⚠️ 系统警告</h4>
-                    <p class="text-sm text-red-800 mb-3">检测到 {{ ecStatus.lost_disks?.length || 0 }} 个硬盘离线</p>
-                    <button v-if="ecStatus.can_rebuild"
-                            class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
-                      🚀 开始恢复
-                    </button>
-                    <p v-else class="text-sm text-red-900 font-semibold">
-                      ❌ 损坏硬盘数量超过冗余上限,数据可能已丢失
-                    </p>
-                  </div>
-                    <div class="bg-white border rounded-lg p-4 shadow-sm">
-    <div class="flex justify-between items-center mb-3">
-      <h4 class="font-semibold">🏥 EC卷健康检查</h4>
-      <button @click="performHealthCheck(window)"
-              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
-        🔍 执行检查
-      </button>
-    </div>
-
-    <div v-if="window.healthReport" class="space-y-2">
-      <div class="grid grid-cols-3 gap-3">
-        <div class="bg-green-50 p-3 rounded">
-          <div class="text-xs text-green-600">健康文件</div>
-          <div class="text-2xl font-bold text-green-700">
-            {{ window.healthReport.healthy_files }}
-          </div>
-        </div>
-        <div class="bg-yellow-50 p-3 rounded">
-          <div class="text-xs text-yellow-600">风险文件</div>
-          <div class="text-2xl font-bold text-yellow-700">
-            {{ window.healthReport.at_risk_files }}
-          </div>
-        </div>
-        <div class="bg-red-50 p-3 rounded">
-          <div class="text-xs text-red-600">损坏文件</div>
-          <div class="text-2xl font-bold text-red-700">
-            {{ window.healthReport.corrupted_files }}
-          </div>
-        </div>
-      </div>
-
-      <button v-if="window.healthReport.at_risk_files > 0"
-              @click="batchRecover(window)"
-              class="w-full mt-3 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600">
-        🔧 批量修复风险文件
-      </button>
-    </div>
-  </div>
-                </div>
-                  -->
 
                 <!-- 磁盘加密 -->
                 <div v-if="window.activeTab === 'encryption'" class="space-y-4">
@@ -1248,18 +1173,105 @@
     </div>
 </div>
 
-                <!-- RAID管理 -->
-                <div v-if="window.activeTab === 'raid'" class="space-y-4">
-                  <div class="bg-gray-50 border-l-4 border-gray-500 p-4 rounded">
-                    <div class="flex items-start gap-3">
-                      <span class="text-2xl">ℹ️</span>
-                      <div>
-                        <h4 class="font-semibold text-gray-900 mb-1">RAID 管理</h4>
-                        <p class="text-sm text-gray-800">RAID功能即将推出,敬请期待...</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+               <!-- 容错管理(纠删码) -->
+<div v-if="window.activeTab === 'raid'" class="space-y-4">
+  <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+    <div class="flex items-start gap-3">
+      <span class="text-2xl">ℹ️</span>
+      <div>
+        <h4 class="font-semibold text-blue-900 mb-1">什么是纠删码?</h4>
+        <p class="text-sm text-blue-800">纠删码(Erasure Coding)是一种数据保护技术,可以在部分硬盘损坏时恢复数据。配置后,数据会被分散存储在多个硬盘上。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white border rounded-lg p-4 shadow-sm">
+    <h4 class="font-semibold mb-3">当前配置状态</h4>
+    <div v-if="ecStatus.is_configured" class="space-y-2">
+      <div class="flex items-center gap-2">
+        <span :class="ecStatus.is_healthy ? 'text-green-600' : 'text-red-600'" class="text-2xl">
+          {{ ecStatus.is_healthy ? '✅' : '⚠️' }}
+        </span>
+        <span class="font-semibold">{{ ecStatus.is_healthy ? '系统健康' : '系统异常' }}</span>
+      </div>
+      <div class="text-sm text-gray-600">
+        配置方案: Reed-Solomon ({{ ecStatus.k }}+{{ ecStatus.m }})
+      </div>
+      <div class="text-sm text-gray-600">
+        参与磁盘: {{ ecStatus.config_disks?.length || 0 }} 个
+      </div>
+      <div class="text-sm text-gray-600">
+        可用容量: {{ formatSize(ecStatus.usable_bytes || 0) }}
+      </div>
+      <button @click="openFilesWindow('ec_volume')"
+              class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+        打开纠删码卷
+      </button>
+    </div>
+    <div v-else class="text-gray-500">
+      <p class="mb-3">尚未配置纠删码</p>
+      <button @click="openEcSetupDialog()"
+              class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+        开始配置
+      </button>
+    </div>
+  </div>
+
+  <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
+       class="bg-red-50 border-l-4 border-red-500 p-4 rounded">
+    <h4 class="font-semibold text-red-900 mb-2">⚠️ 系统警告</h4>
+    <p class="text-sm text-red-800 mb-3">检测到 {{ ecStatus.lost_disks?.length || 0 }} 个硬盘离线</p>
+    <button v-if="ecStatus.can_rebuild"
+        @click="recoverLostDisk()"
+        class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+  🚀 开始恢复
+</button>
+    <p v-else class="text-sm text-red-900 font-semibold">
+      ❌ 损坏硬盘数量超过冗余上限,数据可能已丢失
+    </p>
+  </div>
+
+  <!-- 健康检查区域 -->
+  <div v-if="ecStatus.is_configured" class="bg-white border rounded-lg p-4 shadow-sm">
+    <div class="flex justify-between items-center mb-3">
+      <h4 class="font-semibold">🏥 EC卷健康检查</h4>
+      <button @click="performHealthCheck(window)"
+              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+        🔍 执行检查
+      </button>
+    </div>
+
+    <div v-if="window.healthReport" class="space-y-2">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-green-50 p-3 rounded">
+          <div class="text-xs text-green-600">健康文件</div>
+          <div class="text-2xl font-bold text-green-700">
+            {{ window.healthReport.healthy_files }}
+          </div>
+        </div>
+        <div class="bg-yellow-50 p-3 rounded">
+          <div class="text-xs text-yellow-600">风险文件</div>
+          <div class="text-2xl font-bold text-yellow-700">
+            {{ window.healthReport.at_risk_files }}
+          </div>
+        </div>
+        <div class="bg-red-50 p-3 rounded">
+          <div class="text-xs text-red-600">损坏文件</div>
+          <div class="text-2xl font-bold text-red-700">
+            {{ window.healthReport.corrupted_files }}
+          </div>
+        </div>
+      </div>
+
+      <button v-if="window.healthReport.at_risk_files > 0"
+              @click="batchRecover(window)"
+              class="w-full mt-3 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600">
+        🔧 批量修复风险文件
+      </button>
+    </div>
+  </div>
+</div>
+
               </div>
             </div>
               <!-- 找到 desktop.html 中 "文件管理器" 的结束标签 </div> -->
