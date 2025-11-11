@@ -820,12 +820,14 @@
   <!-- 网格视图 -->
   <div v-if="window.viewMode === 'grid'" class="grid grid-cols-4 gap-4">
     <div v-for="file in window.files"
-         :key="file.name"
-         class="file-item flex flex-col items-center p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition relative"
-         :class="{ 'bg-blue-50': window.selectedFiles.includes(file.name) }"
-         :data-filename="file.name"
-         @click="toggleFileSelection(window, file.name, $event)"
-         @dblclick="handleDoubleClick(window, file)">
+     :key="file.name"
+     class="file-item flex flex-col items-center p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition relative"
+     :class="{ 'bg-blue-50': window.selectedFiles.includes(file.name) }"
+     :data-filename="file.name"
+     @click="toggleFileSelection(window, file.name, $event)"
+     @dblclick="handleDoubleClick(window, file)"
+     @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
+
 
       <!-- 更多按钮 -->
       <button @click.stop="showFileContextMenu($event, file, window)"
@@ -858,7 +860,7 @@
           :data-filename="file.name"
           @click="toggleFileSelection(window, file.name, $event)"
           @dblclick="handleDoubleClick(window, file)"
-      @contextmenu.prevent="showFileContextMenu($event, file, window)">
+      @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
 
         <td class="p-2"><input type="checkbox" :checked="window.selectedFiles.includes(file.name)" @click.stop @change="toggleFileSelection(window, file.name, $event)"></td>
         <td class="p-2"><span class="mr-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</span>{{ file.name }}</td>

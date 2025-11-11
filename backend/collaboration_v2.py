@@ -4,15 +4,25 @@ import secrets
 import hashlib
 from datetime import datetime, timedelta
 from flask import request, jsonify, g
-from common import get_db, BASE_DIRS
-import jwt
 
+import jwt
+from common import get_db, BASE_DIRS, get_available_drives
 class CollaborationV2:
     def __init__(self, app):
         self.app = app
-        self.storage_path = os.path.join(BASE_DIRS[0], "collaboration")
+
+        # 查找第一个可用的盘符
+        available_drives = get_available_drives()
+        if not available_drives:
+            # 如果一个盘符都找不到，这是一个严重错误
+            raise FileNotFoundError("错误：在 common.py 的 BASE_DIRS 列表中没有找到任何可用的盘符。")
+
+        # 使用第一个 *可用* 的盘符，而不是硬编码 BASE_DIRS[0]
+        first_available_drive = available_drives[0]
+
+        self.storage_path = os.path.join(first_available_drive, "collaboration")
         os.makedirs(self.storage_path, exist_ok=True)
-        
+
         # 初始化数据库表
         self.init_collaboration_tables()
     
