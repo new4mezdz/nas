@@ -9,7 +9,7 @@ import subprocess
 DATABASE = os.path.join(os.path.dirname(__file__), 'nas.db')
 
 # 支持多个盘符
-BASE_DIRS = ['D:/', 'E:/', 'F:/', 'G:/', 'H:/', 'I:/', 'J:/', 'K:/', 'L:/', 'M:/', 'N:/', 'O:/', 'P:/', 'Q:/', 'R:/',
+BASE_DIRS = ['E:/', 'F:/', 'G:/', 'H:/', 'I:/', 'J:/', 'K:/', 'L:/', 'M:/', 'N:/', 'O:/', 'P:/', 'Q:/', 'R:/',
              'S:/', 'T:/', 'U:/', 'V:/', 'W:/', 'X:/', 'Y:/', 'Z:/']
 
 # 辅助函数（safe_join 必须保留在此处或移到 common.py/utils.py）

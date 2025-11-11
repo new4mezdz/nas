@@ -441,7 +441,7 @@ def get_system_stats():
         used_gb = 0
         for disk in disk_info:
 
-            if disk.get('mount', '').upper() not in ['C:/', '/']:
+            if disk.get('mount', '').upper() not in ['C:/', 'D:/', '/']:
                 total = disk.get('bytes_total', 0) or disk.get('total', 0)
                 used = disk.get('bytes_used', 0) or disk.get('used', 0)
                 total_gb += total / (1024 ** 3)
@@ -549,7 +549,8 @@ def get_disks_info():
             mount = disk.get('mount', '').upper().replace('\\', '/')
 
             # 排除系统盘
-            if mount in ['C:/', '/']:
+            # 排除系统盘和D盘
+            if mount in ['C:/', 'D:/', '/']:
                 continue
 
             total = disk.get('bytes_total', 0) or disk.get('total', 0)
@@ -679,14 +680,9 @@ def api_disk():
     for disk in disk_info:
         mount_point = disk.get("mount", "").upper().replace("\\", "/")
 
-        # 排除逻辑：
-        # - Windows 上的 C:\ 盘符
-        # - Linux/macOS 上的 / 根目录 (通常是系统分区)
-        # 注意：这里我们保留所有其他挂载点，即使是 /mnt/ 或 /media/
-        if mount_point == "C:/" or mount_point == "/":
-            print(f"[DEBUG] 排除系统盘: {disk.get('mount')}")
+        if mount_point in ["C:/", "D:/", "/"]:
+            print(f"[DEBUG] 排除系统盘/D盘: {disk.get('mount')}")
             continue
-
         filtered_disk_info.append(disk)
 
     # 2. 读取纠删码配置
@@ -1341,9 +1337,8 @@ def get_ec_status():
     available_disks = set()
     for disk in get_disk_info():
         mount_point = disk.get("mount", "").upper().replace("\\", "/")
-        if not (mount_point == "C:/" or mount_point == "/"):
+        if mount_point not in ["C:/", "D:/", "/"]:
             available_disks.add(_norm_abs(disk.get("mount")))
-
     lost_disks = [d for d in config_disks if _norm_abs(d) not in available_disks]
 
     is_healthy = not bool(lost_disks)
@@ -1907,9 +1902,223 @@ def access_share(token):
             return send_file(actual_path, as_attachment=True)
 
 
+@app.route('/api/ec_remove', methods=['POST'])
+@permission_required('fullcontrol')
+def remove_ec_config():
+    """
+    取消纠删码配置
+    警告：这是一个危险操作，会删除所有纠删码数据！
+    """
+    data = request.get_json()
+    confirm_text = data.get('confirm_text', '')
 
-# ===== /api/ec_config：保存时对 disks 做 _norm_abs 归一化 =====
-# ===== /api/ec_config：支持 GET（查看）、POST（保存）和 DELETE（删除）=====
+    # 要求用户输入确认文本
+    if confirm_text != "DELETE EC":
+        return jsonify({"error": "确认文本不正确"}), 400
+
+    try:
+        # 1. 检查是否有纠删码配置
+        cfg = _load_json(EC_CFG_PATH, {})
+        if not cfg:
+            return jsonify({"error": "未配置纠删码"}), 400
+
+        disks = cfg.get("disks", [])
+        idx = _load_json(EC_IDX_PATH, {"files": {}})
+        files = idx.get("files", {})
+
+        # 2. 删除所有磁盘上的 encoded 目录
+        deleted_dirs = []
+        failed_dirs = []
+
+        for disk in disks:
+            encoded_dir = os.path.join(disk, "encoded")
+            if os.path.exists(encoded_dir):
+                try:
+                    shutil.rmtree(encoded_dir)
+                    deleted_dirs.append(encoded_dir)
+                    print(f"[EC_REMOVE] 已删除: {encoded_dir}")
+                except Exception as e:
+                    failed_dirs.append({"path": encoded_dir, "error": str(e)})
+                    print(f"[EC_REMOVE] 删除失败: {encoded_dir}, 错误: {e}")
+
+        # 3. 备份配置文件（以防万一）
+        backup_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_cfg_path = None  # ← 添加这行
+        backup_idx_path = None  # ← 添加这行
+        if os.path.exists(EC_CFG_PATH):
+            backup_cfg_path = EC_CFG_PATH.replace(".json", f"_backup_{backup_time}.json")
+            shutil.copy2(EC_CFG_PATH, backup_cfg_path)
+            print(f"[EC_REMOVE] 配置文件已备份到: {backup_cfg_path}")
+
+        if os.path.exists(EC_IDX_PATH):
+            backup_idx_path = EC_IDX_PATH.replace(".json", f"_backup_{backup_time}.json")
+            shutil.copy2(EC_IDX_PATH, backup_idx_path)
+            print(f"[EC_REMOVE] 索引文件已备份到: {backup_idx_path}")
+
+        # 4. 删除配置文件和索引文件
+        if os.path.exists(EC_CFG_PATH):
+            os.remove(EC_CFG_PATH)
+            print(f"[EC_REMOVE] 已删除配置文件: {EC_CFG_PATH}")
+
+        if os.path.exists(EC_IDX_PATH):
+            os.remove(EC_IDX_PATH)
+            print(f"[EC_REMOVE] 已删除索引文件: {EC_IDX_PATH}")
+
+        # 5. 返回结果
+        return jsonify({
+            "success": True,
+            "message": f"纠删码配置已删除。删除了 {len(deleted_dirs)} 个目录，{len(files)} 个文件的索引记录。",
+            "deleted_dirs": deleted_dirs,
+            "failed_dirs": failed_dirs,
+            "deleted_file_count": len(files),
+            "backup_config": backup_cfg_path if os.path.exists(EC_CFG_PATH) else None,
+            "backup_index": backup_idx_path if os.path.exists(EC_IDX_PATH) else None
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"删除纠删码配置失败: {str(e)}"}), 500
+
+
+@app.route('/api/ec_export_all', methods=['POST'])
+@permission_required('fullcontrol')
+def export_all_ec_files():
+    """
+    批量导出纠删码卷中的所有文件到物理磁盘
+    将所有文件解码并写入指定的目标磁盘
+    """
+    data = request.get_json()
+    target_disk = data.get('target_disk', '')
+
+    if not target_disk:
+        return jsonify({"error": "请指定目标磁盘"}), 400
+
+    # 检查目标磁盘是否存在
+    from common import get_base_dir_for_path, is_path_allowed
+    target_base_dir = get_base_dir_for_path(target_disk)
+    if not target_base_dir or not os.path.exists(target_base_dir):
+        return jsonify({"error": "目标磁盘不存在"}), 400
+
+    try:
+        # 1. 检查纠删码配置
+        cfg = _load_json(EC_CFG_PATH, {})
+        if not cfg:
+            return jsonify({"error": "未配置纠删码"}), 400
+
+        idx = _load_json(EC_IDX_PATH, {"files": {}})
+        files = idx.get("files", {})
+
+        if not files:
+            return jsonify({"error": "纠删码卷中没有文件"}), 400
+
+        k = cfg.get("k", 0)
+        m = cfg.get("m", 0)
+
+        # 2. 创建导出目录
+        export_root = os.path.join(target_base_dir, "ec_export", datetime.now().strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(export_root, exist_ok=True)
+
+        # 3. 统计信息
+        total_files = len(files)
+        exported_count = 0
+        failed_files = []
+
+        print(f"\n[EC_EXPORT] 开始导出 {total_files} 个文件到 {export_root}")
+
+        # 4. 遍历所有文件并导出
+        for file_name, meta in files.items():
+            try:
+                print(f"[EC_EXPORT] 正在导出: {file_name}")
+
+                file_k = meta.get("k", k)
+                file_m = meta.get("m", m)
+                disks = meta.get("disks", [])
+
+                # 读取分片
+                shard_dict = {}
+                for i, disk in enumerate(disks[:file_k + file_m]):
+                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(file_name))
+                    blk_path = os.path.join(enc_dir, f"{os.path.basename(file_name)}.blk_{i}")
+                    if os.path.exists(blk_path):
+                        with open(blk_path, "rb") as f:
+                            shard_dict[i] = f.read()
+
+                # 检查分片是否足够
+                if len(shard_dict) < file_k:
+                    failed_files.append({
+                        "file": file_name,
+                        "reason": f"分片不足 (需要{file_k}个，实际{len(shard_dict)}个)"
+                    })
+                    print(f"[EC_EXPORT] 失败: {file_name} - 分片不足")
+                    continue
+
+                # 解码文件
+                decoded_data = _decode_from_dict(shard_dict, meta)
+
+                # ✅ 修改：移除加密检查，因为纠删码文件不使用文件级加密
+                # 磁盘级加密已经在读取分片时自动处理了
+
+                # 构建目标路径，保持原有目录结构
+                target_file_path = os.path.join(export_root, file_name)
+                os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
+
+                # 写入文件
+                with open(target_file_path, "wb") as f:
+                    f.write(decoded_data)
+
+                exported_count += 1
+                print(f"[EC_EXPORT] 成功: {file_name}")
+
+            except Exception as e:
+                failed_files.append({
+                    "file": file_name,
+                    "reason": str(e)
+                })
+                print(f"[EC_EXPORT] 失败: {file_name} - {e}")
+                import traceback
+                traceback.print_exc()
+
+        # 5. 创建导出报告
+        report_path = os.path.join(export_root, "_export_report.txt")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(f"纠删码文件导出报告\n")
+            f.write(f"=" * 50 + "\n")
+            f.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"目标磁盘: {target_disk}\n")
+            f.write(f"导出目录: {export_root}\n")
+            f.write(f"总文件数: {total_files}\n")
+            f.write(f"成功导出: {exported_count}\n")
+            f.write(f"失败文件: {len(failed_files)}\n")
+            f.write(f"\n")
+
+            if failed_files:
+                f.write(f"失败详情:\n")
+                f.write(f"-" * 50 + "\n")
+                for fail in failed_files:
+                    f.write(f"文件: {fail['file']}\n")
+                    f.write(f"原因: {fail['reason']}\n")
+                    f.write(f"\n")
+
+        print(f"[EC_EXPORT] 导出完成: 成功 {exported_count}/{total_files}")
+
+        # 6. 返回结果
+        return jsonify({
+            "success": True,
+            "message": f"导出完成。成功 {exported_count} 个，失败 {len(failed_files)} 个。",
+            "export_path": export_root,
+            "total_files": total_files,
+            "exported_count": exported_count,
+            "failed_count": len(failed_files),
+            "failed_files": failed_files,
+            "report_path": report_path
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"导出失败: {str(e)}"}), 500
+
 @app.route("/api/ec_config", methods=["GET", "POST", "DELETE"])
 @permission_required('fullcontrol')
 def api_ec_config():
@@ -2675,9 +2884,9 @@ def move_entry():
 
 
 @app.route('/api/copy', methods=['POST'])
-@permission_required('readwrite') # 'copy' 是一种写入操作
+@permission_required('readwrite')
 def copy_entry():
-    """[新增] 复制文件或文件夹 (复制-粘贴)"""
+    """复制文件或文件夹 (支持跨卷操作)"""
     data = request.get_json()
     source_full_path = data.get('source_path')
     target_full_path = data.get('target_path')
@@ -2685,15 +2894,164 @@ def copy_entry():
     if not source_full_path or not target_full_path:
         return jsonify({"error": "参数缺失"}), 400
 
-    # --- 分支 1: EC 卷复制 (复制分片和索引) ---
-    if _is_ec_volume(source_full_path):
-        # 简化版：假设在同一EC卷内复制，我们只复制分片和索引
+    source_is_ec = _is_ec_volume(source_full_path)
+    target_is_ec = _is_ec_volume(target_full_path)
+
+    # ===== 分支 0: 跨卷复制 (EC → 物理盘 或 物理盘 → EC) =====
+    if source_is_ec != target_is_ec:
+        try:
+            # Case A: EC → 物理盘 (导出)
+            if source_is_ec and not target_is_ec:
+                # 1. 从EC卷读取文件（解码）
+                source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+                idx = _load_json(EC_IDX_PATH, {"files": {}})
+
+                if source_logical not in idx.get("files", {}):
+                    return jsonify({"error": "EC源文件不存在"}), 404
+
+                meta = idx["files"][source_logical]
+                k, m = meta["k"], meta["m"]
+                disks = meta.get("disks", [])
+
+                # 读取分片
+                shard_dict = {}
+                for i, disk in enumerate(disks[:k + m]):
+                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
+                    blk_path = os.path.join(enc_dir, f"{os.path.basename(source_logical)}.blk_{i}")
+                    if os.path.exists(blk_path):
+                        with open(blk_path, "rb") as f:
+                            shard_dict[i] = f.read()
+
+                # 解码文件
+                if len(shard_dict) < k:
+                    return jsonify({"error": "分片不足，无法恢复文件"}), 500
+
+                decoded_data = _decode_from_dict(shard_dict, meta)
+
+                # 2. 解密（如果有加密）
+                if encryption_manager.is_file_encrypted(source_logical):
+                    try:
+                        decoded_data = encryption_manager.decrypt_data(decoded_data)
+                    except NotUnlockedError:
+                        return jsonify({"error": "磁盘已锁定", "error_type": "disk_locked"}), 403
+
+                # 3. 写入物理磁盘
+                from common import get_base_dir_for_path, is_path_allowed
+                target_drive = os.path.splitdrive(target_full_path)[0]
+                target_base_dir = get_base_dir_for_path(target_drive)
+                if not target_base_dir:
+                    return jsonify({"error": "目标路径无效"}), 403
+
+                target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
+                target_actual = os.path.join(target_base_dir, target_rel_path)
+
+                if not is_path_allowed(target_actual):
+                    return jsonify({"error": "目标路径不在允许的目录中"}), 403
+
+                if os.path.exists(target_actual):
+                    return jsonify({"error": "目标文件已存在"}), 400
+
+                # 确保目标目录存在
+                os.makedirs(os.path.dirname(target_actual), exist_ok=True)
+
+                # 写入文件
+                with open(target_actual, "wb") as f:
+                    f.write(decoded_data)
+
+                return jsonify({"success": True, "message": "文件已从EC卷导出到物理磁盘"})
+
+            # Case B: 物理盘 → EC (导入)
+            elif not source_is_ec and target_is_ec:
+                from common import get_actual_file_path, is_path_allowed
+
+                # 1. 读取物理磁盘文件
+                source_actual = get_actual_file_path(source_full_path)
+                if not source_actual or not os.path.exists(source_actual):
+                    return jsonify({"error": "源文件不存在"}), 404
+
+                if not is_path_allowed(source_actual):
+                    return jsonify({"error": "源路径不在允许的目录中"}), 403
+
+                if os.path.isdir(source_actual):
+                    return jsonify({"error": "暂不支持导入文件夹到EC卷"}), 400
+
+                with open(source_actual, "rb") as f:
+                    file_data = f.read()
+
+                # 2. 加密（如果需要）
+                # 根据你的加密策略决定是否加密
+                # 这里暂时不加密，如果需要可以调用 encryption_manager.encrypt_data()
+
+                # 3. 编码并写入EC卷
+                target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+
+                # 检查目标文件是否已存在
+                idx = _load_json(EC_IDX_PATH, {"files": {}})
+                if target_logical in idx.get("files", {}):
+                    return jsonify({"error": "EC目标文件已存在"}), 400
+
+                # 读取EC配置
+                cfg = _load_json(EC_CFG_PATH, {})
+                if not cfg:
+                    return jsonify({"error": "纠删码未配置"}), 400
+
+                k, m = cfg.get("k", 0), cfg.get("m", 0)
+                disks = cfg.get("disks", [])
+
+                if not disks or k <= 0 or m <= 0:
+                    return jsonify({"error": "纠删码配置无效"}), 400
+
+                # 编码
+                shards = rs_encode(file_data, k, m)
+
+                # 写入分片
+                for i, disk in enumerate(disks[:k + m]):
+                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
+                    os.makedirs(enc_dir, exist_ok=True)
+                    blk_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.blk_{i}")
+                    with open(blk_path, "wb") as f:
+                        f.write(shards[i])
+
+                    # 同时写入元数据文件
+                    meta_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.meta.json")
+                    meta_data = {
+                        "k": k,
+                        "m": m,
+                        "size": len(file_data),
+                        "original_size": len(file_data),
+                        "shard_size": (len(file_data) + k - 1) // k
+                    }
+                    with open(meta_path, "w", encoding="utf-8") as mf:
+                        json.dump(meta_data, mf)
+
+                # 更新索引
+                idx["files"][target_logical] = {
+                    "k": k,
+                    "m": m,
+                    "size": len(file_data),
+                    "original_size": len(file_data),
+                    "shard_size": (len(file_data) + k - 1) // k,
+                    "disks": disks[:k + m],
+                    "ctime": int(time.time()),
+                    "mtime": int(time.time())
+                }
+                _save_json(EC_IDX_PATH, idx)
+
+                return jsonify({"success": True, "message": "文件已从物理磁盘导入到EC卷"})
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"跨卷复制失败: {str(e)}"}), 500
+
+    # --- 分支 1: EC 卷内部复制 (复制分片和索引) ---
+    if source_is_ec:
         try:
             source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
             target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
 
             if not source_logical or not target_logical:
-                 return jsonify({"error": "EC 逻辑路径无效"}), 400
+                return jsonify({"error": "EC 逻辑路径无效"}), 400
 
             idx = _load_json(EC_IDX_PATH, {"files": {}})
             if source_logical not in idx.get("files", {}):
@@ -2701,7 +3059,7 @@ def copy_entry():
             if target_logical in idx.get("files", {}):
                 return jsonify({"error": "EC目标文件已存在"}), 400
 
-            file_meta = idx["files"][source_logical].copy() # 复制元数据
+            file_meta = idx["files"][source_logical].copy()  # 复制元数据
             disks = file_meta.get("disks", [])
             base_old_name = os.path.basename(source_logical)
             base_new_name = os.path.basename(target_logical)
@@ -2723,12 +3081,14 @@ def copy_entry():
                     shutil.copy2(old_meta, new_meta)
 
             # 更新索引
-            file_meta['ctime'] = int(time.time()) # 更新创建时间
+            file_meta['ctime'] = int(time.time())  # 更新创建时间
             idx["files"][target_logical] = file_meta
             _save_json(EC_IDX_PATH, idx)
 
             return jsonify({"success": True, "message": "EC文件复制成功"})
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return jsonify({"error": f"EC文件复制失败: {str(e)}"}), 500
 
     # --- 分支 2: 物理磁盘复制 ---
@@ -2740,11 +3100,10 @@ def copy_entry():
             target_drive = os.path.splitdrive(target_full_path)[0]
             target_base_dir = get_base_dir_for_path(target_drive)
             if not target_base_dir:
-                 return jsonify({"error": "目标路径无效"}), 403
+                return jsonify({"error": "目标路径无效"}), 403
 
             target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
             target_actual = os.path.join(target_base_dir, target_rel_path)
-
 
             if not source_actual or not os.path.exists(source_actual):
                 return jsonify({"error": "源文件不存在"}), 404
@@ -2757,13 +3116,124 @@ def copy_entry():
             if os.path.isdir(source_actual):
                 shutil.copytree(source_actual, target_actual)
             else:
+                os.makedirs(os.path.dirname(target_actual), exist_ok=True)
                 shutil.copy2(source_actual, target_actual)
 
             return jsonify({"success": True})
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return jsonify({"error": f"复制失败: {str(e)}"}), 500
 
+        def _export_from_ec_to_physical(ec_path, physical_path):
+            """从纠删码卷导出文件到物理磁盘"""
+            # 1. 从EC卷读取文件（解码）
+            source_logical = ec_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
 
+            if source_logical not in idx.get("files", {}):
+                return jsonify({"error": "EC源文件不存在"}), 404
+
+            meta = idx["files"][source_logical]
+            k, m = meta["k"], meta["m"]
+            disks = meta.get("disks", [])
+
+            # 读取分片
+            shard_dict = {}
+            for i, disk in enumerate(disks[:k + m]):
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
+                blk_path = os.path.join(enc_dir, f"{os.path.basename(source_logical)}.blk_{i}")
+                if os.path.exists(blk_path):
+                    with open(blk_path, "rb") as f:
+                        shard_dict[i] = f.read()
+
+            # 解码文件
+            if len(shard_dict) < k:
+                return jsonify({"error": "分片不足，无法恢复文件"}), 500
+
+            decoded_data = _decode_from_dict(shard_dict, meta)
+
+            # 2. 解密（如果有加密）
+            if encryption_manager.is_file_encrypted(source_logical):
+                try:
+                    decoded_data = encryption_manager.decrypt_data(decoded_data)
+                except NotUnlockedError:
+                    return jsonify({"error": "磁盘已锁定"}), 403
+
+            # 3. 写入物理磁盘
+            from common import get_base_dir_for_path
+            target_drive = os.path.splitdrive(physical_path)[0]
+            target_base_dir = get_base_dir_for_path(target_drive)
+            if not target_base_dir:
+                return jsonify({"error": "目标路径无效"}), 403
+
+            target_rel_path = physical_path.replace(target_drive, "").lstrip("/\\")
+            target_actual = os.path.join(target_base_dir, target_rel_path)
+
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(target_actual), exist_ok=True)
+
+            # 写入文件
+            with open(target_actual, "wb") as f:
+                f.write(decoded_data)
+
+            return jsonify({"success": True, "message": "文件已导出到物理磁盘"})
+
+        def _import_from_physical_to_ec(physical_path, ec_path):
+            """从物理磁盘导入文件到纠删码卷"""
+            from common import get_actual_file_path, is_path_allowed
+
+            # 1. 读取物理磁盘文件
+            source_actual = get_actual_file_path(physical_path)
+            if not source_actual or not os.path.exists(source_actual):
+                return jsonify({"error": "源文件不存在"}), 404
+
+            if os.path.isdir(source_actual):
+                return jsonify({"error": "暂不支持导入文件夹到EC卷"}), 400
+
+            with open(source_actual, "rb") as f:
+                file_data = f.read()
+
+            # 2. 加密（如果需要）
+            # ... 根据你的加密策略决定是否加密 ...
+
+            # 3. 编码并写入EC卷
+            target_logical = ec_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+
+            # 读取EC配置
+            cfg = _load_json(EC_CFG_PATH, {})
+            if not cfg:
+                return jsonify({"error": "纠删码未配置"}), 400
+
+            k, m = cfg.get("k"), cfg.get("m")
+            disks = cfg.get("disks", [])
+
+            # 编码
+            shards = rs_encode(file_data, k, m)
+
+            # 写入分片
+            for i, disk in enumerate(disks[:k + m]):
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
+                os.makedirs(enc_dir, exist_ok=True)
+                blk_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.blk_{i}")
+                with open(blk_path, "wb") as f:
+                    f.write(shards[i])
+
+            # 更新索引
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
+            idx["files"][target_logical] = {
+                "k": k,
+                "m": m,
+                "size": len(file_data),
+                "original_size": len(file_data),
+                "shard_size": (len(file_data) + k - 1) // k,
+                "disks": disks[:k + m],
+                "ctime": int(time.time()),
+                "mtime": int(time.time())
+            }
+            _save_json(EC_IDX_PATH, idx)
+
+            return jsonify({"success": True, "message": "文件已导入到纠删码卷"})
 
 @app.route('/api/documents', methods=['GET'])
 @permission_required('readonly')

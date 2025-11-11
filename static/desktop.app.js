@@ -1380,13 +1380,6 @@ async decryptFileOrFolder(window, file) {
             targetFullPath = cleanPath ? `${targetDrive}${cleanPath}/${itemName}` : `${targetDrive}${itemName}`;
           }
 
-          // 4. 检查跨卷操作 (EC <-> 物理盘)
-          if ((sourceDrive === 'ec_volume' && targetDrive !== 'ec_volume') ||
-              (sourceDrive !== 'ec_volume' && targetDrive === 'ec_volume')) {
-              failedItems.push(`${itemName} (暂不支持跨卷操作)`);
-              failCount++;
-              continue; // 不支持EC卷和物理盘之间复制
-          }
 
           // 5. 选择API
           const apiUrl = mode === 'cut' ? '/api/move' : '/api/copy';
@@ -2104,6 +2097,124 @@ openECDetailConfig() {
 },
 
 
+    // 取消纠删码配置
+async removeEcConfig() {
+  if (!this.user.is_admin) {
+    this.showToast('❌ 需要管理员权限', 'error');
+    return;
+  }
+
+  // 第一次确认
+  if (!confirm('⚠️ 警告：删除纠删码配置\n\n此操作将：\n1. 删除所有纠删码文件（无法恢复）\n2. 清除纠删码配置\n3. 释放参与纠删码的磁盘\n\n确定要继续吗？')) {
+    return;
+  }
+
+  // 第二次确认：要求输入确认文本
+  const confirmText = prompt('这是一个危险操作！\n\n所有纠删码卷中的文件将被永久删除！\n请输入 "DELETE EC" 确认删除：');
+
+  if (confirmText !== 'DELETE EC') {
+    this.showToast('❌ 确认文本不正确，操作已取消', 'info');
+    return;
+  }
+
+  try {
+    this.showToast('🚀 正在删除纠删码配置...', 'info');
+
+    const response = await axios.post('/api/ec_remove', {
+      confirm_text: confirmText
+    });
+
+    this.showToast(`✅ ${response.data.message}`, 'success');
+
+    // 刷新所有数据
+    await this.loadData();
+
+    // 刷新所有文件管理器窗口的侧边栏
+    this.windows.forEach(w => {
+      if (w.type === 'files') {
+        w.sidebar.storage = this.buildStorageList();
+      }
+    });
+
+  } catch (error) {
+    this.showToast(`❌ 删除失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
+
+
+    // 批量导出纠删码文件
+async exportAllEcFiles() {
+  if (!this.user.is_admin) {
+    this.showToast('❌ 需要管理员权限', 'error');
+    return;
+  }
+
+  if (!this.ecStatus.is_configured) {
+    this.showToast('❌ 未配置纠删码', 'error');
+    return;
+  }
+
+  // 获取可用的物理磁盘列表（排除EC卷）
+  const availableDisks = this.availableDrives.map(d => d.drive);
+
+  if (availableDisks.length === 0) {
+    this.showToast('❌ 没有可用的物理磁盘', 'error');
+    return;
+  }
+
+  // 显示磁盘选择对话框
+  const diskOptions = availableDisks.map((d, i) => `${i + 1}. ${d}`).join('\n');
+  const selection = prompt(
+    `批量导出纠删码文件\n\n` +
+    `所有文件将被解码并导出到指定磁盘的 ec_export 目录\n\n` +
+    `请选择目标磁盘（输入序号）:\n${diskOptions}`
+  );
+
+  if (!selection) return;
+
+  const index = parseInt(selection) - 1;
+  if (index < 0 || index >= availableDisks.length) {
+    this.showToast('❌ 无效的选择', 'error');
+    return;
+  }
+
+  const targetDisk = availableDisks[index];
+
+  if (!confirm(
+    `确认导出所有纠删码文件到 ${targetDisk}?\n\n` +
+    `文件将保存到: ${targetDisk}ec_export/[时间戳]/\n` +
+    `此操作可能需要较长时间，请耐心等待。`
+  )) {
+    return;
+  }
+
+  try {
+    this.showToast('🚀 正在导出文件，请稍候...', 'info');
+
+    const response = await axios.post('/api/ec_export_all', {
+      target_disk: targetDisk
+    });
+
+    const data = response.data;
+
+    // 显示详细结果
+    let message = `✅ 导出完成！\n\n`;
+    message += `总文件数: ${data.total_files}\n`;
+    message += `成功导出: ${data.exported_count}\n`;
+    message += `失败文件: ${data.failed_count}\n\n`;
+    message += `导出目录:\n${data.export_path}\n\n`;
+
+    if (data.failed_count > 0) {
+      message += `失败详情请查看导出目录中的 _export_report.txt 文件`;
+    }
+
+    alert(message);
+    this.showToast(data.message, data.failed_count > 0 ? 'warning' : 'success');
+
+  } catch (error) {
+    this.showToast(`❌ 导出失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
 
 async checkCurrentUser() {
   // 1. 检查 URL 中是否有 token 参数

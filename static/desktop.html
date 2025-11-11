@@ -1203,19 +1203,35 @@
       <div class="text-sm text-gray-600">
         可用容量: {{ formatSize(ecStatus.usable_bytes || 0) }}
       </div>
+
+      <div class="flex gap-2 mt-4">
       <button @click="openFilesWindow('ec_volume')"
-              class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
         打开纠删码卷
       </button>
-    </div>
-    <div v-else class="text-gray-500">
-      <p class="mb-3">尚未配置纠删码</p>
-      <button @click="openEcSetupDialog()"
-              class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
-        开始配置
+
+          <!-- ✅ 新增：批量导出按钮 -->
+  <button @click="exportAllEcFiles()"
+          class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+    📦 导出所有文件
+  </button>
+
+      <!-- ✅ 新增：删除配置按钮 -->
+      <button @click="removeEcConfig()"
+              class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+        🗑️ 删除配置
       </button>
     </div>
   </div>
+
+  <div v-else class="text-gray-500">
+    <p class="mb-3">尚未配置纠删码</p>
+    <button @click="openEcSetupDialog()"
+            class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+      开始配置
+    </button>
+  </div>
+</div>
 
   <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
        class="bg-red-50 border-l-4 border-red-500 p-4 rounded">
