@@ -1164,32 +1164,72 @@ def delete_entry():
             return jsonify({'success': True})
         except Exception as e:
             return jsonify({'error': f'删除失败: {str(e)}'}), 500
+
+
 @app.route('/api/batch_delete', methods=['POST'])
 @permission_required('fullcontrol')
 def batch_delete():
     data = request.get_json()
     paths = data.get('paths', [])
     errors = []
+
     for path in paths:
         try:
-            abspath = safe_join(BASE_DIRS[0], path.lstrip("/\\"))
-            if not abspath.startswith(BASE_DIRS[0]):
-                errors.append(path)
-                continue
-            if os.path.isdir(abspath):
-                shutil.rmtree(abspath)
+            # 1. 优先处理 EC 卷删除
+            if _is_ec_volume(path):
+                # EC 卷只允许删除文件,不允许删除目录
+                if path.endswith('/'):
+                    errors.append({"path": path, "reason": "EC卷不支持删除虚拟目录"})
+                    continue
+
+                # 从索引中删除文件
+                idx = _load_json(EC_IDX_PATH, {"files": {}})
+                logical_name = path.replace("\\", "/").strip("/")
+
+                if logical_name in idx.get("files", {}):
+                    # 记录磁盘位置
+                    disks_to_clean = idx["files"][logical_name]["disks"]
+
+                    # 1. 从索引中移除
+                    del idx["files"][logical_name]
+                    _save_json(EC_IDX_PATH, idx)
+
+                    # 2. 移除物理分片
+                    base = os.path.basename(logical_name)
+                    for disk in disks_to_clean:
+                        enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
+                        for file_ext in [f"{base}.blk_*", f"{base}.meta.json"]:
+                            import glob
+                            for f in glob.glob(os.path.join(enc_dir, file_ext)):
+                                os.remove(f)
+                else:
+                    errors.append({"path": path, "reason": "EC卷文件不存在"})
+
+            # 2. 物理盘删除
             else:
-                os.remove(abspath)
-        except Exception:
-            errors.append(path)
+                from common import get_actual_file_path, is_path_allowed
+                actual_path = get_actual_file_path(path)
+
+                if not actual_path:
+                    errors.append({"path": path, "reason": "文件不存在"})
+                    continue
+
+                if not is_path_allowed(actual_path):
+                    errors.append({"path": path, "reason": "路径不允许"})
+                    continue
+
+                import shutil
+                if os.path.isdir(actual_path):
+                    shutil.rmtree(actual_path)
+                else:
+                    os.remove(actual_path)
+
+        except Exception as e:
+            errors.append({"path": path, "reason": str(e)})
+
     if errors:
-        return jsonify({"success": False, "error": f"部分或全部删除失败: {errors}"}), 400
+        return jsonify({"success": False, "error": f"部分删除失败", "details": errors}), 400
     return jsonify({"success": True})
-
-
-
-
-
 
 @app.route('/api/preview')
 @permission_required('readonly')

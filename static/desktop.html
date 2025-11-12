@@ -1588,6 +1588,16 @@
     </div>
   </div>
 </div>
+
+
+
+              <!-- ONLYOFFICE 编辑器窗口 -->
+<div v-else-if="window.type === 'onlyoffice-editor'" class="h-full flex flex-col bg-gray-100">
+  <!-- 编辑器容器 -->
+  <div :id="'editor-' + window.id" class="flex-1 w-full h-full"></div>
+</div>
+
+
               <div v-else-if="window.type === 'ec-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
                 <div class="px-6 py-4 border-b bg-white">
                   <h3 class="text-xl font-bold flex items-center gap-2">

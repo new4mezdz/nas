@@ -1080,10 +1080,10 @@ async decryptFileOrFolder(window, file) {
 
 
 
-   showFileContextMenu(event, file, win) {
+ showFileContextMenu(event, file, win) {
   event.preventDefault();
 
-   // 添加调试信息
+  // 添加调试信息
   console.log('权限状态:', {
     canRead: this.canRead,
     canWrite: this.canWrite,
@@ -1111,8 +1111,8 @@ async decryptFileOrFolder(window, file) {
       icon: '📥',
       label: '下载',
       action: () => {
-         this.downloadFile(window, file);
-         this.closeContextMenu();
+        this.downloadFile(window, file);
+        this.closeContextMenu();
       },
       disabled: !this.canRead || file.is_dir || isEncrypted
     },
@@ -1120,18 +1120,28 @@ async decryptFileOrFolder(window, file) {
       icon: '🔗',
       label: '分享',
       action: () => {
-         this.shareFile(window, file);
-         this.closeContextMenu();
+        this.shareFile(window, file);
+        this.closeContextMenu();
       },
       disabled: !this.canRead || file.is_dir || isEncrypted
+    },
+    // ✅ 在这里添加协作编辑
+    {
+      icon: '📝',
+      label: '协作编辑',
+      action: () => {
+        this.openCollaborationEditor(file, win);
+        this.closeContextMenu();
+      },
+      disabled: !this.canWrite || file.is_dir || isEncrypted || !this.isEditableByOnlyOffice(file.name)
     },
     { separator: true },
     {
       icon: '✂️',
       label: '剪切',
       action: () => {
-         this.cutFile(window, file);
-         this.closeContextMenu();
+        this.cutFile(window, file);
+        this.closeContextMenu();
       },
       disabled: !this.canWrite
     },
@@ -1139,8 +1149,8 @@ async decryptFileOrFolder(window, file) {
       icon: '📋',
       label: '复制',
       action: () => {
-         this.copyFile(window, file);
-         this.closeContextMenu();
+        this.copyFile(window, file);
+        this.closeContextMenu();
       },
       disabled: !this.canRead
     },
@@ -1149,8 +1159,8 @@ async decryptFileOrFolder(window, file) {
       icon: '✏️',
       label: '重命名',
       action: () => {
-         this.renameFile(window, file);
-         this.closeContextMenu();
+        this.renameFile(window, file);
+        this.closeContextMenu();
       },
       disabled: !this.canWrite
     },
@@ -1158,7 +1168,7 @@ async decryptFileOrFolder(window, file) {
       icon: '🗑️',
       label: '删除',
       action: () => {
-         this.deleteFile(window, file);
+        this.deleteFile(window, file);
       },
       disabled: !this.canDelete
     },
@@ -1248,6 +1258,88 @@ async decryptFileOrFolder(window, file) {
         ]
       };
     },
+
+    isDocumentFile(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  const docTypes = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt'];
+  return docTypes.includes(ext);
+},
+    isEditableByOnlyOffice(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  const editableExts = [
+    'docx', 'doc', 'odt', 'rtf', 'txt', 'html', 'htm',
+    'xlsx', 'xls', 'ods', 'csv',
+    'pptx', 'ppt', 'odp', 'ppsx'
+  ];
+  return editableExts.includes(ext);
+},
+
+    async openCollaborationEditor(file, fileWindow) {
+  try {
+    // 获取编辑器配置
+    const response = await axios.post('/api/onlyoffice/config', {
+      file_path: fileWindow.currentPath + '/' + file.name,
+      mode: 'edit'  // 或 'view' 只读模式
+    }, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    });
+
+    const config = response.data;
+
+    // 创建编辑器窗口
+    const editorWindow = {
+      id: Date.now(),
+      type: 'onlyoffice-editor',
+      title: `📝 ${file.name}`,
+      x: 100,
+      y: 100,
+      width: 1200,
+      height: 800,
+      minimized: false,
+      maximized: false,
+      zIndex: this.getMaxZIndex() + 1,
+
+      // 编辑器配置
+      editorConfig: config,
+      filePath: fileWindow.currentPath + '/' + file.name,
+      fileName: file.name
+    };
+
+    this.windows.push(editorWindow);
+    this.focusWindow(editorWindow.id);
+  } catch (error) {
+    console.error('打开编辑器失败:', error);
+    alert('打开编辑器失败');
+  }
+},
+
+    // 初始化 ONLYOFFICE 编辑器
+initOnlyOfficeEditor(window) {
+  const containerId = 'editor-' + window.id;
+  const container = document.getElementById(containerId);
+
+  if (!container || window.editorInitialized) return;
+
+  // 加载 ONLYOFFICE API(如果未加载)
+  if (typeof DocsAPI === 'undefined') {
+    const script = document.createElement('script');
+    script.src = 'http://localhost:8081/web-apps/apps/api/documents/api.js';
+    script.onload = () => {
+      this.createEditor(window, containerId);
+    };
+    document.head.appendChild(script);
+  } else {
+    this.createEditor(window, containerId);
+  }
+},
+
+// 创建编辑器实例
+createEditor(window, containerId) {
+  window.editorInstance = new DocsAPI.DocEditor(containerId, window.editorConfig);
+  window.editorInitialized = true;
+},
 
     showDesktopMenu(event) {
       this.contextMenu = {
@@ -2473,5 +2565,15 @@ async checkCurrentUser() {
 
 
 
+},
+updated() {
+  // 初始化 ONLYOFFICE 编辑器
+  this.windows.forEach(win => {
+    if (win.type === 'onlyoffice-editor' && !win.editorInitialized) {
+      this.$nextTick(() => {
+        this.initOnlyOfficeEditor(win);
+      });
+    }
+  });
 }
 }).mount('#app');
