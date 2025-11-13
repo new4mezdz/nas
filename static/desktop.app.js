@@ -721,51 +721,44 @@ renameSelected(window) {
 },
 
     async deleteSelected(window) {
-      if (window.selectedFiles.length === 0) {
-        alert('请先选择要删除的文件');
-        return;
-      }
+  if (window.selectedFiles.length === 0) {
+    alert('请先选择要删除的文件');
+    return;
+  }
 
-      const count = window.selectedFiles.length;
-      if (!confirm(`确认删除选中的 ${count} 项?`)) {
-        return;
-      }
+  const count = window.selectedFiles.length;
+  if (!confirm(`确认删除选中的 ${count} 项?`)) {
+    return;
+  }
 
-      let successCount = 0;
-      let failCount = 0;
+  // 构建所有要删除的路径
+  const selectedPaths = window.selectedFiles.map(fileName =>
+    this.buildFullPath(window, fileName)
+  );
 
-      for (const fileName of window.selectedFiles) {
-        try {
-          const fullPath = this.buildFullPath(window, fileName);
-          const response = await fetch((axios.defaults.baseURL || '') + '/api/delete', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ path: fullPath })
-          });
+  try {
+    const response = await fetch((axios.defaults.baseURL || '') + '/api/batch_delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      body: JSON.stringify({ paths: selectedPaths })
+    });
 
-          const data = await response.json();
-          if (data.success) {
-            successCount++;
-          } else {
-            failCount++;
-          }
-        } catch (error) {
-          failCount++;
-        }
-      }
+    const data = await response.json();
 
-      if (successCount > 0) {
-        this.loadFiles(window);
-        window.selectedFiles = [];
-      }
-
-      if (failCount > 0) {
-        alert(`删除完成: 成功 ${successCount} 项, 失败 ${failCount} 项`);
-      }
-    },
+    if (data.success) {
+      alert(`成功删除 ${count} 项`);
+      this.loadFiles(window);
+      window.selectedFiles = [];
+    } else {
+      alert(`删除失败: ${data.errors ? data.errors.join(', ') : '未知错误'}`);
+    }
+  } catch (error) {
+    alert(`删除失败: ${error.message}`);
+  }
+},
 
     cutSelected(window) {
       if (window.selectedFiles.length === 0) {

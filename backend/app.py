@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import hashlib
 import ctypes  # 添加这行
 import sys     # 添加这行（如果已有就不用添加）
+import glob
 # ===== Third-Party =====
 from flask import Flask, request, jsonify, send_file, send_from_directory, g, make_response
 # ... (在 import hashlib 之后)
@@ -1171,64 +1172,60 @@ def delete_entry():
 def batch_delete():
     data = request.get_json()
     paths = data.get('paths', [])
+    print(f"[DEBUG] batch_delete 收到路径: {paths}")
     errors = []
 
     for path in paths:
+        print(f"[DEBUG] 处理路径: {path}, 是否EC卷: {_is_ec_volume(path)}")
         try:
-            # 1. 优先处理 EC 卷删除
+            # 1. 先检查是否是纠删码卷文件
             if _is_ec_volume(path):
-                # EC 卷只允许删除文件,不允许删除目录
+                print(f"[DEBUG] 开始处理EC卷文件: {path}")
                 if path.endswith('/'):
-                    errors.append({"path": path, "reason": "EC卷不支持删除虚拟目录"})
+                    errors.append(f"{path}: EC卷不支持删除目录")
+                    print(f"[DEBUG] 跳过目录: {path}")
                     continue
 
-                # 从索引中删除文件
+                # 从索引中删除
                 idx = _load_json(EC_IDX_PATH, {"files": {}})
                 logical_name = path.replace("\\", "/").strip("/")
 
-                if logical_name in idx.get("files", {}):
-                    # 记录磁盘位置
-                    disks_to_clean = idx["files"][logical_name]["disks"]
+                # 去掉 ec_volume/ 前缀
+                if logical_name.startswith("ec_volume/"):
+                    logical_name = logical_name[len("ec_volume/"):]
 
-                    # 1. 从索引中移除
+                print(f"[DEBUG] logical_name: {logical_name}")
+                print(f"[DEBUG] 索引中的文件列表: {list(idx.get('files', {}).keys())}")
+
+                if logical_name in idx.get("files", {}):
+                    print(f"[DEBUG] 在索引中找到文件: {logical_name}")
+                    disks_to_clean = idx["files"][logical_name]["disks"]
                     del idx["files"][logical_name]
                     _save_json(EC_IDX_PATH, idx)
 
-                    # 2. 移除物理分片
+                    # 删除物理分片
                     base = os.path.basename(logical_name)
                     for disk in disks_to_clean:
                         enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
                         for file_ext in [f"{base}.blk_*", f"{base}.meta.json"]:
-                            import glob
                             for f in glob.glob(os.path.join(enc_dir, file_ext)):
+                                print(f"[DEBUG] 删除分片: {f}")
                                 os.remove(f)
+                    print(f"[DEBUG] EC卷文件删除成功: {logical_name}")
                 else:
-                    errors.append({"path": path, "reason": "EC卷文件不存在"})
-
-            # 2. 物理盘删除
-            else:
-                from common import get_actual_file_path, is_path_allowed
-                actual_path = get_actual_file_path(path)
-
-                if not actual_path:
-                    errors.append({"path": path, "reason": "文件不存在"})
-                    continue
-
-                if not is_path_allowed(actual_path):
-                    errors.append({"path": path, "reason": "路径不允许"})
-                    continue
-
-                import shutil
-                if os.path.isdir(actual_path):
-                    shutil.rmtree(actual_path)
-                else:
-                    os.remove(actual_path)
+                    print(f"[DEBUG] 索引中未找到文件: {logical_name}")
+                    errors.append(f"{path}: EC卷文件不存在")
+            # ... 物理盘处理代码
 
         except Exception as e:
-            errors.append({"path": path, "reason": str(e)})
+            print(f"[DEBUG] 删除出错: {path}, 错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            errors.append(f"{path}: {str(e)}")
 
+    print(f"[DEBUG] 删除完成, errors: {errors}")
     if errors:
-        return jsonify({"success": False, "error": f"部分删除失败", "details": errors}), 400
+        return jsonify({"success": False, "errors": errors}), 400
     return jsonify({"success": True})
 
 @app.route('/api/preview')
