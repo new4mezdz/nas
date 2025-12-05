@@ -130,6 +130,31 @@ const app = Vue.createApp({
     infoMessage: '',
     sambaMessage: '',
     adminOnlyMsg: '',
+
+    // 空间池状态
+poolStatus: { is_configured: false },
+
+// 空间池配置对话框
+showPoolSetupDialog: false,
+poolSetupForm: {
+  name: '主存储池',
+  selectedDisks: [],
+  availableDisks: [],
+  error: ''
+},
+
+// 逻辑卷配置对话框
+showVolumeDialog: false,
+volumeForm: {
+  name: '',
+  display_name: '',
+  icon: '📁',
+  strategy: 'largest_free',
+  error: ''
+},
+
+// 可选图标列表
+volumeIcons: ['📁', '🎬', '📄', '🎵', '🖼️', '🎮', '💼', '📦', '🔧', '📚'],
   }
 },
   computed: {

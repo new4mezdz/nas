@@ -601,6 +601,17 @@
     </div>
     <div class="text-white text-xs font-semibold drop-shadow-lg">磁盘管理</div>
   </div>
+
+    <!-- 空间池图标 - 仅管理员可见 -->
+  <div v-if="user.is_admin"
+       class="desktop-icon"
+       @dblclick="openPoolWindow">
+    <div class="w-16 h-16 mx-auto mb-2 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-4xl">
+      📦
+    </div>
+    <div class="text-white text-xs font-semibold drop-shadow-lg">空间池</div>
+  </div>
+
 </div>
 
         <!-- 窗口容器 -->
@@ -1678,6 +1689,117 @@
                 </div>
               </div>
 
+              <!-- 空间池管理窗口 -->
+              <div v-else-if="window.type === 'pool-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
+                <div class="px-6 py-4 border-b bg-white flex justify-between items-center">
+                  <h3 class="text-xl font-bold flex items-center gap-2">
+                    <span class="text-3xl">📦</span>
+                    空间池管理
+                  </h3>
+                  <div class="flex gap-2">
+                    <button @click="rebuildPoolIndex"
+                            class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200">
+                      🔄 重建索引
+                    </button>
+                    <button @click="removePool"
+                            class="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200">
+                      🗑️ 删除池
+                    </button>
+                  </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-6 space-y-4">
+                  <!-- 状态概览 -->
+                  <div class="bg-white border rounded-lg p-4 shadow-sm">
+                    <h4 class="font-semibold mb-3 text-gray-700">状态总览</h4>
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                      <div class="bg-purple-50 rounded-lg p-4">
+                        <div class="text-2xl font-bold text-purple-600">{{ poolStatus.pool?.disks?.length || 0 }}</div>
+                        <div class="text-sm text-gray-600">物理磁盘</div>
+                      </div>
+                      <div class="bg-green-50 rounded-lg p-4">
+                        <div class="text-2xl font-bold text-green-600">{{ Object.keys(poolStatus.volumes || {}).length }}</div>
+                        <div class="text-sm text-gray-600">逻辑卷</div>
+                      </div>
+                      <div class="bg-blue-50 rounded-lg p-4">
+                        <div class="text-2xl font-bold text-blue-600">{{ poolStatus.total_files || 0 }}</div>
+                        <div class="text-sm text-gray-600">总文件数</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 磁盘列表 -->
+                  <div class="bg-white border rounded-lg shadow-sm">
+                    <div class="p-4 border-b font-semibold text-gray-700">💾 物理磁盘</div>
+                    <div class="max-h-48 overflow-y-auto">
+                      <div v-for="disk in poolStatus.disks" :key="disk.disk"
+                           class="flex items-center justify-between px-4 py-3 border-b last:border-b-0">
+                        <div class="flex items-center gap-3">
+                          <span class="text-2xl">💿</span>
+                          <div>
+                            <div class="font-mono font-bold">{{ disk.disk }}</div>
+                            <div class="text-xs text-gray-500">总容量: {{ formatSize(disk.total) }}</div>
+                          </div>
+                        </div>
+                        <div class="text-right">
+                          <div class="text-green-600 font-semibold text-sm">{{ formatSize(disk.free) }} 可用</div>
+                          <div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden mt-1">
+                            <div class="h-full bg-blue-500" :style="{width: ((disk.total - disk.free) / disk.total * 100) + '%'}"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 逻辑卷列表 -->
+                  <div class="bg-white border rounded-lg shadow-sm">
+                    <div class="p-4 border-b font-semibold text-gray-700 flex justify-between items-center">
+                      <span>📁 逻辑卷</span>
+                      <button @click="openVolumeDialog"
+                              class="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+                        ➕ 新建
+                      </button>
+                    </div>
+                    <div v-if="Object.keys(poolStatus.volumes || {}).length === 0"
+                         class="p-8 text-center text-gray-500">
+                      <div class="text-4xl mb-2">📭</div>
+                      <p>还没有创建逻辑卷</p>
+                    </div>
+                    <div v-else class="max-h-64 overflow-y-auto">
+                      <div v-for="(vol, volName) in poolStatus.volumes" :key="volName"
+                           class="flex items-center justify-between px-4 py-3 border-b last:border-b-0 hover:bg-gray-50">
+                        <div class="flex items-center gap-3">
+                          <span class="text-2xl">{{ vol.icon }}</span>
+                          <div>
+                            <div class="font-bold">{{ vol.display_name }}</div>
+                            <div class="text-xs text-gray-500">
+                              标识: {{ volName }} ·
+                              {{ {largest_free: '最大剩余优先', round_robin: '轮询', balanced: '均衡'}[vol.strategy] || vol.strategy }}
+                            </div>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                          <div class="text-right text-sm">
+                            <div class="font-semibold">{{ vol.file_count || 0 }} 文件</div>
+                            <div class="text-gray-500">{{ formatSize(vol.used_bytes || 0) }}</div>
+                          </div>
+                          <button @click="deleteVolume(volName)"
+                                  class="p-2 text-red-500 hover:bg-red-100 rounded-lg" title="删除">
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 说明 -->
+                  <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md">
+                    <h4 class="font-semibold text-blue-900 mb-1">💡 使用说明</h4>
+                    <p class="text-sm text-blue-800">创建逻辑卷后，可在文件管理器侧边栏看到对应的卷，上传文件会根据分配策略自动选择物理磁盘存储。</p>
+                  </div>
+                </div>
+              </div>
+
           </div>
         </div>
 
@@ -1938,6 +2060,127 @@
     </div>
   </div>
 </div>
+
+      <!-- 空间池配置对话框 -->
+<div v-if="showPoolSetupDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
+  <div class="bg-white w-[700px] rounded-xl shadow-2xl overflow-hidden flex flex-col" style="max-height: 90vh;">
+    <div class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 py-4 flex justify-between items-center">
+      <h3 class="text-lg font-bold">📦 配置空间池</h3>
+      <button @click="closePoolSetupDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+    </div>
+
+    <div class="p-6 overflow-y-auto space-y-6">
+      <div class="bg-gray-50 p-4 rounded-lg border">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">存储池名称</label>
+        <input type="text" v-model="poolSetupForm.name"
+               class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-purple-500 outline-none"
+               placeholder="如：主存储池">
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">选择磁盘（可多选）</label>
+        <div class="border rounded-lg max-h-60 overflow-y-auto p-2 space-y-1 bg-white">
+          <div v-for="disk in poolSetupForm.availableDisks" :key="disk.drive"
+               class="flex items-center p-3 rounded hover:bg-purple-50 border-b last:border-b-0">
+            <input type="checkbox" :value="disk.drive" v-model="poolSetupForm.selectedDisks"
+                   :id="'pool-disk-'+disk.drive" class="h-4 w-4 mr-3 accent-purple-600">
+            <label :for="'pool-disk-'+disk.drive" class="flex-1 cursor-pointer">
+              <span class="font-mono font-bold text-lg">{{ disk.drive.replace(':/', '') }}盘</span>
+              <span class="text-sm text-gray-600 ml-2">(可用: {{ formatSize(disk.free) }})</span>
+            </label>
+          </div>
+          <div v-if="poolSetupForm.availableDisks.length === 0" class="p-4 text-center text-gray-500">
+            没有可用的磁盘
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">已选择 {{ poolSetupForm.selectedDisks.length }} 个磁盘</p>
+      </div>
+
+      <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md">
+        <h4 class="font-semibold text-blue-800 mb-2">💡 空间池说明</h4>
+        <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
+          <li>空间池将多个物理磁盘合并为逻辑存储空间</li>
+          <li>创建后可添加多个"逻辑卷"（如：电影、文档）</li>
+          <li>上传文件时根据策略自动分配到合适的磁盘</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+      <div class="text-sm text-red-600 h-5">{{ poolSetupForm.error }}</div>
+      <div class="flex gap-3">
+        <button @click="closePoolSetupDialog" class="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">取消</button>
+        <button @click="submitPoolConfig"
+                :disabled="poolSetupForm.selectedDisks.length < 1"
+                class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          创建存储池
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 逻辑卷创建对话框 -->
+<div v-if="showVolumeDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
+  <div class="bg-white w-[550px] rounded-xl shadow-2xl overflow-hidden flex flex-col">
+    <div class="bg-gradient-to-r from-green-600 to-teal-600 text-white px-6 py-4 flex justify-between items-center">
+      <h3 class="text-lg font-bold">📁 创建逻辑卷</h3>
+      <button @click="closeVolumeDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+    </div>
+
+    <div class="p-6 space-y-5">
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">卷标识（英文）</label>
+        <input type="text" v-model="volumeForm.name"
+               class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-green-500 outline-none"
+               placeholder="如：movies, documents, music">
+        <p class="text-xs text-gray-500 mt-1">只能包含英文、数字和下划线</p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">显示名称</label>
+        <input type="text" v-model="volumeForm.display_name"
+               class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-green-500 outline-none"
+               placeholder="如：电影、文档、音乐">
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">图标</label>
+        <div class="flex flex-wrap gap-2">
+          <button v-for="icon in volumeIcons" :key="icon"
+                  @click="volumeForm.icon = icon"
+                  :class="['w-10 h-10 text-xl rounded-lg border-2 transition',
+                           volumeForm.icon === icon ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-gray-400']">
+            {{ icon }}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">分配策略</label>
+        <select v-model="volumeForm.strategy"
+                class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-green-500 outline-none">
+          <option value="largest_free">最大剩余空间优先（推荐大文件）</option>
+          <option value="round_robin">轮询分配（均衡写入）</option>
+          <option value="balanced">按剩余比例加权</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+      <div class="text-sm text-red-600 h-5">{{ volumeForm.error }}</div>
+      <div class="flex gap-3">
+        <button @click="closeVolumeDialog" class="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">取消</button>
+        <button @click="submitVolumeConfig"
+                :disabled="!volumeForm.name || !volumeForm.display_name"
+                class="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          创建逻辑卷
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
   </div>
 
   <script src="static/desktop.app.js"></script>

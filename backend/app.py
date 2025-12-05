@@ -1,48 +1,50 @@
 # ===== Standard Library =====
 import os
 import io
+import sys
 import json
 import time
+import glob
 import secrets
-import psutil, requests, threading, time
+import hashlib
+import ctypes
 import subprocess
 import mimetypes
+import threading
 from pathlib import Path
 from functools import wraps
 from datetime import datetime, timedelta
-import hashlib
-import ctypes  # 添加这行
-import sys     # 添加这行（如果已有就不用添加）
-import glob
+
 # ===== Third-Party =====
-from flask import Flask, request, jsonify, send_file, send_from_directory, g, make_response
-# ... (在 import hashlib 之后)
-from flask import session             # 导入 Flask session
-from auth import init_auth          # 导入我们新的 auth.py
-from permission_decorator import permission_required # 导入我们新的权限装饰器
+import jwt
+import psutil
+import requests
+from flask import (
+    Flask, request, jsonify, send_file,
+    send_from_directory, g, make_response, session
+)
 from flask_socketio import SocketIO
 from werkzeug.security import generate_password_hash, check_password_hash
-import jwt
-import requests
-from docx2pdf import convert as docx2pdf_convert  # 避免遮蔽 common.convert
 from docx import Document
-from utils import get_disk_info, _norm_abs
+from docx2pdf import convert as docx2pdf_convert
+
 # ===== Project / Local =====
 from common import (
     BASE_DIRS, get_db, get_available_drives,
-    is_path_allowed, get_base_dir_for_path, convert, _is_ec_volume # <-- 添加 _is_ec_volume
+    is_path_allowed, get_base_dir_for_path, convert, _is_ec_volume
 )
+from utils import get_disk_info, _norm_abs
+from auth import init_auth
+from permission_decorator import permission_required
 
-from utils import get_disk_info
-
-# RS 系统码引擎（存储型纠删码）
+# EC 纠删码
 from ec_engine.rs_systematic import encode as rs_encode, decode as rs_decode
-
-# 可能仍在其它路由里用到
 from ec_engine.ec_error import ECError
 
+# 存储池
+import Storage_pool
 
-# 可选：如果这些模块在你项目中存在就保留
+# 协作 & 加密
 from collaboration import CollaborationManager
 from collaboration_v2 import CollaborationV2
 from onlyoffice import OnlyOfficeManager
@@ -1215,7 +1217,20 @@ def batch_delete():
                 else:
                     print(f"[DEBUG] 索引中未找到文件: {logical_name}")
                     errors.append(f"{path}: EC卷文件不存在")
-            # ... 物理盘处理代码
+            else:
+                # 处理非EC卷文件(物理盘文件)
+                print(f"[DEBUG] 处理物理盘文件: {path}")
+                actual_path = path.replace('/', '\\') if os.name == 'nt' else path
+
+                if os.path.isfile(actual_path):
+                    os.remove(actual_path)
+                    print(f"[DEBUG] 文件删除成功: {actual_path}")
+                elif os.path.isdir(actual_path):
+                    shutil.rmtree(actual_path)
+                    print(f"[DEBUG] 目录删除成功: {actual_path}")
+                else:
+                    print(f"[DEBUG] 路径不存在: {actual_path}")
+                    errors.append(f"{path}: 文件不存在")
 
         except Exception as e:
             print(f"[DEBUG] 删除出错: {path}, 错误: {str(e)}")
@@ -2488,7 +2503,23 @@ def list_files():
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
         return jsonify({"success": True, "items": items})
 
-    # --- 分支 2: 处理物理硬盘 (✅ 关键修复) ---
+    # --- 分支 1.5: 处理存储池逻辑卷 pool:// ---
+    elif full_path_from_request.startswith('pool://'):
+        try:
+            pool_path = full_path_from_request[7:]  # 去掉 "pool://"
+            parts = pool_path.split('/', 1)
+            volume = parts[0]
+            subpath = parts[1] if len(parts) > 1 else ''
+
+            if not volume:
+                return jsonify({'error': '无效的存储池路径'}), 400
+
+            items = Storage_pool.list_files(volume, subpath)
+            return jsonify({'success': True, 'items': items})
+        except Exception as e:
+            return jsonify({'error': f'读取存储池失败: {str(e)}'}), 500
+
+    # --- 分支 2: 处理物理硬盘 ---
     else:
         try:
             full_path = os.path.abspath(full_path_from_request)
@@ -2523,7 +2554,6 @@ def list_files():
 
         except Exception as e:
             return jsonify({'error': f'读取目录失败: {str(e)}'}), 500
-
 @app.route('/api/search')
 @permission_required('readonly')
 def api_search():
@@ -4367,6 +4397,228 @@ def close_collaboration_session(session_id):
 @app.route('/collaboration.html')
 def collaboration_page():
     return app.send_static_file('collaboration.html')
+
+
+# ---------- 存储池管理 (Storage Pool) ----------
+
+@app.route('/api/pool/status', methods=['GET'])
+@permission_required('readonly')
+def api_pool_status():
+    """获取存储池状态"""
+    try:
+        # 注意：这里修正了模块名为大写 Storage_pool，与 import 保持一致
+        status = Storage_pool.get_pool_status()
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/create', methods=['POST'])
+@permission_required('fullcontrol')  # 创建池属于管理员操作
+def api_pool_create():
+    """创建存储池"""
+    try:
+        data = request.json
+        name = data.get('name', '主存储池')
+        disks = data.get('disks', [])
+
+        if not disks:
+            return jsonify({"error": "请选择至少一个磁盘"}), 400
+
+        result = Storage_pool.create_pool(name, disks)
+        return jsonify({"message": "存储池创建成功", "pool": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/remove', methods=['POST'])
+@permission_required('fullcontrol')  # 删除池属于危险操作
+def api_pool_remove():
+    """删除存储池"""
+    try:
+        data = request.json
+        confirm_text = data.get('confirm_text', '')
+        result = Storage_pool.remove_pool(confirm_text)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------- 逻辑卷管理 ----------
+
+@app.route('/api/pool/volumes', methods=['GET'])
+@permission_required('readonly')
+def api_pool_volumes():
+    """列出所有逻辑卷"""
+    try:
+        volumes = Storage_pool.list_volumes()
+        return jsonify(volumes)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/volume/create', methods=['POST'])
+@permission_required('fullcontrol')  # 创建卷建议仅限管理员
+def api_pool_volume_create():
+    """创建逻辑卷"""
+    try:
+        data = request.json
+        name = data.get('name')
+        display_name = data.get('display_name')
+        icon = data.get('icon', '📁')
+        strategy = data.get('strategy', 'largest_free')
+
+        if not name or not display_name:
+            return jsonify({"error": "请填写卷名和显示名称"}), 400
+
+        result = Storage_pool.create_volume(name, display_name, icon, strategy)
+        return jsonify({"message": "逻辑卷创建成功", "volume": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/volume/<name>', methods=['PATCH'])
+@permission_required('fullcontrol')
+def api_pool_volume_update(name):
+    """更新逻辑卷配置"""
+    try:
+        data = request.json
+        result = Storage_pool.update_volume(
+            name,
+            display_name=data.get('display_name'),
+            icon=data.get('icon'),
+            strategy=data.get('strategy')
+        )
+        return jsonify({"message": "更新成功", "volume": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/volume/<name>', methods=['DELETE'])
+@permission_required('fullcontrol')
+def api_pool_volume_delete(name):
+    """删除逻辑卷"""
+    try:
+        confirm = request.args.get('confirm', 'false').lower() == 'true'
+        result = Storage_pool.delete_volume(name, confirm)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------- 文件操作 ----------
+
+@app.route('/api/pool/list', methods=['GET'])
+@permission_required('readonly')
+def api_pool_list():
+    """列出逻辑卷中的文件"""
+    try:
+        volume = request.args.get('volume')
+        subpath = request.args.get('subpath', '')
+
+        if not volume:
+            return jsonify({"error": "请指定逻辑卷"}), 400
+
+        items = Storage_pool.list_files(volume, subpath)
+        return jsonify({"items": items, "volume": volume, "subpath": subpath})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/upload', methods=['POST'])
+@permission_required('readwrite')
+def api_pool_upload():
+    """上传文件到逻辑卷"""
+    try:
+        volume = request.form.get('volume')
+        subpath = request.form.get('subpath', '')
+
+        if not volume:
+            return jsonify({"error": "请指定逻辑卷"}), 400
+
+        if 'file' not in request.files:
+            return jsonify({"error": "没有文件"}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "未选择文件"}), 400
+
+        file_data = file.read()
+        result = Storage_pool.add_file(volume, subpath, file.filename, file_data)
+
+        return jsonify({
+            "message": "上传成功",
+            "file": result
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/download', methods=['GET'])
+@permission_required('readonly')
+def api_pool_download():
+    """下载文件"""
+    try:
+        virtual_path = request.args.get('path')
+
+        if not virtual_path:
+            return jsonify({"error": "请指定文件路径"}), 400
+
+        full_path = Storage_pool.get_file_path(virtual_path)
+
+        if not os.path.exists(full_path):
+            return jsonify({"error": "文件不存在"}), 404
+
+        return send_file(full_path, as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/delete', methods=['POST'])
+@permission_required('readwrite')
+def api_pool_delete_file():
+    """删除文件"""
+    try:
+        data = request.json
+        virtual_path = data.get('path')
+
+        if not virtual_path:
+            return jsonify({"error": "请指定文件路径"}), 400
+
+        result = Storage_pool.delete_file(virtual_path)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/mkdir', methods=['POST'])
+@permission_required('readwrite')
+def api_pool_mkdir():
+    """创建文件夹"""
+    try:
+        data = request.json
+        volume = data.get('volume')
+        subpath = data.get('subpath', '')
+        folder_name = data.get('folder_name')
+
+        if not volume or not folder_name:
+            return jsonify({"error": "请指定逻辑卷和文件夹名"}), 400
+
+        result = Storage_pool.create_folder(volume, subpath, folder_name)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pool/rebuild', methods=['POST'])
+@permission_required('fullcontrol')
+def api_pool_rebuild():
+    """重建索引"""
+    try:
+        result = Storage_pool.rebuild_index()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ========== 创建预览会话API ==========

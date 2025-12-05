@@ -56,7 +56,31 @@ user: { username: '', is_admin: false },
       selectedDisks: [],
       capacityEstimate: null,
       error: ''
-    }
+    },
+    // 空间池状态
+poolStatus: { is_configured: false },
+
+// 空间池配置对话框
+showPoolSetupDialog: false,
+poolSetupForm: {
+  name: '主存储池',
+  selectedDisks: [],
+  availableDisks: [],
+  error: ''
+},
+
+// 逻辑卷配置对话框
+showVolumeDialog: false,
+volumeForm: {
+  name: '',
+  display_name: '',
+  icon: '📁',
+  strategy: 'largest_free',
+  error: ''
+},
+
+// 可选图标列表
+volumeIcons: ['📁', '🎬', '📄', '🎵', '🖼️', '🎮', '💼', '📦', '🔧', '📚'],
   };
 },
 
@@ -113,7 +137,8 @@ async getEcCapacityEstimate() {
           this.fetchDiskInfo(),
           this.fetchAvailableDrives(),
           this.fetchEcStatus(),
-          this.fetchEncryptionStatus()
+          this.fetchEncryptionStatus(),
+            this.fetchPoolStatus()
         ]);
       } catch (e) {
         console.error('加载数据失败:', e);
@@ -392,6 +417,19 @@ async submitPasswordChange(window) {
     });
   });
 
+  // 添加空间池逻辑卷
+if (this.poolStatus.is_configured && this.poolStatus.volumes) {
+  Object.entries(this.poolStatus.volumes).forEach(([volName, volConfig]) => {
+    storage.push({
+      icon: volConfig.icon || '📦',
+      label: volConfig.display_name,
+      path: `pool://${volName}`,
+      type: 'pool_volume',
+      usage: 0,
+      volumeName: volName
+    });
+  });
+}
   // 添加 EC 卷
   if (this.ecStatus.is_configured) {
     storage.unshift({
@@ -2030,6 +2068,220 @@ async decryptDiskPermanently(drive) {
       });
       this.showStartMenu = false;
     },
+
+
+    // ==================== 空间池状态 ====================
+async fetchPoolStatus() {
+  try {
+    const res = await axios.get('/api/pool/status');
+    this.poolStatus = res.data;
+  } catch (e) {
+    console.error('获取空间池状态失败:', e);
+    this.poolStatus = { is_configured: false };
+  }
+},
+
+// ==================== 打开池配置对话框 ====================
+openPoolWindow() {
+  // 如果已配置，打开管理窗口；否则打开配置对话框
+  if (this.poolStatus.is_configured) {
+    this.createWindow('pool-detail', '空间池管理', '📦', {
+      width: 800,
+      height: 600
+    });
+  } else {
+    this.openPoolSetupDialog();
+  }
+},
+
+openPoolSetupDialog() {
+  // 筛选可用磁盘（排除已用于EC或加密的）
+  this.poolSetupForm.availableDisks = this.availableDrives.filter(d => {
+    // 排除纠删码磁盘
+    if (this.ecStatus.is_configured && this.ecStatus.config_disks?.includes(d.drive)) {
+      return false;
+    }
+    // 排除已加密磁盘
+    const encStatus = this.encryptionStatus.find(s => s.drive === d.drive);
+    if (encStatus && encStatus.is_configured) {
+      return false;
+    }
+    return true;
+  });
+
+  this.poolSetupForm.selectedDisks = [];
+  this.poolSetupForm.name = '主存储池';
+  this.poolSetupForm.error = '';
+  this.showPoolSetupDialog = true;
+},
+
+closePoolSetupDialog() {
+  this.showPoolSetupDialog = false;
+},
+
+// ==================== 创建存储池 ====================
+async submitPoolConfig() {
+  const { name, selectedDisks } = this.poolSetupForm;
+  this.poolSetupForm.error = '';
+
+  if (selectedDisks.length < 1) {
+    this.poolSetupForm.error = '请至少选择1个磁盘';
+    return;
+  }
+
+  try {
+    await axios.post('/api/pool/create', {
+      name: name,
+      disks: selectedDisks
+    });
+
+    this.showToast('✅ 存储池创建成功！', 'success');
+    this.closePoolSetupDialog();
+    await this.loadData();
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    this.poolSetupForm.error = errorMsg;
+    this.showToast(`❌ 创建失败: ${errorMsg}`, 'error');
+  }
+},
+
+// ==================== 删除存储池 ====================
+
+
+async removePool() {
+  if (!this.user.is_admin) {
+    this.showToast('❌ 需要管理员权限', 'error');
+    return;
+  }
+
+  if (!confirm('⚠️ 警告：删除存储池\n\n此操作将：\n1. 删除所有逻辑卷中的文件\n2. 清除存储池配置\n\n确定要继续吗？')) {
+    return;
+  }
+
+  const confirmText = prompt('请输入 "DELETE POOL" 确认删除：');
+  if (confirmText !== 'DELETE POOL') {
+    this.showToast('❌ 确认文本不正确', 'info');
+    return;
+  }
+
+  try {
+    await axios.post('/api/pool/remove', { confirm_text: confirmText });
+    this.showToast('✅ 存储池已删除', 'success');
+    await this.loadData();
+
+    // 刷新文件管理器
+    this.windows.forEach(w => {
+      if (w.type === 'files') {
+        w.sidebar.storage = this.buildStorageList();
+      }
+    });
+  } catch (error) {
+    this.showToast(`❌ 删除失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
+
+// ==================== 逻辑卷管理 ====================
+openVolumeDialog() {
+  this.volumeForm = {
+    name: '',
+    display_name: '',
+    icon: '📁',
+    strategy: 'largest_free',
+    error: ''
+  };
+  this.showVolumeDialog = true;
+},
+
+closeVolumeDialog() {
+  this.showVolumeDialog = false;
+},
+
+async submitVolumeConfig() {
+  const { name, display_name, icon, strategy } = this.volumeForm;
+  this.volumeForm.error = '';
+
+  if (!name || !display_name) {
+    this.volumeForm.error = '请填写卷标识和显示名称';
+    return;
+  }
+
+  // 验证卷标识格式
+  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)) {
+    this.volumeForm.error = '卷标识必须以字母开头，只能包含字母、数字和下划线';
+    return;
+  }
+
+  try {
+    await axios.post('/api/pool/volume/create', {
+      name,
+      display_name,
+      icon,
+      strategy
+    });
+
+    this.showToast('✅ 逻辑卷创建成功！', 'success');
+    this.closeVolumeDialog();
+    await this.fetchPoolStatus();
+
+    // 刷新文件管理器侧边栏
+    this.windows.forEach(w => {
+      if (w.type === 'files') {
+        w.sidebar.storage = this.buildStorageList();
+      }
+    });
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    this.volumeForm.error = errorMsg;
+    this.showToast(`❌ 创建失败: ${errorMsg}`, 'error');
+  }
+},
+
+async deleteVolume(volumeName) {
+  if (!confirm(`确定要删除逻辑卷 "${volumeName}" 吗？\n\n该卷中的所有文件将被删除！`)) {
+    return;
+  }
+
+  try {
+    await axios.delete(`/api/pool/volume/${volumeName}?confirm=true`);
+    this.showToast('✅ 逻辑卷已删除', 'success');
+    await this.fetchPoolStatus();
+
+    // 刷新文件管理器
+    this.windows.forEach(w => {
+      if (w.type === 'files') {
+        w.sidebar.storage = this.buildStorageList();
+      }
+    });
+  } catch (error) {
+    this.showToast(`❌ 删除失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
+
+// ==================== 打开池详情窗口 ====================
+openPoolDetailWindow() {
+  this.createWindow('pool-detail', '空间池管理', '📦', {
+    width: 800,
+    height: 600
+  });
+  this.showStartMenu = false;
+},
+
+// ==================== 重建索引 ====================
+async rebuildPoolIndex() {
+  if (!confirm('确定要重建文件索引吗？\n\n这将扫描所有物理文件并重建索引数据库。')) {
+    return;
+  }
+
+  try {
+    this.showToast('🔄 正在重建索引...', 'info');
+    const res = await axios.post('/api/pool/rebuild');
+    this.showToast(`✅ ${res.data.message}`, 'success');
+    await this.fetchPoolStatus();
+  } catch (error) {
+    this.showToast(`❌ 重建失败: ${error.response?.data?.error || error.message}`, 'error');
+  }
+},
+
 
 
 openECConfig() {
