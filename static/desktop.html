@@ -73,43 +73,45 @@
       border-bottom: 1px solid #ddd;
     }
 
-    .window-controls button {
-  width: 46px;
-  height: 32px;
-  border-radius: 0;
-  border: none;
-  margin-left: 0;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s;
-}
+  .window-controls button {
+      width: 46px;
+      height: 32px;
+      border-radius: 0;
+      border: none;
+      margin-left: 0;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+      font-size: 12px;
+      font-family: "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
+    }
 
-.window-controls .minimize {
-  background: transparent;
-  color: #000;
-}
-.window-controls .minimize:hover {
-  background: #e5e5e5;
-}
+    .window-controls .minimize {
+      background: transparent;
+      color: #000;
+    }
+    .window-controls .minimize:hover {
+      background: #e5e5e5;
+    }
 
-.window-controls .maximize {
-  background: transparent;
-  color: #000;
-}
-.window-controls .maximize:hover {
-  background: #e5e5e5;
-}
+    .window-controls .maximize {
+      background: transparent;
+      color: #000;
+    }
+    .window-controls .maximize:hover {
+      background: #e5e5e5;
+    }
 
-.window-controls .close {
-  background: transparent;
-  color: #000;
-}
-.window-controls .close:hover {
-  background: #e81123;
-  color: white;
-}
+    .window-controls .close {
+      background: transparent;
+      color: #000;
+    }
+    .window-controls .close:hover {
+      background: #e81123;
+      color: white;
+    }
 
     .window-content {
       flex: 1;
@@ -568,6 +570,7 @@
     <div v-if="loggedIn">
       <!-- 桌面 -->
       <div class="desktop fixed inset-0"
+           :style="{ background: desktopBg }"
            @contextmenu.prevent="showDesktopMenu"
            @click="closeContextMenu">
 
@@ -635,9 +638,15 @@
               <span class="font-semibold text-sm">{{ window.title }}</span>
             </div>
             <div class="window-controls flex">
-              <button class="minimize" @click.stop="minimizeWindow(window.id)">─</button>
-<button class="maximize" @click.stop="toggleMaximize(window.id)">□</button>
-<button class="close" @click.stop="closeWindow(window.id)">✕</button>
+              <button class="minimize" @click.stop="minimizeWindow(window.id)">
+                <svg width="10" height="1" viewBox="0 0 10 1"><rect fill="currentColor" width="10" height="1"/></svg>
+              </button>
+              <button class="maximize" @click.stop="toggleMaximize(window.id)">
+                <svg width="10" height="10" viewBox="0 0 10 10"><rect fill="none" stroke="currentColor" stroke-width="1" x="0.5" y="0.5" width="9" height="9"/></svg>
+              </button>
+              <button class="close" @click.stop="closeWindow(window.id)">
+                <svg width="10" height="10" viewBox="0 0 10 10"><line stroke="currentColor" stroke-width="1" x1="0" y1="0" x2="10" y2="10"/><line stroke="currentColor" stroke-width="1" x1="10" y1="0" x2="0" y2="10"/></svg>
+              </button>
             </div>
           </div>
 
@@ -1913,6 +1922,11 @@
 
 
     <div class="h-px bg-white/20 my-2"></div>
+      <!-- 桌面背景 - 所有用户 -->
+    <div class="start-menu-item" @click="showBgSettings = true; showStartMenu = false">
+      <span class="text-xl">🖼️</span>
+      <span>桌面背景</span>
+    </div>
 
     <!-- 个人设置 - 所有用户 -->
     <div class="start-menu-item" @click="openPersonalSettings">
@@ -1927,6 +1941,48 @@
     </div>
   </div>
 </div>
+
+
+       <!-- 背景设置弹窗 -->
+      <div v-if="showBgSettings" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]" @click.self="showBgSettings = false">
+        <div class="bg-white rounded-xl shadow-2xl w-[500px] overflow-hidden">
+          <div class="bg-gray-100 px-4 py-3 flex justify-between items-center border-b">
+            <span class="font-semibold">🖼️ 更换桌面背景</span>
+            <button @click="showBgSettings = false" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+          </div>
+          <div class="p-4">
+            <div class="mb-4">
+              <div class="text-sm text-gray-600 mb-2">预设背景</div>
+              <div class="grid grid-cols-4 gap-2">
+                <div v-for="preset in bgPresets" :key="preset.name"
+                     @click="setDesktopBg(preset.value); showBgSettings = false"
+                     class="h-16 rounded-lg cursor-pointer border-2 hover:border-blue-500 transition-all"
+                     :class="desktopBg === preset.value ? 'border-blue-500' : 'border-gray-200'"
+                     :style="{ background: preset.value }">
+                </div>
+              </div>
+              <div class="grid grid-cols-4 gap-2 mt-2">
+                <div v-for="preset in bgPresets" :key="preset.name + '-label'" class="text-xs text-center text-gray-500">
+                  {{ preset.name }}
+                </div>
+              </div>
+            </div>
+            <div class="border-t pt-4">
+              <div class="text-sm text-gray-600 mb-2">上传自定义图片</div>
+              <div class="flex gap-2">
+                <label class="flex-1 px-4 py-2 bg-gray-100 border border-dashed border-gray-300 rounded-lg text-sm text-center cursor-pointer hover:bg-gray-200">
+                  <span>📷 选择图片文件</span>
+                  <input type="file" accept="image/*" @change="uploadBgImage" class="hidden">
+                </label>
+                <button @click="setDesktopBg('linear-gradient(135deg, #667eea 0%, #764ba2 100%)'); showBgSettings = false"
+                        class="px-4 py-2 bg-gray-500 text-white rounded-lg text-sm hover:bg-gray-600">
+                  恢复默认
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- 上传文件对话框 -->
       <div v-if="showUploadDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">

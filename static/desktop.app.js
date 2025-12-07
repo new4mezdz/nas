@@ -68,6 +68,20 @@ poolSetupForm: {
   availableDisks: [],
   error: ''
 },
+     // ========== 桌面背景 ==========
+    desktopBg: localStorage.getItem('desktopBg') || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    showBgSettings: false,
+    bgPresets: [
+      { name: '默认紫色', value: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' },
+      { name: '深蓝', value: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)' },
+      { name: '日落', value: 'linear-gradient(135deg, #ff6b6b 0%, #feca57 100%)' },
+      { name: '森林', value: 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)' },
+      { name: '星空', value: 'linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%)' },
+      { name: '海洋', value: 'linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)' },
+      { name: '玫瑰', value: 'linear-gradient(135deg, #ee9ca7 0%, #ffdde1 100%)' },
+      { name: '暗黑', value: 'linear-gradient(135deg, #232526 0%, #414345 100%)' }
+    ],
+    customBgUrl: '',
 
 // 逻辑卷配置对话框
 showVolumeDialog: false,
@@ -81,6 +95,7 @@ volumeForm: {
 
 // 可选图标列表
 volumeIcons: ['📁', '🎬', '📄', '🎵', '🖼️', '🎮', '💼', '📦', '🔧', '📚'],
+
   };
 },
 
@@ -126,6 +141,37 @@ async getEcCapacityEstimate() {
   // ✅ 跳转到管理端登录页
   window.close();
 },
+    setDesktopBg(bg) {
+      this.desktopBg = bg;
+      localStorage.setItem('desktopBg', bg);
+    },
+
+    // 上传背景图片
+    uploadBgImage(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        alert('请选择图片文件');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const bg = `url(${e.target.result}) center/cover no-repeat`;
+        this.setDesktopBg(bg);
+        this.showBgSettings = false;
+      };
+      reader.readAsDataURL(file);
+    },
+
+    setCustomBg() {
+      if (this.customBgUrl.trim()) {
+        const bg = `url(${this.customBgUrl}) center/cover no-repeat`;
+        this.setDesktopBg(bg);
+        this.customBgUrl = '';
+      }
+    },
 
     // ==========================================
     // 数据加载
@@ -389,15 +435,28 @@ async submitPasswordChange(window) {
   console.log('[DEBUG] 标准化后的 config_disks:', normalizedConfigDisks);
 
   // 添加物理磁盘
-  this.availableDrives.forEach(drive => {
-    console.log('[DEBUG] 检查磁盘:', drive.drive);
+this.availableDrives.forEach(drive => {
+  console.log('[DEBUG] 检查磁盘:', drive.drive);
 
-    // ✅ 使用标准化后的数组进行比较
-    if (this.ecStatus.is_configured &&
-        normalizedConfigDisks.includes(drive.drive)) {
-      console.log('[DEBUG] ✅ 跳过纠删码磁盘:', drive.drive);
-      return; // 跳过这个磁盘
+  // ✅ 跳过纠删码磁盘
+  if (this.ecStatus.is_configured &&
+      normalizedConfigDisks.includes(drive.drive)) {
+    console.log('[DEBUG] ✅ 跳过纠删码磁盘:', drive.drive);
+    return;
+  }
+
+  // ✅ 【新增】跳过已加入空间池的磁盘
+  if (this.poolStatus.is_configured && this.poolStatus.disks) {
+    const normalizedPoolDisks = this.poolStatus.disks.map(d =>
+      d.toUpperCase().replace(/\\/g, '/')
+    );
+    if (normalizedPoolDisks.includes(drive.drive)) {
+      console.log('[DEBUG] ✅ 跳过空间池磁盘:', drive.drive);
+      return;
     }
+  }
+
+  // ... 后面的代码不变
 
     const diskInfo = this.disks.find(d => d.mount === drive.drive);
     const driveLabel = drive.drive.replace(':/', '');
