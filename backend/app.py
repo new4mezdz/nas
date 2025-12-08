@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from functools import wraps
 from datetime import datetime, timedelta
-
+import tempfile
 # ===== Third-Party =====
 import jwt
 import psutil
@@ -427,6 +427,28 @@ def sso_login():
     except jwt.InvalidTokenError:
         return jsonify({'error': '无效的SSO令牌'}), 401
 
+
+# ==================== 池路径解析辅助函数 ====================
+def _is_pool_volume(path: str) -> bool:
+    """判断是否是空间池路径"""
+    return path.startswith('pool://')
+
+
+def _parse_pool_path(path: str):
+    """
+    解析池路径
+    :param path: "pool://movies/子目录/文件.mp4"
+    :return: (volume_name, subpath, filename)
+    """
+    path = path.replace("pool://", "").strip("/")
+    parts = path.split("/")
+
+    if len(parts) == 1:
+        return parts[0], "", ""
+    elif len(parts) == 2:
+        return parts[0], "", parts[1]
+    else:
+        return parts[0], "/".join(parts[1:-1]), parts[-1]
 
 @app.route('/api/system-stats', methods=['GET'])
 def get_system_stats():
@@ -1018,9 +1040,9 @@ def ec_batch_recover():
         "report": recovery_report
     })
 
+
 @app.route('/api/rename', methods=['POST'])
 @permission_required('readwrite')
-# 💡 修改函数名为 api_rename_entry
 def api_rename_entry():
     data = request.get_json()
     path = data.get('path')
@@ -1033,51 +1055,42 @@ def api_rename_entry():
 
     if '..' in new_name or '/' in new_name or '\\' in new_name:
         return jsonify({"error": "文件名包含非法字符"}), 400
-    # ✅ EC 卷重命名逻辑
+
+    # 1. EC 卷重命名
     if _is_ec_volume(path):
         try:
-            # 从路径中提取逻辑文件名
             logical_name = path.replace("\\", "/").strip("/")
             if logical_name.startswith("ec_volume/"):
                 logical_name = logical_name[len("ec_volume/"):]
 
-            # 读取索引
             idx = _load_json(EC_IDX_PATH, {"files": {}})
 
             if logical_name not in idx.get("files", {}):
                 return jsonify({"error": "EC卷文件不存在"}), 404
 
-            # 构建新的逻辑路径
             parent_dir = os.path.dirname(logical_name)
             new_logical_name = os.path.join(parent_dir, new_name).replace("\\", "/")
 
             if new_logical_name in idx.get("files", {}):
                 return jsonify({"error": "目标文件名已存在"}), 400
 
-            # 获取文件元数据
             file_meta = idx["files"][logical_name]
             disks = file_meta.get("disks", [])
             base_old_name = os.path.basename(logical_name)
 
-            # 在每个磁盘上重命名分片文件
             for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
                 enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
 
-                # 重命名 .blk_X 文件
                 old_blk = os.path.join(enc_dir, f"{base_old_name}.blk_{i}")
                 new_blk = os.path.join(enc_dir, f"{new_name}.blk_{i}")
-
                 if os.path.exists(old_blk):
                     os.rename(old_blk, new_blk)
 
-                # 重命名 .meta.json 文件
                 old_meta = os.path.join(enc_dir, f"{base_old_name}.meta.json")
                 new_meta = os.path.join(enc_dir, f"{new_name}.meta.json")
-
                 if os.path.exists(old_meta):
                     os.rename(old_meta, new_meta)
 
-            # 更新索引
             idx["files"][new_logical_name] = idx["files"].pop(logical_name)
             _save_json(EC_IDX_PATH, idx)
 
@@ -1086,7 +1099,49 @@ def api_rename_entry():
         except Exception as e:
             return jsonify({"error": f"EC卷重命名失败: {str(e)}"}), 500
 
-    # 2. 物理盘重命名
+    # 2. 空间池卷重命名
+    elif _is_pool_volume(path):
+        try:
+            import Storage_pool
+            volume, subpath, filename = _parse_pool_path(path)
+            if subpath:
+                virtual_path = f"{volume}/{subpath}/{filename}"
+            else:
+                virtual_path = f"{volume}/{filename}"
+
+            config = Storage_pool.load_config()
+
+            if virtual_path not in config.get("files", {}):
+                return jsonify({"error": "池卷文件不存在"}), 404
+
+            # 构建新的虚拟路径
+            if subpath:
+                new_virtual_path = f"{volume}/{subpath}/{new_name}"
+            else:
+                new_virtual_path = f"{volume}/{new_name}"
+
+            if new_virtual_path in config.get("files", {}):
+                return jsonify({"error": "目标文件名已存在"}), 400
+
+            # 获取物理路径并重命名
+            file_info = config["files"][virtual_path]
+            old_full_path = os.path.join(file_info["disk"], file_info["real_path"])
+            new_real_path = os.path.join(os.path.dirname(file_info["real_path"]), new_name)
+            new_full_path = os.path.join(file_info["disk"], new_real_path)
+
+            os.rename(old_full_path, new_full_path)
+
+            # 更新索引
+            config["files"][new_virtual_path] = config["files"].pop(virtual_path)
+            config["files"][new_virtual_path]["real_path"] = new_real_path
+            Storage_pool.save_config(config)
+
+            return jsonify({"success": True, "message": "池卷文件重命名成功"})
+
+        except Exception as e:
+            return jsonify({"error": f"池卷重命名失败: {str(e)}"}), 500
+
+    # 3. 物理盘重命名
     else:
         try:
             from common import get_actual_file_path, is_path_allowed
@@ -1118,25 +1173,21 @@ def delete_entry():
     if not path:
         return jsonify({'error': '缺少路径参数'}), 400
 
-    # 1. 优先处理 EC 卷删除
+    # 1. 处理 EC 卷删除
     if _is_ec_volume(path):
-        # EC 卷只允许删除文件，不允许删除目录
-        if path.endswith('/'):  # 简单的目录判断
+        if path.endswith('/'):
             return jsonify({"error": "EC卷暂不支持删除虚拟目录"}), 400
 
-        # 从索引中删除文件
         idx = _load_json(EC_IDX_PATH, {"files": {}})
         logical_name = path.replace("\\", "/").strip("/")
+        if logical_name.startswith("ec_volume/"):
+            logical_name = logical_name[len("ec_volume/"):]
 
         if logical_name in idx.get("files", {}):
-            # 记录磁盘位置
             disks_to_clean = idx["files"][logical_name]["disks"]
-
-            # 1. 从索引中移除
             del idx["files"][logical_name]
             _save_json(EC_IDX_PATH, idx)
 
-            # 2. 移除物理分片
             base = os.path.basename(logical_name)
             for disk in disks_to_clean:
                 enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
@@ -1148,7 +1199,22 @@ def delete_entry():
         else:
             return jsonify({"error": "EC卷文件不存在"}), 404
 
-    # 2. 物理盘删除
+    # 2. 处理空间池卷删除
+    elif _is_pool_volume(path):
+        try:
+            import Storage_pool
+            volume, subpath, filename = _parse_pool_path(path)
+            if subpath:
+                virtual_path = f"{volume}/{subpath}/{filename}"
+            else:
+                virtual_path = f"{volume}/{filename}"
+
+            Storage_pool.delete_file(virtual_path)
+            return jsonify({"success": True, "message": "池卷文件已删除"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # 3. 物理盘删除
     else:
         from common import get_actual_file_path, is_path_allowed
         actual_path = get_actual_file_path(path)
@@ -1178,58 +1244,59 @@ def batch_delete():
     errors = []
 
     for path in paths:
-        print(f"[DEBUG] 处理路径: {path}, 是否EC卷: {_is_ec_volume(path)}")
+        print(f"[DEBUG] 处理路径: {path}")
         try:
-            # 1. 先检查是否是纠删码卷文件
+            # 1. 处理纠删码卷文件
             if _is_ec_volume(path):
                 print(f"[DEBUG] 开始处理EC卷文件: {path}")
                 if path.endswith('/'):
                     errors.append(f"{path}: EC卷不支持删除目录")
-                    print(f"[DEBUG] 跳过目录: {path}")
                     continue
 
-                # 从索引中删除
                 idx = _load_json(EC_IDX_PATH, {"files": {}})
                 logical_name = path.replace("\\", "/").strip("/")
-
-                # 去掉 ec_volume/ 前缀
                 if logical_name.startswith("ec_volume/"):
                     logical_name = logical_name[len("ec_volume/"):]
 
-                print(f"[DEBUG] logical_name: {logical_name}")
-                print(f"[DEBUG] 索引中的文件列表: {list(idx.get('files', {}).keys())}")
-
                 if logical_name in idx.get("files", {}):
-                    print(f"[DEBUG] 在索引中找到文件: {logical_name}")
                     disks_to_clean = idx["files"][logical_name]["disks"]
                     del idx["files"][logical_name]
                     _save_json(EC_IDX_PATH, idx)
 
-                    # 删除物理分片
                     base = os.path.basename(logical_name)
                     for disk in disks_to_clean:
                         enc_dir = os.path.join(disk, "encoded", os.path.dirname(logical_name))
                         for file_ext in [f"{base}.blk_*", f"{base}.meta.json"]:
                             for f in glob.glob(os.path.join(enc_dir, file_ext)):
-                                print(f"[DEBUG] 删除分片: {f}")
                                 os.remove(f)
-                    print(f"[DEBUG] EC卷文件删除成功: {logical_name}")
                 else:
-                    print(f"[DEBUG] 索引中未找到文件: {logical_name}")
                     errors.append(f"{path}: EC卷文件不存在")
+
+            # 2. 处理空间池卷文件
+            elif _is_pool_volume(path):
+                try:
+                    import Storage_pool
+                    volume, subpath, filename = _parse_pool_path(path)
+                    if subpath:
+                        virtual_path = f"{volume}/{subpath}/{filename}"
+                    else:
+                        virtual_path = f"{volume}/{filename}"
+
+                    Storage_pool.delete_file(virtual_path)
+                    print(f"[DEBUG] 池卷文件删除成功: {virtual_path}")
+                except Exception as e:
+                    errors.append(f"{path}: {str(e)}")
+
+            # 3. 处理物理盘文件
             else:
-                # 处理非EC卷文件(物理盘文件)
                 print(f"[DEBUG] 处理物理盘文件: {path}")
                 actual_path = path.replace('/', '\\') if os.name == 'nt' else path
 
                 if os.path.isfile(actual_path):
                     os.remove(actual_path)
-                    print(f"[DEBUG] 文件删除成功: {actual_path}")
                 elif os.path.isdir(actual_path):
                     shutil.rmtree(actual_path)
-                    print(f"[DEBUG] 目录删除成功: {actual_path}")
                 else:
-                    print(f"[DEBUG] 路径不存在: {actual_path}")
                     errors.append(f"{path}: 文件不存在")
 
         except Exception as e:
@@ -1340,23 +1407,55 @@ def preview_file():
 @permission_required('readwrite')
 def mkdir():
     data = request.get_json()
+
+    # 兼容两种调用方式
+    path = data.get('path', '')
     parent = data.get('parent', '')
     name = data.get('name', '').strip()
-    if not name: return jsonify({'error': '文件夹名不能为空'}), 400
-    if not parent: return jsonify({'error': '父路径不能为空'}), 400
 
-    # --- 分支 1: 处理纠删码卷 (虚拟创建) ---
-    if _is_ec_volume(parent):
+    # 如果是用 path 方式调用（前端当前方式）
+    if path and not parent:
+        path = path.replace("\\", "/").rstrip("/")
+        parent = os.path.dirname(path)
+        name = os.path.basename(path)
+
+    if not name:
+        return jsonify({'error': '文件夹名不能为空'}), 400
+
+    # --- 分支 1: 处理纠删码卷 ---
+    if _is_ec_volume(parent) or _is_ec_volume(path):
         return jsonify({'success': True, 'message': '虚拟目录将在上传文件后自动体现'})
 
-    # --- 分支 2: 处理物理硬盘 ---
+    # --- 分支 2: 处理空间池卷 ---
+    elif _is_pool_volume(parent) or _is_pool_volume(path):
+        try:
+            import Storage_pool
+            # 解析路径
+            full_path = path if path else f"{parent}/{name}"
+            volume, subpath, folder_name = _parse_pool_path(full_path)
+
+            # 如果 folder_name 为空，说明是创建一级目录
+            if not folder_name:
+                folder_name = subpath
+                subpath = ""
+
+            Storage_pool.create_folder(volume, subpath, folder_name)
+            return jsonify({'success': True, 'message': '文件夹创建成功'})
+        except Exception as e:
+            return jsonify({'error': f'创建失败: {str(e)}'}), 500
+
+    # --- 分支 3: 处理物理硬盘 ---
     else:
         try:
-            parent_abs_path = os.path.abspath(parent)
-            new_dir_abs_path = os.path.join(parent_abs_path, name)
+            if path:
+                new_dir_abs_path = os.path.abspath(path)
+            else:
+                parent_abs_path = os.path.abspath(parent)
+                new_dir_abs_path = os.path.join(parent_abs_path, name)
+
             allowed = False
             for base_dir in get_available_drives():
-                if parent_abs_path.upper().startswith(os.path.abspath(base_dir).upper()):
+                if new_dir_abs_path.upper().startswith(os.path.abspath(base_dir).upper()):
                     allowed = True
                     break
             if not allowed:
@@ -1367,8 +1466,6 @@ def mkdir():
             return jsonify({'error': '文件夹已存在'}), 400
         except Exception as e:
             return jsonify({'error': '创建失败: ' + str(e)}), 500
-
-# app.py -> 替换 @app.route('/api/share', methods=['POST'])
 
 @app.route('/api/ec_status', methods=['GET'])
 @permission_required('fullcontrol')
@@ -1688,6 +1785,7 @@ def ec_recover_disk():
         "failed_files": failed_files
     })
 
+
 @app.route('/api/share', methods=['POST'])
 @permission_required('readonly')
 def create_share():
@@ -1696,31 +1794,43 @@ def create_share():
     expire_hours = int(data.get('expire_hours', 24))
     password = data.get('password', '')
 
-    # [✅ 核心修正区域]
     file_exists = False
-    # --- 分支 1: 检查纠删码卷文件是否存在 ---
+
+    # --- 分支 1: 检查纠删码卷文件 ---
     if _is_ec_volume(file_path):
-        # 从 "ec_volume/path/to/file.jpg" 提取 "path/to/file.jpg"
         logical_name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
         if logical_name:
             idx = _load_json(EC_IDX_PATH, {"files": {}})
-            # 在索引中检查文件是否存在
             if logical_name in idx.get("files", {}):
                 file_exists = True
 
-    # --- 分支 2: 检查物理硬盘文件是否存在 ---
+    # --- 分支 2: 检查空间池卷文件 ---
+    elif _is_pool_volume(file_path):
+        try:
+            import Storage_pool
+            volume, subpath, filename = _parse_pool_path(file_path)
+            if subpath:
+                virtual_path = f"{volume}/{subpath}/{filename}"
+            else:
+                virtual_path = f"{volume}/{filename}"
+
+            actual_path = Storage_pool.get_file_path(virtual_path)
+            if actual_path and os.path.exists(actual_path):
+                file_exists = True
+        except:
+            pass
+
+    # --- 分支 3: 检查物理硬盘文件 ---
     else:
-        # 使用我们已有的、更可靠的函数来获取和验证物理路径
         from common import get_actual_file_path, is_path_allowed
         actual_path = get_actual_file_path(file_path)
         if actual_path and is_path_allowed(actual_path) and os.path.exists(actual_path):
             file_exists = True
 
-    # --- 统一处理 ---
     if not file_exists:
         return jsonify({'error': '文件不存在'}), 404
 
-    # 文件验证通过，继续创建分享链接
+    # 文件验证通过，创建分享链接
     token = secrets.token_urlsafe(16)
     expire_at = datetime.now() + timedelta(hours=expire_hours)
     db = get_db()
@@ -1730,25 +1840,19 @@ def create_share():
     )
     db.commit()
 
-    # [✅ 修改后的代码]
-
-    # 检查公网URL是否已获取
     if not NAS_CENTER_PUBLIC_URL:
         return jsonify({
             'success': False,
             'error': '无法生成公网分享链接，管理端公网地址未配置或获取失败。'
         }), 503
 
-    # 使用新的配置变量拼接一个指向管理端的公网URL
-    # 格式为: [管理端公网URL]/share/[节点ID]/[本地Token]
     public_share_url = f"{NAS_CENTER_PUBLIC_URL}/share/{THIS_NODE_ID}/{token}"
 
     return jsonify({
         'success': True,
-        'share_url': f'/share/{token}',  # 本地路径(主要用于调试)
-        'full_url': public_share_url  # [✅ 关键] 这是返回给用户的公网分享链接
+        'share_url': f'/share/{token}',
+        'full_url': public_share_url
     })
-
 
 @app.route('/api/initialize', methods=['POST'])
 def initialize():
@@ -2390,8 +2494,6 @@ def upload_file_with_ec():
 
     # 分支 1: 邏輯盤：自動 RS (保持不變)
     if _is_ec_volume(upload_path):
-        # ... (這部分的 EC 邏輯和您原來的一樣，無需改動) ...
-        # ... (為節省篇幅，此處省略，請保留您原有的EC上傳程式碼) ...
         ec_cfg = _load_json(EC_CFG_PATH, {})
         if not ec_cfg or ec_cfg.get("scheme", "").lower() != "rs": return jsonify(
             {'error': '未配置或未啟用RS糾刪碼'}), 400
@@ -2422,7 +2524,30 @@ def upload_file_with_ec():
             _save_json(EC_IDX_PATH, idx)
         return jsonify({'success': True, 'message': f'{len(uploaded_files)}個文件已寫入邏輯盤並完成RS編碼'})
 
-    # 分支 2: 物理磁碟：整合加密邏輯
+    # 分支 2: 空间池卷
+    elif upload_path.startswith('pool://'):
+        try:
+            import Storage_pool
+            # pool://volume_name/subpath -> volume_name, subpath
+            path_part = upload_path[7:]  # 去掉 "pool://"
+            parts = path_part.split('/', 1)
+            volume = parts[0]
+            subpath = parts[1] if len(parts) > 1 else ''
+
+            for uploaded_file in uploaded_files:
+                file_data = uploaded_file.read()
+                try:
+                    Storage_pool.add_file(volume, subpath, uploaded_file.filename, file_data)
+                except Exception as e:
+                    return jsonify({'error': str(e)}), 500
+
+            return jsonify({'success': True, 'message': f'{len(uploaded_files)}個文件已上傳到池卷'})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'池卷上傳失敗: {e}'}), 500
+
+    # 分支 3: 物理磁碟：整合加密邏輯
     else:
         try:
             drive, _ = os.path.splitdrive(upload_path)
@@ -2442,21 +2567,15 @@ def upload_file_with_ec():
                 if not os.path.abspath(target_path).upper().startswith(drive):
                     return jsonify({'error': f'非法的最終文件路徑: {target_path}'}), 403
 
-                # [✅ 核心修正]
-                # 1. 先將文件完整讀入記憶體
                 data_bytes = uploaded_file.read()
 
-                # 2. 判斷是否需要加密
                 if encryption_manager.is_path_encrypted(target_path):
                     try:
-                        # 如果是加密盤，則通過加密管理器寫入
                         encryption_manager.write_encrypted_file(target_path, data_bytes)
                         print(f"DEBUG: 已將 {filename} 加密寫入到 {target_path}")
                     except NotUnlockedError as e:
-                        # 捕獲“未解鎖”的特定異常
                         return jsonify({'error': str(e)}), 403
                 else:
-                    # 如果不是加密盤，則正常寫入
                     with open(target_path, "wb") as f:
                         f.write(data_bytes)
 
@@ -2465,7 +2584,6 @@ def upload_file_with_ec():
             import traceback
             traceback.print_exc()
             return jsonify({'error': f'處理上傳時發生嚴重錯誤: {e}'}), 500
-
 # ===== [最终修复 1/3] 重写 list_files 函数 =====
 @app.route('/api/list', methods=['GET'])
 @permission_required('readonly')
@@ -2601,7 +2719,7 @@ def api_search():
 
 # 文件: app.py -> @app.route("/api/download", methods=["GET"])
 
-# app.py -> 完整替換 @app.route("/api/download", ...)
+
 
 @app.route("/api/download", methods=["GET"])
 @permission_required('readonly')
@@ -2610,7 +2728,7 @@ def api_download():
     if not file_path:
         return jsonify({"error": "缺少 path 參數"}), 400
 
-    # --- 分支 1: 處理糾刪碼卷 (邏輯保持不變) ---
+    # --- 分支 1: 處理糾刪碼卷 ---
     if _is_ec_volume(file_path):
         name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
         if not name: return jsonify({"error": "無效的邏輯盤文件路徑"}), 400
@@ -2636,7 +2754,26 @@ def api_download():
             return jsonify({"error": "數據完整性校驗失敗"}), 500
         return send_file(io.BytesIO(data), as_attachment=True, download_name=os.path.basename(name))
 
-    # --- 分支 2: 處理物理磁碟 (✅ 整合加密邏輯) ---
+    # --- 分支 2: 處理空間池卷 ---
+    elif _is_pool_volume(file_path):
+        try:
+            import Storage_pool
+            volume, subpath, filename = _parse_pool_path(file_path)
+            if subpath:
+                virtual_path = f"{volume}/{subpath}/{filename}"
+            else:
+                virtual_path = f"{volume}/{filename}"
+
+            actual_path = Storage_pool.get_file_path(virtual_path)
+
+            if not actual_path or not os.path.exists(actual_path):
+                return jsonify({"error": "文件不存在"}), 404
+
+            return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
+        except Exception as e:
+            return jsonify({"error": f"下載失敗: {e}"}), 500
+
+    # --- 分支 3: 處理物理磁碟 ---
     else:
         try:
             from common import get_actual_file_path, is_path_allowed
@@ -2647,12 +2784,9 @@ def api_download():
             if not is_path_allowed(actual_path):
                 return jsonify({"error": "不允許訪問該路徑"}), 403
 
-            # [✅ 加密邏輯整合]
             if encryption_manager.is_path_encrypted(actual_path):
                 try:
-                    # 從加密層讀取並解密文件
                     decrypted_data = encryption_manager.read_encrypted_file(actual_path)
-                    # 將解密後的數據作為內存文件發送
                     return send_file(io.BytesIO(decrypted_data), as_attachment=True,
                                      download_name=os.path.basename(actual_path))
                 except NotUnlockedError as e:
@@ -2660,7 +2794,6 @@ def api_download():
                 except Exception as e:
                     return jsonify({'error': f'文件解密失敗: {e}'}), 500
             else:
-                # 非加密盤，沿用舊邏輯，正常下載
                 return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
 
         except Exception as e:
@@ -2864,25 +2997,29 @@ def fetch_nas_center_config():
 
 
 @app.route('/api/move', methods=['POST'])
-@permission_required('readwrite') # 'cut' 是一种写入操作
+@permission_required('readwrite')
 def move_entry():
-    """[新增] 移动文件或文件夹 (剪切-粘贴)"""
+    """移动文件或文件夹 (剪切-粘贴)"""
     data = request.get_json()
     source_full_path = data.get('source_path')
-    target_full_path = data.get('target_path') # 包含新文件名的完整目标路径
+    target_full_path = data.get('target_path')
 
     if not source_full_path or not target_full_path:
         return jsonify({"error": "参数缺失"}), 400
 
-    # --- 分支 1: EC 卷移动 (逻辑重命名) ---
-    if _is_ec_volume(source_full_path):
+    source_is_ec = _is_ec_volume(source_full_path)
+    source_is_pool = _is_pool_volume(source_full_path)
+    target_is_ec = _is_ec_volume(target_full_path)
+    target_is_pool = _is_pool_volume(target_full_path)
+
+    # --- 分支 1: EC 卷内部移动 ---
+    if source_is_ec and target_is_ec:
         try:
-            # 提取逻辑路径
             source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
             target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
 
             if not source_logical or not target_logical:
-                 return jsonify({"error": "EC 逻辑路径无效"}), 400
+                return jsonify({"error": "EC 逻辑路径无效"}), 400
 
             idx = _load_json(EC_IDX_PATH, {"files": {}})
             if source_logical not in idx.get("files", {}):
@@ -2895,25 +3032,21 @@ def move_entry():
             base_old_name = os.path.basename(source_logical)
             base_new_name = os.path.basename(target_logical)
 
-            # 在所有物理磁盘上移动(重命名)分片
             for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
                 old_enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
                 new_enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
-                os.makedirs(new_enc_dir, exist_ok=True) # 确保目标目录存在
+                os.makedirs(new_enc_dir, exist_ok=True)
 
-                # 移动 .blk 文件
                 old_blk = os.path.join(old_enc_dir, f"{base_old_name}.blk_{i}")
                 new_blk = os.path.join(new_enc_dir, f"{base_new_name}.blk_{i}")
                 if os.path.exists(old_blk):
                     os.rename(old_blk, new_blk)
 
-                # 移动 .meta 文件
                 old_meta = os.path.join(old_enc_dir, f"{base_old_name}.meta.json")
                 new_meta = os.path.join(new_enc_dir, f"{base_new_name}.meta.json")
                 if os.path.exists(old_meta):
                     os.rename(old_meta, new_meta)
 
-            # 更新索引
             idx["files"][target_logical] = idx["files"].pop(source_logical)
             _save_json(EC_IDX_PATH, idx)
 
@@ -2921,21 +3054,80 @@ def move_entry():
         except Exception as e:
             return jsonify({"error": f"EC文件移动失败: {str(e)}"}), 500
 
-    # --- 分支 2: 物理磁盘移动 ---
+    # --- 分支 2: 空间池卷内部移动 ---
+    elif source_is_pool and target_is_pool:
+        try:
+            import Storage_pool
+
+            # 解析源路径
+            src_volume, src_subpath, src_filename = _parse_pool_path(source_full_path)
+            if src_subpath:
+                src_virtual = f"{src_volume}/{src_subpath}/{src_filename}"
+            else:
+                src_virtual = f"{src_volume}/{src_filename}"
+
+            # 解析目标路径
+            tgt_volume, tgt_subpath, tgt_filename = _parse_pool_path(target_full_path)
+            if tgt_subpath:
+                tgt_virtual = f"{tgt_volume}/{tgt_subpath}/{tgt_filename}"
+            else:
+                tgt_virtual = f"{tgt_volume}/{tgt_filename}"
+
+            config = Storage_pool.load_config()
+
+            if src_virtual not in config.get("files", {}):
+                return jsonify({"error": "源文件不存在"}), 404
+            if tgt_virtual in config.get("files", {}):
+                return jsonify({"error": "目标文件已存在"}), 400
+
+            # 获取源文件信息
+            file_info = config["files"][src_virtual]
+            old_full_path = os.path.join(file_info["disk"], file_info["real_path"])
+
+            # 构建新的物理路径
+            if tgt_subpath:
+                new_real_path = f".pool/{tgt_volume}/{tgt_subpath}/{tgt_filename}"
+            else:
+                new_real_path = f".pool/{tgt_volume}/{tgt_filename}"
+            new_full_path = os.path.join(file_info["disk"], new_real_path)
+
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(new_full_path), exist_ok=True)
+
+            # 移动文件
+            os.rename(old_full_path, new_full_path)
+
+            # 更新索引
+            config["files"][tgt_virtual] = {
+                "disk": file_info["disk"],
+                "real_path": new_real_path,
+                "size": file_info["size"],
+                "mtime": int(time.time())
+            }
+            del config["files"][src_virtual]
+            Storage_pool.save_config(config)
+
+            return jsonify({"success": True, "message": "池卷文件移动成功"})
+        except Exception as e:
+            return jsonify({"error": f"池卷文件移动失败: {str(e)}"}), 500
+
+    # --- 分支 3: 跨卷移动暂不支持 ---
+    elif source_is_ec or target_is_ec or source_is_pool or target_is_pool:
+        return jsonify({"error": "暂不支持跨卷类型移动，请使用复制后删除"}), 400
+
+    # --- 分支 4: 物理磁盘移动 ---
     else:
         try:
             from common import get_actual_file_path, is_path_allowed, get_base_dir_for_path
             source_actual = get_actual_file_path(source_full_path)
 
-            # 安全地构建目标路径
             target_drive = os.path.splitdrive(target_full_path)[0]
-            target_base_dir = get_base_dir_for_path(target_drive) # 获取 D:/
+            target_base_dir = get_base_dir_for_path(target_drive)
             if not target_base_dir:
-                 return jsonify({"error": "目标路径无效"}), 403
+                return jsonify({"error": "目标路径无效"}), 403
 
             target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
             target_actual = os.path.join(target_base_dir, target_rel_path)
-
 
             if not source_actual or not os.path.exists(source_actual):
                 return jsonify({"error": "源文件不存在"}), 404
@@ -2944,11 +3136,12 @@ def move_entry():
             if os.path.exists(target_actual):
                 return jsonify({"error": "目标文件已存在"}), 400
 
-            os.rename(source_actual, target_actual) # os.rename 在同盘符是重命名，跨盘符是移动
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(target_actual), exist_ok=True)
+            os.rename(source_actual, target_actual)
             return jsonify({"success": True})
         except Exception as e:
             return jsonify({"error": f"移动失败: {str(e)}"}), 500
-
 
 @app.route('/api/copy', methods=['POST'])
 @permission_required('readwrite')
@@ -2962,156 +3155,199 @@ def copy_entry():
         return jsonify({"error": "参数缺失"}), 400
 
     source_is_ec = _is_ec_volume(source_full_path)
+    source_is_pool = _is_pool_volume(source_full_path)
     target_is_ec = _is_ec_volume(target_full_path)
+    target_is_pool = _is_pool_volume(target_full_path)
 
-    # ===== 分支 0: 跨卷复制 (EC → 物理盘 或 物理盘 → EC) =====
-    if source_is_ec != target_is_ec:
-        try:
-            # Case A: EC → 物理盘 (导出)
-            if source_is_ec and not target_is_ec:
-                # 1. 从EC卷读取文件（解码）
-                source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
-                idx = _load_json(EC_IDX_PATH, {"files": {}})
+    # ==================== 辅助函数：读取源文件 ====================
+    def read_source_data():
+        """读取源文件数据，返回 (data, filename) 或抛出异常"""
+        # 从 EC 卷读取
+        if source_is_ec:
+            source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+            idx = _load_json(EC_IDX_PATH, {"files": {}})
 
-                if source_logical not in idx.get("files", {}):
-                    return jsonify({"error": "EC源文件不存在"}), 404
+            if source_logical not in idx.get("files", {}):
+                raise Exception("EC源文件不存在")
 
-                meta = idx["files"][source_logical]
-                k, m = meta["k"], meta["m"]
-                disks = meta.get("disks", [])
+            meta = idx["files"][source_logical]
+            k, m = meta["k"], meta["m"]
+            disks = meta.get("disks", [])
 
-                # 读取分片
-                shard_dict = {}
-                for i, disk in enumerate(disks[:k + m]):
-                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
-                    blk_path = os.path.join(enc_dir, f"{os.path.basename(source_logical)}.blk_{i}")
-                    if os.path.exists(blk_path):
-                        with open(blk_path, "rb") as f:
-                            shard_dict[i] = f.read()
+            shard_dict = {}
+            for i, disk in enumerate(disks[:k + m]):
+                enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
+                blk_path = os.path.join(enc_dir, f"{os.path.basename(source_logical)}.blk_{i}")
+                if os.path.exists(blk_path):
+                    with open(blk_path, "rb") as f:
+                        shard_dict[i] = f.read()
 
-                # 解码文件
-                if len(shard_dict) < k:
-                    return jsonify({"error": "分片不足，无法恢复文件"}), 500
+            if len(shard_dict) < k:
+                raise Exception("分片不足，无法恢复文件")
 
-                decoded_data = _decode_from_dict(shard_dict, meta)
+            decoded_data = _decode_from_dict(shard_dict, meta)
 
-                # 2. 解密（如果有加密）
-                if encryption_manager.is_file_encrypted(source_logical):
-                    try:
-                        decoded_data = encryption_manager.decrypt_data(decoded_data)
-                    except NotUnlockedError:
-                        return jsonify({"error": "磁盘已锁定", "error_type": "disk_locked"}), 403
+            if encryption_manager.is_file_encrypted(source_logical):
+                try:
+                    decoded_data = encryption_manager.decrypt_data(decoded_data)
+                except NotUnlockedError:
+                    raise Exception("磁盘已锁定")
 
-                # 3. 写入物理磁盘
-                from common import get_base_dir_for_path, is_path_allowed
-                target_drive = os.path.splitdrive(target_full_path)[0]
-                target_base_dir = get_base_dir_for_path(target_drive)
-                if not target_base_dir:
-                    return jsonify({"error": "目标路径无效"}), 403
+            return decoded_data, os.path.basename(source_logical)
 
-                target_rel_path = target_full_path.replace(target_drive, "").lstrip("/\\")
-                target_actual = os.path.join(target_base_dir, target_rel_path)
+        # 从空间池卷读取
+        elif source_is_pool:
+            import Storage_pool
+            src_volume, src_subpath, src_filename = _parse_pool_path(source_full_path)
+            if src_subpath:
+                src_virtual = f"{src_volume}/{src_subpath}/{src_filename}"
+            else:
+                src_virtual = f"{src_volume}/{src_filename}"
 
-                if not is_path_allowed(target_actual):
-                    return jsonify({"error": "目标路径不在允许的目录中"}), 403
+            actual_path = Storage_pool.get_file_path(src_virtual)
+            if not actual_path or not os.path.exists(actual_path):
+                raise Exception("池卷源文件不存在")
 
-                if os.path.exists(target_actual):
-                    return jsonify({"error": "目标文件已存在"}), 400
+            with open(actual_path, "rb") as f:
+                return f.read(), src_filename
 
-                # 确保目标目录存在
-                os.makedirs(os.path.dirname(target_actual), exist_ok=True)
+        # 从物理盘读取
+        else:
+            from common import get_actual_file_path, is_path_allowed
+            source_actual = get_actual_file_path(source_full_path)
 
-                # 写入文件
-                with open(target_actual, "wb") as f:
-                    f.write(decoded_data)
+            if not source_actual or not os.path.exists(source_actual):
+                raise Exception("源文件不存在")
+            if not is_path_allowed(source_actual):
+                raise Exception("源路径不在允许的目录中")
+            if os.path.isdir(source_actual):
+                raise Exception("暂不支持复制文件夹到其他卷类型")
 
-                return jsonify({"success": True, "message": "文件已从EC卷导出到物理磁盘"})
-
-            # Case B: 物理盘 → EC (导入)
-            elif not source_is_ec and target_is_ec:
-                from common import get_actual_file_path, is_path_allowed
-
-                # 1. 读取物理磁盘文件
-                source_actual = get_actual_file_path(source_full_path)
-                if not source_actual or not os.path.exists(source_actual):
-                    return jsonify({"error": "源文件不存在"}), 404
-
-                if not is_path_allowed(source_actual):
-                    return jsonify({"error": "源路径不在允许的目录中"}), 403
-
-                if os.path.isdir(source_actual):
-                    return jsonify({"error": "暂不支持导入文件夹到EC卷"}), 400
-
+            if encryption_manager.is_path_encrypted(source_actual):
+                try:
+                    file_data = encryption_manager.read_encrypted_file(source_actual)
+                except NotUnlockedError:
+                    raise Exception("磁盘已锁定")
+            else:
                 with open(source_actual, "rb") as f:
                     file_data = f.read()
 
-                # 2. 加密（如果需要）
-                # 根据你的加密策略决定是否加密
-                # 这里暂时不加密，如果需要可以调用 encryption_manager.encrypt_data()
+            return file_data, os.path.basename(source_actual)
 
-                # 3. 编码并写入EC卷
-                target_logical = target_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+    # ==================== 辅助函数：写入目标 ====================
+    def write_to_ec(file_data, target_path):
+        """写入到 EC 卷"""
+        target_logical = target_path.replace("\\", "/").strip("/").split("/", 1)[-1]
 
-                # 检查目标文件是否已存在
-                idx = _load_json(EC_IDX_PATH, {"files": {}})
-                if target_logical in idx.get("files", {}):
-                    return jsonify({"error": "EC目标文件已存在"}), 400
+        idx = _load_json(EC_IDX_PATH, {"files": {}})
+        if target_logical in idx.get("files", {}):
+            raise Exception("EC目标文件已存在")
 
-                # 读取EC配置
-                cfg = _load_json(EC_CFG_PATH, {})
-                if not cfg:
-                    return jsonify({"error": "纠删码未配置"}), 400
+        cfg = _load_json(EC_CFG_PATH, {})
+        if not cfg:
+            raise Exception("纠删码未配置")
 
-                k, m = cfg.get("k", 0), cfg.get("m", 0)
-                disks = cfg.get("disks", [])
+        k, m = cfg.get("k", 0), cfg.get("m", 0)
+        disks = cfg.get("disks", [])
 
-                if not disks or k <= 0 or m <= 0:
-                    return jsonify({"error": "纠删码配置无效"}), 400
+        if not disks or k <= 0 or m <= 0:
+            raise Exception("纠删码配置无效")
 
-                # 编码
-                shards = rs_encode(file_data, k, m)
+        shards = rs_encode(file_data, k, m)
+        file_sha = hashlib.sha256(file_data).hexdigest()
 
-                # 写入分片
-                for i, disk in enumerate(disks[:k + m]):
-                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
-                    os.makedirs(enc_dir, exist_ok=True)
-                    blk_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.blk_{i}")
-                    with open(blk_path, "wb") as f:
-                        f.write(shards[i])
+        for i, disk in enumerate(disks[:k + m]):
+            enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
+            os.makedirs(enc_dir, exist_ok=True)
+            blk_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.blk_{i}")
+            with open(blk_path, "wb") as f:
+                f.write(shards[i])
 
-                    # 同时写入元数据文件
-                    meta_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.meta.json")
-                    meta_data = {
-                        "k": k,
-                        "m": m,
-                        "size": len(file_data),
-                        "original_size": len(file_data),
-                        "shard_size": (len(file_data) + k - 1) // k
-                    }
-                    with open(meta_path, "w", encoding="utf-8") as mf:
-                        json.dump(meta_data, mf)
+            meta_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.meta.json")
+            meta_data = {
+                "k": k, "m": m,
+                "size": len(file_data),
+                "original_size": len(file_data),
+                "shard_size": (len(file_data) + k - 1) // k,
+                "sha256": file_sha
+            }
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump(meta_data, mf)
 
-                # 更新索引
-                idx["files"][target_logical] = {
-                    "k": k,
-                    "m": m,
-                    "size": len(file_data),
-                    "original_size": len(file_data),
-                    "shard_size": (len(file_data) + k - 1) // k,
-                    "disks": disks[:k + m],
-                    "ctime": int(time.time()),
-                    "mtime": int(time.time())
-                }
-                _save_json(EC_IDX_PATH, idx)
+        idx["files"][target_logical] = {
+            "k": k, "m": m,
+            "size": len(file_data),
+            "original_size": len(file_data),
+            "shard_size": (len(file_data) + k - 1) // k,
+            "sha256": file_sha,
+            "disks": disks[:k + m],
+            "ctime": int(time.time()),
+            "mtime": int(time.time())
+        }
+        _save_json(EC_IDX_PATH, idx)
 
-                return jsonify({"success": True, "message": "文件已从物理磁盘导入到EC卷"})
+    def write_to_pool(file_data, target_path):
+        """写入到空间池卷"""
+        import Storage_pool
+        tgt_volume, tgt_subpath, tgt_filename = _parse_pool_path(target_path)
+        Storage_pool.add_file(tgt_volume, tgt_subpath, tgt_filename, file_data)
+
+    def write_to_physical(file_data, target_path):
+        """写入到物理盘"""
+        from common import get_base_dir_for_path, is_path_allowed
+
+        target_drive = os.path.splitdrive(target_path)[0]
+        target_base_dir = get_base_dir_for_path(target_drive)
+        if not target_base_dir:
+            raise Exception("目标路径无效")
+
+        target_rel_path = target_path.replace(target_drive, "").lstrip("/\\")
+        target_actual = os.path.join(target_base_dir, target_rel_path)
+
+        if not is_path_allowed(target_actual):
+            raise Exception("目标路径不在允许的目录中")
+        if os.path.exists(target_actual):
+            raise Exception("目标文件已存在")
+
+        os.makedirs(os.path.dirname(target_actual), exist_ok=True)
+
+        if encryption_manager.is_path_encrypted(target_actual):
+            try:
+                encryption_manager.write_encrypted_file(target_actual, file_data)
+            except NotUnlockedError:
+                raise Exception("目标磁盘已锁定")
+        else:
+            with open(target_actual, "wb") as f:
+                f.write(file_data)
+
+    # ==================== 跨卷复制逻辑 ====================
+    # 判断是否跨卷
+    source_type = 'ec' if source_is_ec else ('pool' if source_is_pool else 'physical')
+    target_type = 'ec' if target_is_ec else ('pool' if target_is_pool else 'physical')
+
+    if source_type != target_type:
+        # 跨卷复制：读取源 → 写入目标
+        try:
+            file_data, filename = read_source_data()
+
+            if target_is_ec:
+                write_to_ec(file_data, target_full_path)
+                return jsonify({"success": True, "message": "文件已复制到EC卷"})
+            elif target_is_pool:
+                write_to_pool(file_data, target_full_path)
+                return jsonify({"success": True, "message": "文件已复制到池卷"})
+            else:
+                write_to_physical(file_data, target_full_path)
+                return jsonify({"success": True, "message": "文件已复制到物理磁盘"})
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return jsonify({"error": f"跨卷复制失败: {str(e)}"}), 500
 
-    # --- 分支 1: EC 卷内部复制 (复制分片和索引) ---
+    # ==================== 同类型卷内部复制 ====================
+
+    # --- EC 卷内部复制 ---
     if source_is_ec:
         try:
             source_logical = source_full_path.replace("\\", "/").strip("/").split("/", 1)[-1]
@@ -3126,12 +3362,11 @@ def copy_entry():
             if target_logical in idx.get("files", {}):
                 return jsonify({"error": "EC目标文件已存在"}), 400
 
-            file_meta = idx["files"][source_logical].copy()  # 复制元数据
+            file_meta = idx["files"][source_logical].copy()
             disks = file_meta.get("disks", [])
             base_old_name = os.path.basename(source_logical)
             base_new_name = os.path.basename(target_logical)
 
-            # 复制所有物理分片
             for i, disk in enumerate(disks[:file_meta["k"] + file_meta["m"]]):
                 old_enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
                 new_enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
@@ -3147,8 +3382,7 @@ def copy_entry():
                 if os.path.exists(old_meta):
                     shutil.copy2(old_meta, new_meta)
 
-            # 更新索引
-            file_meta['ctime'] = int(time.time())  # 更新创建时间
+            file_meta['ctime'] = int(time.time())
             idx["files"][target_logical] = file_meta
             _save_json(EC_IDX_PATH, idx)
 
@@ -3158,7 +3392,48 @@ def copy_entry():
             traceback.print_exc()
             return jsonify({"error": f"EC文件复制失败: {str(e)}"}), 500
 
-    # --- 分支 2: 物理磁盘复制 ---
+    # --- 空间池卷内部复制 ---
+    elif source_is_pool:
+        try:
+            import Storage_pool
+
+            src_volume, src_subpath, src_filename = _parse_pool_path(source_full_path)
+            tgt_volume, tgt_subpath, tgt_filename = _parse_pool_path(target_full_path)
+
+            if src_subpath:
+                src_virtual = f"{src_volume}/{src_subpath}/{src_filename}"
+            else:
+                src_virtual = f"{src_volume}/{src_filename}"
+
+            if tgt_subpath:
+                tgt_virtual = f"{tgt_volume}/{tgt_subpath}/{tgt_filename}"
+            else:
+                tgt_virtual = f"{tgt_volume}/{tgt_filename}"
+
+            config = Storage_pool.load_config()
+
+            if src_virtual not in config.get("files", {}):
+                return jsonify({"error": "池卷源文件不存在"}), 404
+            if tgt_virtual in config.get("files", {}):
+                return jsonify({"error": "池卷目标文件已存在"}), 400
+
+            # 读取源文件
+            src_info = config["files"][src_virtual]
+            src_full_path = os.path.join(src_info["disk"], src_info["real_path"])
+
+            with open(src_full_path, "rb") as f:
+                file_data = f.read()
+
+            # 写入目标（使用 add_file 会自动选择磁盘）
+            Storage_pool.add_file(tgt_volume, tgt_subpath, tgt_filename, file_data)
+
+            return jsonify({"success": True, "message": "池卷文件复制成功"})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"池卷文件复制失败: {str(e)}"}), 500
+
+    # --- 物理磁盘复制 ---
     else:
         try:
             from common import get_actual_file_path, is_path_allowed, get_base_dir_for_path
@@ -3179,7 +3454,6 @@ def copy_entry():
             if os.path.exists(target_actual):
                 return jsonify({"error": "目标文件已存在"}), 400
 
-            # 使用 shutil.copy2 (文件) 或 shutil.copytree (目录)
             if os.path.isdir(source_actual):
                 shutil.copytree(source_actual, target_actual)
             else:
@@ -3191,116 +3465,6 @@ def copy_entry():
             import traceback
             traceback.print_exc()
             return jsonify({"error": f"复制失败: {str(e)}"}), 500
-
-        def _export_from_ec_to_physical(ec_path, physical_path):
-            """从纠删码卷导出文件到物理磁盘"""
-            # 1. 从EC卷读取文件（解码）
-            source_logical = ec_path.replace("\\", "/").strip("/").split("/", 1)[-1]
-            idx = _load_json(EC_IDX_PATH, {"files": {}})
-
-            if source_logical not in idx.get("files", {}):
-                return jsonify({"error": "EC源文件不存在"}), 404
-
-            meta = idx["files"][source_logical]
-            k, m = meta["k"], meta["m"]
-            disks = meta.get("disks", [])
-
-            # 读取分片
-            shard_dict = {}
-            for i, disk in enumerate(disks[:k + m]):
-                enc_dir = os.path.join(disk, "encoded", os.path.dirname(source_logical))
-                blk_path = os.path.join(enc_dir, f"{os.path.basename(source_logical)}.blk_{i}")
-                if os.path.exists(blk_path):
-                    with open(blk_path, "rb") as f:
-                        shard_dict[i] = f.read()
-
-            # 解码文件
-            if len(shard_dict) < k:
-                return jsonify({"error": "分片不足，无法恢复文件"}), 500
-
-            decoded_data = _decode_from_dict(shard_dict, meta)
-
-            # 2. 解密（如果有加密）
-            if encryption_manager.is_file_encrypted(source_logical):
-                try:
-                    decoded_data = encryption_manager.decrypt_data(decoded_data)
-                except NotUnlockedError:
-                    return jsonify({"error": "磁盘已锁定"}), 403
-
-            # 3. 写入物理磁盘
-            from common import get_base_dir_for_path
-            target_drive = os.path.splitdrive(physical_path)[0]
-            target_base_dir = get_base_dir_for_path(target_drive)
-            if not target_base_dir:
-                return jsonify({"error": "目标路径无效"}), 403
-
-            target_rel_path = physical_path.replace(target_drive, "").lstrip("/\\")
-            target_actual = os.path.join(target_base_dir, target_rel_path)
-
-            # 确保目标目录存在
-            os.makedirs(os.path.dirname(target_actual), exist_ok=True)
-
-            # 写入文件
-            with open(target_actual, "wb") as f:
-                f.write(decoded_data)
-
-            return jsonify({"success": True, "message": "文件已导出到物理磁盘"})
-
-        def _import_from_physical_to_ec(physical_path, ec_path):
-            """从物理磁盘导入文件到纠删码卷"""
-            from common import get_actual_file_path, is_path_allowed
-
-            # 1. 读取物理磁盘文件
-            source_actual = get_actual_file_path(physical_path)
-            if not source_actual or not os.path.exists(source_actual):
-                return jsonify({"error": "源文件不存在"}), 404
-
-            if os.path.isdir(source_actual):
-                return jsonify({"error": "暂不支持导入文件夹到EC卷"}), 400
-
-            with open(source_actual, "rb") as f:
-                file_data = f.read()
-
-            # 2. 加密（如果需要）
-            # ... 根据你的加密策略决定是否加密 ...
-
-            # 3. 编码并写入EC卷
-            target_logical = ec_path.replace("\\", "/").strip("/").split("/", 1)[-1]
-
-            # 读取EC配置
-            cfg = _load_json(EC_CFG_PATH, {})
-            if not cfg:
-                return jsonify({"error": "纠删码未配置"}), 400
-
-            k, m = cfg.get("k"), cfg.get("m")
-            disks = cfg.get("disks", [])
-
-            # 编码
-            shards = rs_encode(file_data, k, m)
-
-            # 写入分片
-            for i, disk in enumerate(disks[:k + m]):
-                enc_dir = os.path.join(disk, "encoded", os.path.dirname(target_logical))
-                os.makedirs(enc_dir, exist_ok=True)
-                blk_path = os.path.join(enc_dir, f"{os.path.basename(target_logical)}.blk_{i}")
-                with open(blk_path, "wb") as f:
-                    f.write(shards[i])
-
-            # 更新索引
-            idx = _load_json(EC_IDX_PATH, {"files": {}})
-            idx["files"][target_logical] = {
-                "k": k,
-                "m": m,
-                "size": len(file_data),
-                "original_size": len(file_data),
-                "shard_size": (len(file_data) + k - 1) // k,
-                "disks": disks[:k + m],
-                "ctime": int(time.time()),
-                "mtime": int(time.time())
-            }
-            _save_json(EC_IDX_PATH, idx)
-
-            return jsonify({"success": True, "message": "文件已导入到纠删码卷"})
 
 @app.route('/api/documents', methods=['GET'])
 @permission_required('readonly')
@@ -4627,59 +4791,142 @@ def api_pool_rebuild():
 def create_preview_session():
     try:
         data = request.get_json()
-        print(f"[DEBUG] 创建预览会话请求: {data}")
-
         file_path = data.get('file_path')
         file_type = data.get('file_type', 'pdf')
 
         if not file_path:
             return jsonify({'error': '缺少文件路径'}), 400
 
-        print(f"[DEBUG] 处理文件: {file_path}, 类型: {file_type}, 用户: {g.user}")
+        print(f"[DEBUG] 创建预览会话请求: {file_path}")
 
-        # 验证文件存在
-        from common import get_actual_file_path
-        actual_path = get_actual_file_path(file_path)
+        real_path_for_preview = None
 
-        print(f"[DEBUG] 解析后的实际路径: {actual_path}")
+        # ==================== 1. 处理纠删码卷 (EC) ====================
+        if _is_ec_volume(file_path):
+            # EC 文件被切分了，不能直接预览物理文件
+            # 我们需要先把它解码还原到一个临时文件中
+            try:
+                # 解析逻辑路径
+                name = file_path.replace("\\", "/").strip("/").split("/", 1)[-1]
+                idx = _load_json(EC_IDX_PATH, {"files": {}}).get("files", {})
+                entry = idx.get(name)
 
-        if not actual_path or not os.path.exists(actual_path):
-            print(f"[DEBUG] 文件不存在: {actual_path}")
-            return jsonify({'error': '文件不存在'}), 404
+                if not entry:
+                    return jsonify({'error': 'EC文件索引不存在'}), 404
 
-        if not os.path.isfile(actual_path):
-            print(f"[DEBUG] 不是文件: {actual_path}")
-            return jsonify({'error': '不是文件'}), 400
+                # 还原文件
+                k, m, disks = entry["k"], entry["m"], entry["disks"]
+                shard_dict, meta = {}, None
+                for i, disk in enumerate(disks[:k + m]):
+                    enc_dir = os.path.join(disk, "encoded", os.path.dirname(name))
+                    blk = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+                    if os.path.exists(blk):
+                        with open(blk, "rb") as f:
+                            shard_dict[i] = f.read()
+                    if not meta:
+                        mj = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
+                        if os.path.exists(mj):
+                            with open(mj, "r", encoding="utf-8") as mf:
+                                meta = json.load(mf)
 
-        # 检查文件类型
+                if not meta or len(shard_dict) < k:
+                    return jsonify({'error': 'EC分片不足，无法预览'}), 409
+
+                # 解码数据
+                file_data = _decode_from_dict(shard_dict, meta)
+
+                # 写入临时文件
+                temp_dir = tempfile.gettempdir()
+                temp_filename = f"preview_ec_{secrets.token_hex(8)}.pdf"
+                temp_path = os.path.join(temp_dir, temp_filename)
+
+                with open(temp_path, 'wb') as f:
+                    f.write(file_data)
+
+                real_path_for_preview = temp_path
+                print(f"[DEBUG] EC文件已还原到临时路径: {real_path_for_preview}")
+
+            except Exception as e:
+                print(f"[ERROR] EC预览还原失败: {e}")
+                return jsonify({'error': f'EC文件解析失败: {str(e)}'}), 500
+
+        # ==================== 2. 处理空间池卷 (Pool) ====================
+        elif _is_pool_volume(file_path):
+            try:
+                import Storage_pool
+                volume, subpath, filename = _parse_pool_path(file_path)
+                if subpath:
+                    virtual_path = f"{volume}/{subpath}/{filename}"
+                else:
+                    virtual_path = f"{volume}/{filename}"
+
+                # 获取真实的物理路径
+                real_path_for_preview = Storage_pool.get_file_path(virtual_path)
+
+                if not real_path_for_preview or not os.path.exists(real_path_for_preview):
+                    return jsonify({'error': '池卷文件物理路径不存在'}), 404
+
+            except Exception as e:
+                return jsonify({'error': f'池卷解析失败: {str(e)}'}), 500
+
+        # ==================== 3. 处理普通物理磁盘 ====================
+        else:
+            from common import get_actual_file_path
+            real_path_for_preview = get_actual_file_path(file_path)
+
+            if not real_path_for_preview or not os.path.exists(real_path_for_preview):
+                return jsonify({'error': '文件不存在'}), 404
+
+            # 检查是否加密
+            if encryption_manager.is_path_encrypted(real_path_for_preview):
+                try:
+                    # 如果是加密文件，需要解密到临时文件
+                    decrypted_data = encryption_manager.read_encrypted_file(real_path_for_preview)
+
+                    temp_dir = tempfile.gettempdir()
+                    temp_filename = f"preview_enc_{secrets.token_hex(8)}.pdf"
+                    temp_path = os.path.join(temp_dir, temp_filename)
+
+                    with open(temp_path, 'wb') as f:
+                        f.write(decrypted_data)
+
+                    real_path_for_preview = temp_path
+                except NotUnlockedError:
+                    return jsonify({'error': '磁盘已锁定，无法预览'}), 403
+                except Exception as e:
+                    return jsonify({'error': f'解密预览失败: {e}'}), 500
+
+        # ==================== 创建会话 ====================
+
+        # 再次确认文件存在
+        if not real_path_for_preview or not os.path.exists(real_path_for_preview):
+            return jsonify({'error': '无法获取有效的文件路径'}), 404
+
+        # 检查文件类型 (简单的扩展名检查)
         if file_type == 'pdf':
-            ext = os.path.splitext(actual_path)[1].lower()
-            if ext != '.pdf':
-                print(f"[DEBUG] 文件类型不匹配: {ext}")
-                return jsonify({'error': '文件类型不是PDF'}), 400
+            # 注意：如果是临时文件，可能没有后缀，所以这里主要信赖前端传来的类型
+            pass
 
-        # 创建临时会话
         session_id = secrets.token_urlsafe(32)
         session_data = {
-            'file_path': actual_path,
+            'file_path': real_path_for_preview,  # 这里存的是物理路径或临时文件路径
             'file_type': file_type,
             'user_id': g.user,
             'created_at': datetime.now(),
-            'expires_at': datetime.now() + timedelta(hours=2),  # 2小时过期
+            'expires_at': datetime.now() + timedelta(hours=2),
             'access_count': 0,
-            'max_access': 100  # 最多访问100次
+            'max_access': 100,
+            'is_temp': _is_ec_volume(file_path) or encryption_manager.is_path_encrypted(real_path_for_preview)
+            # 标记是否需要清理
         }
 
         preview_sessions[session_id] = session_data
-
-        print(f"[DEBUG] 创建预览会话成功: {session_id}")
-        print(f"[DEBUG] 会话数据: 文件={actual_path}, 过期时间={session_data['expires_at']}")
 
         return jsonify({
             'success': True,
             'session_id': session_id,
             'expires_at': session_data['expires_at'].isoformat(),
-            'message': f'预览会话创建成功，文件: {os.path.basename(actual_path)}'
+            'message': '预览会话创建成功'
         })
 
     except Exception as e:
@@ -4687,7 +4934,6 @@ def create_preview_session():
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'创建预览会话失败: {str(e)}'}), 500
-
 
 @app.route('/api/verify-access-token', methods=['POST'])
 def verify_access_token_proxy():

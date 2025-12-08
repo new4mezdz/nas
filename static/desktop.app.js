@@ -448,8 +448,8 @@ this.availableDrives.forEach(drive => {
   // ✅ 【新增】跳过已加入空间池的磁盘
   if (this.poolStatus.is_configured && this.poolStatus.disks) {
     const normalizedPoolDisks = this.poolStatus.disks.map(d =>
-      d.toUpperCase().replace(/\\/g, '/')
-    );
+  (d.disk || d).toString().toUpperCase().replace(/\\/g, '/')
+);
     if (normalizedPoolDisks.includes(drive.drive)) {
       console.log('[DEBUG] ✅ 跳过空间池磁盘:', drive.drive);
       return;
@@ -754,24 +754,31 @@ async changePassword(window) {
       }
     },
 
-    buildFullPath(window, fileName) {
-      if (window.currentDrive === 'ec_volume') {
-        let path = window.currentPath.replace(/\\/g, '/');
-        path = path.replace(/^ec_volume\/?/, '');
-        path = path.replace(/^\//, '').replace(/\/$/, '');
+   buildFullPath(window, fileName) {
+  if (window.currentDrive === 'ec_volume') {
+    let path = window.currentPath.replace(/\\/g, '/');
+    path = path.replace(/^ec_volume\/?/, '');
+    path = path.replace(/^\//, '').replace(/\/$/, '');
 
-        if (path === '') {
-          return `ec_volume/${fileName}`;
-        }
-        return `ec_volume/${path}/${fileName}`;
-      } else {
-        let cleanPath = window.currentPath.replace(/^\//, '');
-        if (cleanPath === '' || cleanPath === '/') {
-          return window.currentDrive + fileName;
-        }
-        return window.currentDrive + cleanPath + '/' + fileName;
-      }
-    },
+    if (path === '') {
+      return `ec_volume/${fileName}`;
+    }
+    return `ec_volume/${path}/${fileName}`;
+  } else if (window.currentDrive.startsWith('pool://')) {
+    // 空间池卷：pool://volume_name/subpath/filename
+    let cleanPath = (window.currentPath || '').replace(/^\//, '').replace(/\/$/, '');
+    if (cleanPath === '' || cleanPath === '/') {
+      return window.currentDrive + '/' + fileName;
+    }
+    return window.currentDrive + '/' + cleanPath + '/' + fileName;
+  } else {
+    let cleanPath = (window.currentPath || '').replace(/^\//, '');
+    if (cleanPath === '' || cleanPath === '/') {
+      return window.currentDrive + fileName;
+    }
+    return window.currentDrive + cleanPath + '/' + fileName;
+  }
+},
 
     downloadFile(win, file) { // <--- 修改这里
   const fullPath = this.buildFullPath(win, file.name); // <--- 修改这里
@@ -1105,16 +1112,26 @@ async decryptFileOrFolder(window, file) {
       if (!window) return;
 
       let uploadPath;
-      if (window.currentDrive === 'ec_volume') {
-        uploadPath = window.currentPath.startsWith('ec_volume')
-          ? window.currentPath
-          : 'ec_volume';
-      } else {
-        const cleanPath = window.currentPath.replace(/^\//, '');
-        uploadPath = cleanPath ? window.currentDrive + cleanPath : window.currentDrive;
-      }
+if (window.currentDrive === 'ec_volume') {
+  uploadPath = window.currentPath.startsWith('ec_volume')
+    ? window.currentPath
+    : 'ec_volume';
+} else if (window.currentDrive.startsWith('pool://')) {
+  // 空间池卷：pool://volume_name + /subpath
+  const cleanPath = window.currentPath.replace(/^\//, '');
+  uploadPath = cleanPath ? window.currentDrive + '/' + cleanPath : window.currentDrive;
+} else {
+  const cleanPath = window.currentPath.replace(/^\//, '');
+  uploadPath = cleanPath ? window.currentDrive + cleanPath : window.currentDrive;
+}
 
-      uploadPath = uploadPath.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+      uploadPath = uploadPath.replace(/\\/g, '/');
+// 只清理路径部分的多余斜杠，保留 pool:// 协议头
+if (uploadPath.startsWith('pool://')) {
+  uploadPath = 'pool://' + uploadPath.slice(7).replace(/\/{2,}/g, '/');
+} else {
+  uploadPath = uploadPath.replace(/\/{2,}/g, '/');
+}
 
       const token = localStorage.getItem('token');
 
@@ -1171,161 +1188,141 @@ async decryptFileOrFolder(window, file) {
 
 
  showFileContextMenu(event, file, win) {
-  event.preventDefault();
+      event.preventDefault();
 
-  // 添加调试信息
-  console.log('权限状态:', {
-    canRead: this.canRead,
-    canWrite: this.canWrite,
-    canDelete: this.canDelete,
-    isEncrypted: file.name.endsWith('.encrypted')
-  });
+      // 1. 获取扩展名
+      const ext = file.name.split('.').pop().toLowerCase();
+      const isEncrypted = file.name.endsWith('.encrypted');
 
-  const isEncrypted = file.name.endsWith('.encrypted');
-
-  const menuItems = [
-    {
-      icon: file.is_dir ? '📂' : '👁️',
-      label: file.is_dir ? '打开' : '预览',
-      action: () => {
-        if (file.is_dir) {
-          this.handleDoubleClick(window, file);
-        } else {
-          this.previewFile(window, file);
+      // 2. 定义基础菜单项
+      const menuItems = [
+        {
+          icon: file.is_dir ? '📂' : '👁️',
+          label: file.is_dir ? '打开' : '预览',
+          action: () => {
+            if (file.is_dir) {
+              this.handleDoubleClick(win, file);
+            } else {
+              this.previewFile(win, file);
+            }
+            this.closeContextMenu();
+          },
+          disabled: !this.canRead || isEncrypted
+        },
+        {
+          icon: '📥',
+          label: '下载',
+          action: () => {
+            this.downloadFile(win, file);
+            this.closeContextMenu();
+          },
+          disabled: !this.canRead || file.is_dir || isEncrypted
+        },
+        {
+          icon: '🔗',
+          label: '分享',
+          action: () => {
+            this.shareFile(win, file);
+            this.closeContextMenu();
+          },
+          disabled: !this.canRead || file.is_dir || isEncrypted
         }
-        this.closeContextMenu();
-      },
-      disabled: !this.canRead || isEncrypted
-    },
-    {
-      icon: '📥',
-      label: '下载',
-      action: () => {
-        this.downloadFile(window, file);
-        this.closeContextMenu();
-      },
-      disabled: !this.canRead || file.is_dir || isEncrypted
-    },
-    {
-      icon: '🔗',
-      label: '分享',
-      action: () => {
-        this.shareFile(window, file);
-        this.closeContextMenu();
-      },
-      disabled: !this.canRead || file.is_dir || isEncrypted
-    },
-    // ✅ 在这里添加协作编辑
-    {
-      icon: '📝',
-      label: '协作编辑',
-      action: () => {
-        this.openCollaborationEditor(file, win);
-        this.closeContextMenu();
-      },
-      disabled: !this.canWrite || file.is_dir || isEncrypted || !this.isEditableByOnlyOffice(file.name)
-    },
-    { separator: true },
-    {
-      icon: '✂️',
-      label: '剪切',
-      action: () => {
-        this.cutFile(window, file);
-        this.closeContextMenu();
-      },
-      disabled: !this.canWrite
-    },
-    {
-      icon: '📋',
-      label: '复制',
-      action: () => {
-        this.copyFile(window, file);
-        this.closeContextMenu();
-      },
-      disabled: !this.canRead
-    },
-    { separator: true },
-    {
-      icon: '✏️',
-      label: '重命名',
-      action: () => {
-        this.renameFile(window, file);
-        this.closeContextMenu();
-      },
-      disabled: !this.canWrite
-    },
-    {
-      icon: '🗑️',
-      label: '删除',
-      action: () => {
-        this.deleteFile(window, file);
-      },
-      disabled: !this.canDelete
-    },
-    { separator: true },
-    {
-      icon: isEncrypted ? '🔓' : '🔒',
-      label: isEncrypted ? '解密文件' : '加密文件',
-      action: () => {
-        if (isEncrypted) {
-          this.decryptFileOrFolder(window, file);
-        } else {
-          this.encryptFileOrFolder(window, file);
+      ];
+
+      // ✅ [保留] Univer Excel 编辑入口
+      if (ext === 'xlsx') {
+        menuItems.push({
+            icon: '📊',
+            label: 'Univer 编辑',
+            action: () => {
+                this.openUniverEditor(file, win);
+                this.closeContextMenu();
+            },
+            disabled: !this.canWrite || isEncrypted
+        });
+      }
+
+      // ❌ [已删除] OnlyOffice 协作编辑入口
+
+      // 3. 通用文件操作
+      menuItems.push(
+        { separator: true },
+        {
+          icon: '✂️',
+          label: '剪切',
+          action: () => {
+            this.cutFile(win, file);
+            this.closeContextMenu();
+          },
+          disabled: !this.canWrite
+        },
+        {
+          icon: '📋',
+          label: '复制',
+          action: () => {
+            this.copyFile(win, file);
+            this.closeContextMenu();
+          },
+          disabled: !this.canRead
+        },
+        { separator: true },
+        {
+          icon: '✏️',
+          label: '重命名',
+          action: () => {
+            this.renameFile(win, file);
+            this.closeContextMenu();
+          },
+          disabled: !this.canWrite
+        },
+        {
+          icon: '🗑️',
+          label: '删除',
+          action: () => {
+            this.deleteFile(win, file);
+          },
+          disabled: !this.canDelete
+        },
+        { separator: true },
+        {
+          icon: isEncrypted ? '🔓' : '🔒',
+          label: isEncrypted ? '解密文件' : '加密文件',
+          action: () => {
+            if (isEncrypted) {
+              this.decryptFileOrFolder(win, file);
+            } else {
+              this.encryptFileOrFolder(win, file);
+            }
+            this.closeContextMenu();
+          },
+          disabled: !this.canDelete
         }
-        this.closeContextMenu();
-      },
-      disabled: !this.canDelete
-    }
-  ];
+      );
 
-  const menuWidth = 200;
-  const menuItemHeight = 44;
-  const separatorHeight = 1;
+      // 4. 计算显示位置
+      const menuWidth = 200;
+      let menuHeight = 16;
+      menuItems.forEach(item => {
+        menuHeight += item.separator ? 1 : 44;
+      });
 
-  let menuHeight = 16;
-  menuItems.forEach(item => {
-    menuHeight += item.separator ? separatorHeight : menuItemHeight;
-  });
+      let x = event.clientX;
+      let y = event.clientY;
+      const availableHeight = window.innerHeight - 50;
+      const availableWidth = window.innerWidth;
 
-  let x = event.clientX;
-  let y = event.clientY;
+      if (availableWidth < 768) { x = 10; }
+      else if (x + menuWidth > availableWidth - 20) { x = x - menuWidth - 10; }
+      else { x = x + 10; }
+      if (x < 10) x = 10;
 
-  const availableHeight = window.innerHeight - 104;
-  const availableWidth = window.innerWidth;
+      if (y + menuHeight > availableHeight) { y = y - menuHeight; }
+      if (y < 50) y = 50;
+      if (y + menuHeight > availableHeight) { y = availableHeight - menuHeight - 10; }
 
-  // 手机端让菜单显示在点击位置左边
+      this.contextMenu = { show: true, x, y, items: menuItems };
+    },
 
-  if (availableWidth < 768) {  // 手机端
-    x = 10;
-  } else if (x + menuWidth > availableWidth - 20) {
-    x = x - menuWidth - 10;
-  } else {
-    x = x + 10;
-  }
-
-  if (x < 10) {
-    x = 10;
-  }
-
-  if (y + menuHeight > availableHeight) {
-    y = y - menuHeight;
-  }
-
-  if (y < 50) {
-    y = 50;
-  }
-
-  if (y + menuHeight > availableHeight) {
-    y = availableHeight - menuHeight - 10;
-  }
-
-  this.contextMenu = {
-    show: true,
-    x: x,
-    y: y,
-    items: menuItems
-  };
-},
     showEmptyAreaContextMenu(event, window) {
       event.preventDefault();
 
@@ -1541,26 +1538,32 @@ createEditor(window, containerId) {
       const failedItems = [];
 
       for (const itemName of items) {
-        try {
-          // 2. 构建源路径
-          let sourceFullPath;
-          if (sourceDrive === 'ec_volume') {
-            const path = sourcePath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
-            sourceFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
-          } else {
-            const cleanPath = sourcePath.replace(/^\//, '');
-            sourceFullPath = cleanPath ? `${sourceDrive}${cleanPath}/${itemName}` : `${sourceDrive}${itemName}`;
-          }
+  try {
+    // 2. 构建源路径
+    let sourceFullPath;
+    if (sourceDrive === 'ec_volume') {
+      const path = sourcePath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
+      sourceFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
+    } else if (sourceDrive.startsWith('pool://')) {
+      const cleanPath = (sourcePath || '').replace(/^\//, '').replace(/\/$/, '');
+      sourceFullPath = cleanPath ? `${sourceDrive}/${cleanPath}/${itemName}` : `${sourceDrive}/${itemName}`;
+    } else {
+      const cleanPath = sourcePath.replace(/^\//, '');
+      sourceFullPath = cleanPath ? `${sourceDrive}${cleanPath}/${itemName}` : `${sourceDrive}${itemName}`;
+    }
 
-          // 3. 构建目标路径
-          let targetFullPath;
-          if (targetDrive === 'ec_volume') {
-            const path = targetPath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
-            targetFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
-          } else {
-            const cleanPath = targetPath.replace(/^\//, '');
-            targetFullPath = cleanPath ? `${targetDrive}${cleanPath}/${itemName}` : `${targetDrive}${itemName}`;
-          }
+    // 3. 构建目标路径
+    let targetFullPath;
+    if (targetDrive === 'ec_volume') {
+      const path = targetPath.replace(/^ec_volume\/?/, '').replace(/\/$/, '');
+      targetFullPath = path ? `ec_volume/${path}/${itemName}` : `ec_volume/${itemName}`;
+    } else if (targetDrive.startsWith('pool://')) {
+      const cleanPath = (targetPath || '').replace(/^\//, '').replace(/\/$/, '');
+      targetFullPath = cleanPath ? `${targetDrive}/${cleanPath}/${itemName}` : `${targetDrive}/${itemName}`;
+    } else {
+      const cleanPath = targetPath.replace(/^\//, '');
+      targetFullPath = cleanPath ? `${targetDrive}${cleanPath}/${itemName}` : `${targetDrive}${itemName}`;
+    }
 
 
           // 5. 选择API
@@ -2325,6 +2328,36 @@ openPoolDetailWindow() {
   this.showStartMenu = false;
 },
 
+
+ openUniverEditor(file, win) {
+        // 构建完整路径
+        const fullPath = this.buildFullPath(win, file.name);
+        const token = localStorage.getItem('token');
+
+        // ✅ 修复开始：获取动态的 BaseURL
+        // 如果是通过管理端访问，这里会是 '/proxy/node/node-1'
+        // 如果是直接访问，这里是 '' (空字符串)
+        let baseUrl = axios.defaults.baseURL || '';
+
+        // 防止出现双斜杠 (比如 /proxy/node/node-1//static)
+        if (baseUrl.endsWith('/')) {
+            baseUrl = baseUrl.slice(0, -1);
+        }
+
+        // ✅ 拼接正确的 URL
+        const editorUrl = `${baseUrl}/static/univer.html?path=${encodeURIComponent(fullPath)}&name=${encodeURIComponent(file.name)}&token=${encodeURIComponent(token)}`;
+
+        console.log('[DEBUG] 打开 Univer URL:', editorUrl); // 方便你排查
+
+        // 创建一个新窗口来承载 iframe
+        const editorWindow = this.createWindow('univer-editor', `编辑: ${file.name}`, '📊', {
+            width: 1200,
+            height: 800,
+            url: editorUrl
+        });
+
+        this.showStartMenu = false;
+    },
 // ==================== 重建索引 ====================
 async rebuildPoolIndex() {
   if (!confirm('确定要重建文件索引吗？\n\n这将扫描所有物理文件并重建索引数据库。')) {

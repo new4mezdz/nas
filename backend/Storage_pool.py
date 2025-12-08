@@ -278,16 +278,14 @@ def list_volumes() -> dict:
 
 
 # ==================== 磁盘选择策略 ====================
-
-def select_disk(volume_name: str, file_size: int = 0) -> str:
+def select_disk(config: dict, volume_name: str, file_size: int = 0) -> str:
     """
     根据策略选择磁盘
+    :param config: 配置字典 (传入引用，以便修改索引)
     :param volume_name: 逻辑卷名
     :param file_size: 文件大小（用于检查空间是否足够）
     :return: 磁盘路径
     """
-    config = load_config()
-
     if not config.get("pool"):
         raise Exception("存储池未配置")
 
@@ -298,47 +296,67 @@ def select_disk(volume_name: str, file_size: int = 0) -> str:
     strategy = vol.get("strategy", "largest_free")
     disks = config["pool"]["disks"]
 
-    # 获取各磁盘可用空间
-    disk_free = []
+    # --- 1. 预处理：收集所有符合条件的磁盘信息 ---
+    candidates = []
+    reserved_space = 1073741824  # 保留 1GB 空间
+
     for disk in disks:
         try:
             usage = shutil.disk_usage(disk)
-            if usage.free > file_size + 1073741824:  # 保留 1GB
-                disk_free.append((disk, usage.free))
-        except:
+            # 只有当剩余空间 > 文件大小 + 保留空间时，才列入候选
+            if usage.free > file_size + reserved_space:
+                candidates.append({
+                    "path": disk,
+                    "free": usage.free,
+                    "total": usage.total,
+                    # 计算剩余率 (0.0 - 1.0)
+                    "free_ratio": usage.free / usage.total if usage.total > 0 else 0
+                })
+        except Exception as e:
+            # 忽略无法读取的磁盘
+            print(f"警告: 无法读取磁盘 {disk}: {e}")
             continue
 
-    if not disk_free:
-        raise Exception("没有足够空间的磁盘")
+    if not candidates:
+        raise Exception(f"没有足够空间的磁盘 (需要 {file_size} + 1GB)")
+
+    # --- 2. 策略执行 ---
 
     if strategy == "largest_free":
-        # 选择剩余空间最大的
-        disk_free.sort(key=lambda x: x[1], reverse=True)
-        return disk_free[0][0]
+        # 🟢 最大剩余空间优先
+        # 按绝对剩余字节数 (free) 倒序排列
+        candidates.sort(key=lambda x: x["free"], reverse=True)
+        return candidates[0]["path"]
 
     elif strategy == "round_robin":
-        # 轮询
+        # 🟢 轮询分配
         idx = config.get("round_robin_index", {}).get(volume_name, 0)
-        available_disks = [d[0] for d in disk_free]
-        if not available_disks:
-            raise Exception("没有可用磁盘")
-        selected = available_disks[idx % len(available_disks)]
-        config["round_robin_index"][volume_name] = (idx + 1) % len(available_disks)
-        save_config(config)
+
+        # 既然 candidates 已经是经过空间筛选的，直接在这些可用盘里轮询
+        selected = candidates[idx % len(candidates)]["path"]
+
+        # 更新索引 (只修改内存，不保存)
+        if "round_robin_index" not in config:
+            config["round_robin_index"] = {}
+        config["round_robin_index"][volume_name] = (idx + 1) % len(candidates)
+
         return selected
 
     elif strategy == "balanced":
-        # 按剩余空间比例加权选择（简化：选使用率最低的）
-        disk_free.sort(key=lambda x: x[1], reverse=True)
-        return disk_free[0][0]
+        # 🟢 真正的平衡模式 (使用率均衡)
+        # 按剩余百分比 (free_ratio) 倒序排列 -> 剩余率最高的排前面
+        candidates.sort(key=lambda x: x["free_ratio"], reverse=True)
+
+        # (可选) 打印调试信息，方便你在控制台看到它选了哪个
+        best = candidates[0]
+        # print(f"⚖️ 平衡模式: 选择 {best['path']} (剩余率: {best['free_ratio']*100:.1f}%)")
+
+        return best["path"]
 
     else:
-        # 默认用最大剩余空间
-        disk_free.sort(key=lambda x: x[1], reverse=True)
-        return disk_free[0][0]
-
-
-# ==================== 文件操作 ====================
+        # 默认回退到 largest_free
+        candidates.sort(key=lambda x: x["free"], reverse=True)
+        return candidates[0]["path"]
 
 def list_files(volume_name: str, subpath: str = "") -> List[dict]:
     """
@@ -394,11 +412,8 @@ def add_file(volume_name: str, subpath: str, filename: str,
              file_data: bytes) -> dict:
     """
     添加文件到逻辑卷（上传用）
-    :param volume_name: 逻辑卷名
-    :param subpath: 子路径（可为空）
-    :param filename: 文件名
-    :param file_data: 文件内容
     """
+    # 1. 在最开始加载一次配置
     config = load_config()
 
     if volume_name not in config.get("volumes", {}):
@@ -415,8 +430,9 @@ def add_file(volume_name: str, subpath: str, filename: str,
     if virtual_path in config.get("files", {}):
         raise Exception(f"文件 {virtual_path} 已存在")
 
-    # 选择磁盘
-    disk = select_disk(volume_name, len(file_data))
+    # 2. 调用 select_disk 时传入 config 对象
+    #    这样 select_disk 修改的轮询索引会直接作用于这个 config 对象
+    disk = select_disk(config, volume_name, len(file_data))
 
     # 构建物理路径
     if subpath:
@@ -440,6 +456,8 @@ def add_file(volume_name: str, subpath: str, filename: str,
         "size": len(file_data),
         "mtime": int(time.time())
     }
+
+    # 3. 最后统一保存 (包含新文件记录 + 更新后的轮询索引)
     save_config(config)
 
     return {
@@ -448,7 +466,6 @@ def add_file(volume_name: str, subpath: str, filename: str,
         "real_path": real_path,
         "size": len(file_data)
     }
-
 
 def get_file_path(virtual_path: str) -> str:
     """

@@ -1369,7 +1369,11 @@
                 <div v-else-if="window.fileType === 'pdf'" class="w-full h-full">
   <iframe :src="window.previewContent" class="w-full h-full border-0"></iframe>
 </div>
+
+
               </div>
+
+
 
               <!-- 操作按钮 -->
               <div class="border-t bg-white p-3 flex justify-between items-center">
@@ -1386,6 +1390,16 @@
                 </div>
               </div>
             </div>
+
+              <div v-else-if="window.type === 'univer-editor'" class="h-full w-full bg-white overflow-hidden flex flex-col">
+                <iframe
+                    :src="window.url"
+                    class="flex-1 w-full h-full border-none"
+                    allowfullscreen>
+                </iframe>
+            </div>
+
+
             <!-- 分享结果窗口 -->
             <div v-else-if="window.type === 'share-result'" class="h-full flex flex-col overflow-hidden bg-gradient-to-br from-blue-50 to-purple-50">
               <div class="flex-1 overflow-auto p-8">

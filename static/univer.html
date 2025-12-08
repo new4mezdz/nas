@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>表格编辑器</title>
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/css/pluginsCss.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/plugins.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/css/luckysheet.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/assets/iconfont/iconfont.css' />
+
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
+        #app { height: 100%; display: flex; flex-direction: column; }
+        #toolbar {
+            height: 40px; background: #f5f5f5; border-bottom: 1px solid #ddd;
+            display: flex; align-items: center; padding: 0 15px; justify-content: space-between;
+        }
+        #sheet-container { flex: 1; position: relative; width: 100%; }
+        .btn {
+            padding: 6px 16px; background: #4b89ff; color: white; border: none;
+            border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;
+        }
+        .btn:hover { background: #3370ff; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        #status { font-size: 12px; color: #666; margin-right: 10px; }
+        /* 修复图标显示 */
+        .luckysheet-icon { padding-bottom: 0px !important; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="toolbar">
+            <div style="font-weight: bold; color: #333;">📊 表格编辑器</div>
+            <div>
+                <span id="status">准备就绪</span>
+                <button id="save-btn" class="btn" onclick="saveFile()">💾 保存 (Ctrl+S)</button>
+            </div>
+        </div>
+        <div id="sheet-container"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/js/plugin.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/luckysheet.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luckyexcel/dist/luckyexcel.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+
+    <script>
+        let currentFilePath = '';
+        let authToken = '';
+
+        // 1. 初始化加载
+        window.onload = function() {
+            const params = new URLSearchParams(window.location.search);
+            currentFilePath = params.get('path');
+            authToken = params.get('token');
+
+            if (!currentFilePath || !authToken) {
+                alert("❌ 参数缺失: 无法加载文件");
+                return;
+            }
+
+            loadFile();
+        }
+
+        // 2. 加载文件
+        async function loadFile() {
+            setStatus("正在下载文件...", "blue");
+            try {
+                // 请求后端下载接口
+                const response = await fetch(`/api/download?path=${encodeURIComponent(currentFilePath)}`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const blob = await response.blob();
+
+                setStatus("正在解析 Excel...", "blue");
+
+                // 使用 LuckyExcel 解析 blob
+                LuckyExcel.transformExcelToLucky(blob, function(exportJson, luckysheetfile){
+                    if(exportJson.sheets==null || exportJson.sheets.length==0){
+                        alert("文件读取失败或格式不支持");
+                        return;
+                    }
+
+                    // 初始化编辑器
+                    luckysheet.create({
+                        container: 'sheet-container', // 容器ID
+                        showinfobar: false, // 隐藏顶部信息栏
+                        data: exportJson.sheets, // 导入数据
+                        title: exportJson.info.name,
+                        userInfo: exportJson.info.name.creator,
+                        lang: 'zh',
+                        allowUpdate: true,
+                        loadUrl: "",
+                    });
+
+                    setStatus("加载完成", "green");
+                });
+
+            } catch (e) {
+                console.error(e);
+                alert("加载失败: " + e.message);
+                setStatus("加载失败", "red");
+            }
+        }
+
+        // 3. 保存文件 (最关键的一步：将 Luckysheet 数据转回 Excel)
+        async function saveFile() {
+            const btn = document.getElementById('save-btn');
+            btn.disabled = true;
+            btn.innerText = "正在打包...";
+            setStatus("正在生成 Excel 文件...", "blue");
+
+            try {
+                // 获取所有表格数据
+                const sheets = luckysheet.getAllSheets();
+
+                // 使用 ExcelJS 创建新的工作簿
+                const workbook = new ExcelJS.Workbook();
+
+                // 遍历每个 sheet
+                sheets.forEach(function(sheet) {
+                    if(sheet.data.length === 0) return;
+
+                    const worksheet = workbook.addWorksheet(sheet.name);
+
+                    // 填充数据
+                    for(let r=0; r<sheet.data.length; r++){
+                        const row = sheet.data[r];
+                        if(!row) continue;
+
+                        const rowData = [];
+                        for(let c=0; c<row.length; c++){
+                            const cell = row[c];
+                            // 简单处理：只取显示值(m)或原始值(v)
+                            let val = cell ? (cell.v !== undefined ? cell.v : cell.m) : null;
+                            rowData.push(val);
+                        }
+                        worksheet.addRow(rowData);
+                    }
+                });
+
+                // 写入 Buffer
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+                // 准备上传
+                setStatus("正在上传...", "blue");
+                btn.innerText = "上传中...";
+
+                const formData = new FormData();
+                const fileName = currentFilePath.split('/').pop();
+                const file = new File([blob], fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+                formData.append('file', file);
+
+                // 计算父目录
+                let parentDir = currentFilePath.replace(/\\/g, '/');
+                parentDir = parentDir.substring(0, parentDir.lastIndexOf('/'));
+                if(!parentDir) parentDir = '/';
+
+                formData.append('path', parentDir);
+
+                // 发送请求
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` },
+                    body: formData
+                });
+
+                const result = await res.json();
+                if (result.success) {
+                    setStatus("✅ 已保存 " + new Date().toLocaleTimeString(), "green");
+                } else {
+                    throw new Error(result.error);
+                }
+
+            } catch (e) {
+                console.error(e);
+                alert("保存失败: " + e.message);
+                setStatus("保存失败", "red");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "💾 保存 (Ctrl+S)";
+            }
+        }
+
+        // 状态栏助手
+        function setStatus(text, color) {
+            const el = document.getElementById('status');
+            el.innerText = text;
+            el.style.color = color === 'red' ? '#ff4d4f' : (color === 'green' ? '#52c41a' : '#1890ff');
+        }
+
+        // 快捷键监听
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                saveFile();
+            }
+        });
+    </script>
+</body>
+</html>

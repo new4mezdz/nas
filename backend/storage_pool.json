@@ -2,19 +2,64 @@
   "pool": {
     "name": "主存储池",
     "disks": [
-      "E:/"
+      "E:/",
+      "F:/",
+      "G:/"
     ],
-    "created_at": "2025-12-05T16:39:46"
+    "created_at": "2025-12-08T14:12:32"
   },
   "volumes": {
     "movie": {
       "display_name": "电影",
       "icon": "🎬",
-      "strategy": "round_robin",
-      "created_at": "2025-12-05T16:40:11"
+      "strategy": "largest_free",
+      "created_at": "2025-12-08T14:13:10"
     }
   },
-  "files": {},
+  "files": {
+    "movie/基于差值直方图平移的密文域可逆信息隐藏算法_李志佳.pdf": {
+      "disk": "F:/",
+      "real_path": ".pool/movie/基于差值直方图平移的密文域可逆信息隐藏算法_李志佳.pdf",
+      "size": 1152496,
+      "mtime": 1750235514
+    },
+    "movie/IMG_6927.JPG": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/IMG_6927.JPG",
+      "size": 311075,
+      "mtime": 1765176188
+    },
+    "movie/1.mp4": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/1.mp4",
+      "size": 4591451,
+      "mtime": 1757900062
+    },
+    "movie/水管漏损的关键影响因素.docx": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/水管漏损的关键影响因素.docx",
+      "size": 41561,
+      "mtime": 1765183404
+    },
+    "movie/edges_simple.csv": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/edges_simple.csv",
+      "size": 627,
+      "mtime": 1765183437
+    },
+    "movie/edges_simple.xls": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/edges_simple.xls",
+      "size": 21504,
+      "mtime": 1765183718
+    },
+    "movie/edges_simple.xlsx": {
+      "disk": "G:/",
+      "real_path": ".pool/movie/edges_simple.xlsx",
+      "size": 11365,
+      "mtime": 1765183803
+    }
+  },
   "round_robin_index": {
     "movie": 0
   }
