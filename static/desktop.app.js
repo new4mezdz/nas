@@ -747,13 +747,18 @@ async changePassword(window) {
     },
 
     handleDoubleClick(window, file) {
-      if (file.is_dir) {
+    if (file.is_dir) {
         this.openFolder(window, file.name);
-      } else {
-        this.previewFile(window, file);
-      }
-    },
-
+    } else {
+        const ext = file.name.split('.').pop().toLowerCase();
+        // Excel 和 Word 文件直接打开编辑器
+        if (['xlsx', 'xls', 'docx', 'doc'].includes(ext)) {
+            this.openUniverEditor(file, window);
+        } else {
+            this.previewFile(window, file);
+        }
+    }
+},
    buildFullPath(window, fileName) {
   if (window.currentDrive === 'ec_volume') {
     let path = window.currentPath.replace(/\\/g, '/');
@@ -1229,18 +1234,19 @@ if (uploadPath.startsWith('pool://')) {
         }
       ];
 
-      // ✅ [保留] Univer Excel 编辑入口
-      if (ext === 'xlsx') {
-        menuItems.push({
-            icon: '📊',
-            label: 'Univer 编辑',
-            action: () => {
-                this.openUniverEditor(file, win);
-                this.closeContextMenu();
-            },
-            disabled: !this.canWrite || isEncrypted
-        });
-      }
+     // ✅ [保留] 文档编辑入口 (Excel + Word)
+if (['xlsx', 'xls', 'docx', 'doc'].includes(ext)) {
+    const isExcel = ext === 'xlsx' || ext === 'xls';
+    menuItems.push({
+        icon: isExcel ? '📊' : '📄',
+        label: isExcel ? '表格编辑' : '文档编辑',
+        action: () => {
+            this.openUniverEditor(file, win);
+            this.closeContextMenu();
+        },
+        disabled: !this.canWrite || isEncrypted
+    });
+}
 
       // ❌ [已删除] OnlyOffice 协作编辑入口
 
@@ -2345,7 +2351,7 @@ openPoolDetailWindow() {
         }
 
         // ✅ 拼接正确的 URL
-        const editorUrl = `${baseUrl}/static/univer.html?path=${encodeURIComponent(fullPath)}&name=${encodeURIComponent(file.name)}&token=${encodeURIComponent(token)}`;
+      const editorUrl = `${baseUrl}/static/univer.html?path=${encodeURIComponent(fullPath)}&name=${encodeURIComponent(file.name)}&token=${encodeURIComponent(token)}&baseUrl=${encodeURIComponent(baseUrl)}`;
 
         console.log('[DEBUG] 打开 Univer URL:', editorUrl); // 方便你排查
 
