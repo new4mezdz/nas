@@ -325,6 +325,176 @@
     }
     /* 移动端适配 */
 @media (max-width: 768px) {
+
+
+
+    /* ===== 系统信息移动端适配 ===== */
+  .sao-header {
+    padding: 10px 12px !important;
+  }
+
+  .sao-header h3 {
+    font-size: 14px !important;
+  }
+
+  .sao-header h3 .text-2xl {
+    font-size: 18px !important;
+  }
+
+  .sao-header h3 .text-sm {
+    display: none !important;
+  }
+
+  .sao-system-panel .p-6 {
+    padding: 10px !important;
+  }
+
+  .sao-system-panel .space-y-6 > * + * {
+    margin-top: 10px !important;
+  }
+
+  /* 网格改成 1 列布局，让卡片占满整行 */
+  .sao-grid {
+    grid-template-columns: 1fr !important; /* 改为 1fr */
+    gap: 10px !important; /* 稍微增加间距 */
+  }
+
+  .sao-grid-2 {
+    grid-template-columns: 1fr !important; /* 改为 1fr */
+    gap: 10px !important;
+  }
+
+  .sao-card {
+    padding: 8px 10px !important;
+  }
+
+  .sao-card::before {
+    width: 3px !important;
+  }
+
+  .sao-label {
+    font-size: 10px !important;
+    margin-bottom: 2px !important;
+  }
+
+  .sao-value {
+    font-size: 14px !important;
+  }
+
+  .sao-section-title {
+    font-size: 11px !important;
+    margin-bottom: 8px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .sao-progress-bar {
+    height: 4px !important;
+    margin-top: 4px !important;
+  }
+
+  /* 磁盘列表紧凑 */
+  .sao-system-panel .space-y-3 > * + * {
+    margin-top: 8px !important;
+  }
+
+  /* ===== 空间池移动端适配 ===== */
+  /* ===== 空间池移动端适配优化 ===== */
+
+  /* 1. 标题栏和按钮组 */
+  div[class*="pool-detail"] .px-6.py-4 {
+    padding: 12px !important;
+    flex-direction: column !important; /* 标题和按钮组上下排列 */
+    gap: 12px !important;
+    align-items: flex-start !important;
+  }
+
+  /* 标题字体调整 */
+  div[class*="pool-detail"] .px-6.py-4 h3 {
+    font-size: 18px !important;
+    width: 100%;
+  }
+
+  /* 按钮组自动换行 */
+  div[class*="pool-detail"] .px-6.py-4 .flex.gap-2 {
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    gap: 8px !important;
+  }
+
+  div[class*="pool-detail"] .px-6.py-4 .flex.gap-2 button {
+    flex: 1 1 calc(50% - 8px) !important; /* 按钮占一半宽度，两两排列 */
+    padding: 8px 0 !important;
+    font-size: 13px !important;
+    justify-content: center !important;
+  }
+
+  /* 内容区域内边距 */
+  div[class*="pool-detail"] .p-6.space-y-4 {
+    padding: 12px !important;
+  }
+
+  /* 2. 状态概览：优化为 2x2 网格布局 */
+  div[class*="pool-detail"] .grid.grid-cols-4 {
+    grid-template-columns: repeat(2, 1fr) !important; /* 改成2列，比1列更省空间 */
+    gap: 10px !important;
+  }
+
+  /* 概览卡片样式微调 */
+  div[class*="pool-detail"] .grid.grid-cols-4 > div {
+    padding: 12px !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  div[class*="pool-detail"] .grid.grid-cols-4 .text-2xl {
+    font-size: 24px !important;
+    margin-bottom: 4px;
+  }
+
+  div[class*="pool-detail"] .grid.grid-cols-4 .text-sm {
+    font-size: 12px !important;
+  }
+
+  /* 3. 磁盘和逻辑卷列表：改为上下堆叠模式 */
+  div[class*="pool-detail"] .px-4.py-3 {
+    padding: 12px !important;
+    flex-direction: column !important; /* 强制上下排列 */
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+
+  /* 列表项左侧（图标+名称） */
+  div[class*="pool-detail"] .px-4.py-3 > div:first-child {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+
+  /* 列表项右侧（进度条/按钮） */
+  div[class*="pool-detail"] .px-4.py-3 > div:last-child {
+    width: 100%;
+    justify-content: space-between; /* 两端对齐 */
+    padding-top: 8px;
+    border-top: 1px dashed #eee; /* 加个虚线分割显得更整齐 */
+  }
+
+  /* 调整进度条区域宽度 */
+  div[class*="pool-detail"] .px-4.py-3 .text-right {
+    flex: 1;
+    text-align: left !important; /* 文字靠左更自然 */
+  }
+
+  div[class*="pool-detail"] .px-4.py-3 .w-24 {
+    width: 100% !important; /* 进度条占满宽度 */
+    margin-top: 6px !important;
+  }
+
+    /* 手机端隐藏搜索栏 */
+  .sao-search-bar,
+  .sao-search-toggle {
+    display: none !important;
+  }
   /* 桌面图标 - 手机端更大更易点击 */
   .desktop-icon {
     width: 70px;
@@ -544,6 +714,186 @@
     opacity: 0.8;
   }
 }
+ /* ========== SAO 风格抽屉式搜索栏 ========== */
+.sao-search-toggle {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50px;
+  height: 50px;
+  background: rgba(240, 240, 240, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 50%;
+  border: 2px solid #ff9900;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 50;
+  transition: all 0.3s ease;
+}
+.sao-search-toggle:hover {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 25px rgba(255, 153, 0, 0.3);
+  transform: translateX(-50%) scale(1.1);
+}
+.sao-search-bar {
+  position: fixed;
+  top: -70px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 500px;
+  height: 50px;
+  background: rgba(240, 240, 240, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 4px;
+  border-bottom: 2px solid #ff9900;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  padding: 0 15px;
+  z-index: 51;
+  transition: all 0.3s ease;
+  clip-path: polygon(0 0, 100% 0, 100% 85%, 98% 100%, 2% 100%, 0 85%);
+}
+.sao-search-bar.open {
+  top: 20px;
+}
+.sao-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  font-family: "Segoe UI", "Roboto", monospace;
+  font-size: 16px;
+  color: #555;
+  outline: none;
+  padding: 0 10px;
+  font-weight: 500;
+}
+.sao-input::placeholder {
+  color: #aaa;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+.sao-icon {
+  font-size: 18px;
+  color: #ff9900;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.sao-icon:hover {
+  transform: scale(1.1);
+}
+
+/* ========== SAO 风格系统信息 ========== */
+.sao-system-panel {
+  background: linear-gradient(135deg, rgba(20, 20, 30, 0.95) 0%, rgba(40, 40, 60, 0.9) 100%);
+  color: #e0e0e0;
+}
+
+.sao-header {
+  background: linear-gradient(90deg, rgba(255, 153, 0, 0.2) 0%, transparent 100%);
+  border-bottom: 2px solid #ff9900;
+  padding: 16px 24px;
+}
+
+.sao-header h3 {
+  color: #ff9900;
+  font-family: "Segoe UI", monospace;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px rgba(255, 153, 0, 0.5);
+}
+
+.sao-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(5px);
+  border: 1px solid rgba(255, 153, 0, 0.3);
+  border-radius: 4px;
+  padding: 16px;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.sao-card:hover {
+  border-color: #ff9900;
+  box-shadow: 0 0 15px rgba(255, 153, 0, 0.2);
+}
+
+.sao-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: #ff9900;
+  border-radius: 4px 0 0 4px;
+}
+
+.sao-label {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.sao-value {
+  color: #fff;
+  font-size: 20px;
+  font-weight: bold;
+  font-family: "Consolas", monospace;
+}
+
+.sao-value-highlight {
+  color: #ff9900;
+  text-shadow: 0 0 8px rgba(255, 153, 0, 0.5);
+}
+
+.sao-progress-bar {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  height: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.sao-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff9900, #ffcc00);
+  box-shadow: 0 0 10px rgba(255, 153, 0, 0.5);
+  transition: width 0.5s ease;
+}
+
+.sao-progress-fill.warning {
+  background: linear-gradient(90deg, #ff6600, #ff3300);
+}
+
+.sao-progress-fill.danger {
+  background: linear-gradient(90deg, #ff3300, #cc0000);
+}
+
+.sao-section-title {
+  color: #ff9900;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 153, 0, 0.3);
+  margin-bottom: 16px;
+}
+
+.sao-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.sao-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
   </style>
 </head>
 <body>
@@ -565,6 +915,22 @@
       </button>
     </div>
   </div>
+
+   <!-- SAO风格抽屉式搜索栏 -->
+<div v-if="loggedIn && !searchBarOpen" class="sao-search-toggle" @click="searchBarOpen = true">
+  <span class="sao-icon">🔍</span>
+</div>
+<div v-if="loggedIn" class="sao-search-bar" :class="{ open: searchBarOpen }">
+  <span class="sao-icon">🔍</span>
+  <input type="text"
+         class="sao-input"
+         placeholder="搜索文件、应用..."
+         v-model="searchQuery"
+         @keyup.enter="doSearch"
+         @keyup.esc="searchBarOpen = false"
+         ref="searchInput">
+  <span @click="searchBarOpen = false; searchQuery = ''" class="sao-icon">✕</span>
+</div>
 
     <!-- 桌面环境 -->
     <div v-if="loggedIn">
@@ -621,14 +987,14 @@
         <div v-for="window in windows"
              :key="window.id"
              :class="['window', { maximized: window.maximized }]"
-             :style="window.maximized ? {} : {
-               top: window.y + 'px',
-               left: window.x + 'px',
-               width: window.width + 'px',
-               height: window.height + 'px',
-               zIndex: window.zIndex,
-               display: window.minimized ? 'none' : 'flex'
-             }"
+             :style="window.maximized ? { zIndex: window.zIndex, display: window.minimized ? 'none' : 'flex' } : {
+  top: window.y + 'px',
+  left: window.x + 'px',
+  width: window.width + 'px',
+  height: window.height + 'px',
+  zIndex: window.zIndex,
+  display: window.minimized ? 'none' : 'flex'
+}"
              @mousedown="focusWindow(window.id)">
 
           <!-- 窗口标题栏 -->
@@ -759,6 +1125,9 @@
                   </button>
                 </div>
 
+
+
+
                 <!-- 视图切换 -->
                 <div class="flex items-center gap-1">
                   <button @click="window.viewMode = 'list'"
@@ -774,6 +1143,39 @@
                     ⊞
                   </button>
                 </div>
+                  <!-- 🔍 搜索框 -->
+<div class="flex items-center gap-2 flex-1 max-w-xs">
+  <div class="relative flex-1">
+    <input
+      type="text"
+      v-model="window.searchKeyword"
+      @keyup.enter="performSearch(window)"
+      placeholder="搜索文件..."
+      class="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded focus:outline-none focus:border-blue-500 bg-white"
+      :disabled="window.isSearching"
+    >
+    <button
+      v-if="window.searchKeyword"
+      @click="window.searchKeyword = ''; clearSearch(window)"
+      class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs"
+    >✕</button>
+  </div>
+  <button
+    @click="performSearch(window)"
+    :disabled="window.isSearching || !window.searchKeyword"
+    class="px-2 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+    title="搜索"
+  >
+    <span v-if="window.isSearching">⏳</span>
+    <span v-else>🔍</span>
+  </button>
+  <button
+    v-if="window.isSearchMode"
+    @click="clearSearch(window)"
+    class="px-2 py-1.5 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+    title="退出搜索"
+  >✕</button>
+</div>
 
                 <!-- 选中文件计数 -->
                 <div class="ml-auto text-sm text-gray-600">
@@ -817,14 +1219,19 @@
                   <div class="p-3 text-xs font-semibold text-gray-600 bg-white">
                     ⭐ 快捷方式
                   </div>
-                  <div class="sidebar-item">
-                    <span class="text-xl">📥</span>
-                    <span class="text-sm">最近文件</span>
-                  </div>
-                  <div class="sidebar-item">
-                    <span class="text-xl">⭐</span>
-                    <span class="text-sm">收藏夹</span>
-                  </div>
+                  <div class="sidebar-item"
+     :class="{ active: window.currentDrive === 'recent' }"
+     @click="navigateToStorage(window, 'recent')">
+  <span class="text-xl">📥</span>
+  <span class="text-sm">最近访问</span>
+</div>
+
+<div class="sidebar-item"
+     :class="{ active: window.currentDrive === 'favorites' }"
+     @click="navigateToStorage(window, 'favorites')">
+  <span class="text-xl">⭐</span>
+  <span class="text-sm">收藏夹</span>
+</div>
                 </div>
 
 
@@ -856,7 +1263,10 @@
       </button>
 
       <div class="text-5xl mb-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</div>
-      <div class="text-sm text-center break-all">{{ file.name }}</div>
+      <div class="text-sm text-center break-all">
+  {{ file.name }}
+  <span v-if="file.source" class="block text-xs text-gray-400 mt-1">{{ file.source }}</span>
+</div>
       <div class="text-xs text-gray-500">{{ file.is_dir ? '' : formatSize(file.size) }}</div>
     </div>
   </div>
@@ -883,7 +1293,10 @@
       @contextmenu.prevent.stop="showFileContextMenu($event, file, window)">
 
         <td class="p-2"><input type="checkbox" :checked="window.selectedFiles.includes(file.name)" @click.stop @change="toggleFileSelection(window, file.name, $event)"></td>
-        <td class="p-2"><span class="mr-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</span>{{ file.name }}</td>
+        <td class="p-2">
+  <span class="mr-2">{{ file.is_dir ? '📁' : getFileIcon(file.name) }}</span>{{ file.name }}
+  <span v-if="file.source" class="ml-2 text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">{{ file.source }}</span>
+</td>
         <td class="p-2">{{ file.is_dir ? '-' : formatSize(file.size) }}</td>
         <td class="p-2">{{ formatTime(file.mtime) }}</td>
 
@@ -902,197 +1315,136 @@
               </div>
             </div>
 
+
             <!-- 系统信息 -->
-            <!-- 系统信息 -->
-<div v-else-if="window.type === 'system'" class="h-full flex flex-col overflow-hidden">
-  <!-- 标题区 -->
-  <div class="px-6 py-4 border-b bg-gradient-to-r from-blue-50 to-purple-50">
-    <h3 class="text-xl font-bold flex items-center gap-2">
-      <span class="text-3xl">📊</span>
-      系统信息
+<!-- 系统信息 - SAO风格 -->
+<div v-else-if="window.type === 'system'" class="h-full flex flex-col overflow-hidden sao-system-panel">
+  <!-- SAO风格标题 -->
+  <div class="sao-header">
+    <h3 class="text-xl font-bold flex items-center gap-3">
+      <span class="text-2xl">⚙️</span>
+      <span>SYSTEM STATUS</span>
+      <span class="ml-auto text-sm opacity-60">{{ currentTime }}</span>
     </h3>
   </div>
 
   <!-- 可滚动内容区 -->
-  <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+  <div class="flex-1 overflow-y-auto p-6 space-y-6">
 
-    <!-- 基础信息 -->
-    <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
-      <h4 class="font-semibold text-blue-800 mb-3 flex items-center gap-2">
-        <span>💻</span> 系统概览
-      </h4>
-      <div class="grid grid-cols-2 gap-3">
-        <div class="bg-white p-3 rounded-lg shadow-sm">
-          <div class="text-xs text-gray-600 mb-1">主机名</div>
-          <div class="font-semibold text-gray-800 text-sm truncate" :title="systemInfo.hostname">
-            {{ systemInfo.hostname }}
-          </div>
+    <!-- 系统概览 -->
+    <div>
+      <div class="sao-section-title">📡 SYSTEM OVERVIEW</div>
+      <div class="sao-grid sao-grid-2">
+        <div class="sao-card">
+          <div class="sao-label">Hostname</div>
+          <div class="sao-value">{{ systemInfo.hostname || '--' }}</div>
         </div>
-        <div class="bg-white p-3 rounded-lg shadow-sm">
-          <div class="text-xs text-gray-600 mb-1">操作系统</div>
-          <div class="font-semibold text-gray-800 text-sm truncate" :title="systemInfo.os">
-            {{ systemInfo.os }}
-          </div>
+        <div class="sao-card">
+          <div class="sao-label">Operating System</div>
+          <div class="sao-value" style="font-size: 14px;">{{ systemInfo.os || '--' }}</div>
         </div>
       </div>
     </div>
 
-      <!-- 硬件监控信息 -->
-
-<div class="bg-white p-4 rounded-lg border shadow-sm">
-  <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-    <span>🌡️</span> 硬件监控
-  </h4>
-
-  <div class="grid grid-cols-2 gap-3">
-    <!-- CPU温度 -->
-    <div class="bg-gray-50 p-3 rounded">
-      <div class="text-xs text-gray-600 mb-1">CPU温度</div>
-      <div class="font-bold text-lg">
-        {{ systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value?.toFixed(1) || '--' }}°C
-      </div>
-    </div>
-
-
-    <!-- CPU频率 -->
-<div class="bg-gray-50 p-3 rounded">
-  <div class="text-xs text-gray-600 mb-1">CPU频率</div>
-  <div class="font-bold text-lg">{{ systemInfo.cpu_freq || '--' }} GHz</div>
-</div>
-
-<!-- CPU功耗 -->
-<div class="bg-gray-50 p-3 rounded">
-  <div class="text-xs text-gray-600 mb-1">CPU功耗</div>
-  <div class="font-bold text-lg">{{ systemInfo.cpu_power || '--' }} W</div>
-</div>
-
-    <!-- 风扇转速 -->
-    <div class="bg-gray-50 p-3 rounded">
-      <div class="text-xs text-gray-600 mb-1">风扇转速</div>
-      <div class="font-bold text-lg text-blue-600">
-        {{ systemInfo.fans?.[0]?.value?.toFixed(0) || '--' }} RPM
-      </div>
-    </div>
-
-    <!-- 硬盘温度 -->
-    <div class="bg-gray-50 p-3 rounded">
-  <div class="text-xs text-gray-600 mb-1">硬盘温度</div>
-  <div class="font-bold text-lg">
-    {{ (systemInfo.disks_temp?.[0]?.value || systemInfo.temperatures?.find(t => t.name === 'Temperature')?.value || 0).toFixed(1) }}°C
-  </div>
-</div>
-
-
-    <!-- 网络带宽 -->
-<div class="bg-gray-50 p-3 rounded">
-  <div class="text-xs text-gray-600 mb-1">网络带宽</div>
-  <div class="font-bold text-sm">
-    ↓ {{ systemInfo.network_download || '--' }} | ↑ {{ systemInfo.network_upload || '--' }} MB/s
-  </div>
-</div>
-  </div>
-
-  <!-- 如果没有监控数据 -->
-  <div v-if="!systemInfo.temperatures && !systemInfo.fans"
-       class="text-center text-gray-400 py-4 mt-3">
-    <p class="text-sm">📊 暂无硬件监控数据</p>
-    <p class="text-xs mt-1">请确保 OpenHardwareMonitor 正在运行</p>
-  </div>
-</div>
-      
     <!-- CPU & 内存 -->
-    <div class="grid grid-cols-2 gap-3">
-      <div class="bg-white p-4 rounded-lg border shadow-sm">
-        <div class="flex items-center justify-between mb-2">
-          <div class="text-sm font-semibold text-gray-700">🖥️ CPU 使用率</div>
-          <div class="text-xl font-bold text-blue-600">{{ systemInfo.cpu_percent }}%</div>
+    <div>
+      <div class="sao-section-title">💻 PERFORMANCE</div>
+      <div class="sao-grid sao-grid-2">
+        <!-- CPU使用率 -->
+        <div class="sao-card">
+          <div class="sao-label">CPU Usage</div>
+          <div class="sao-value sao-value-highlight">{{ systemInfo.cpu_percent || 0 }}%</div>
+          <div class="sao-progress-bar">
+            <div class="sao-progress-fill"
+                 :class="{ 'warning': systemInfo.cpu_percent > 70, 'danger': systemInfo.cpu_percent > 90 }"
+                 :style="{ width: (systemInfo.cpu_percent || 0) + '%' }"></div>
+          </div>
         </div>
-        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-          <div class="h-2.5 rounded-full transition-all bg-gradient-to-r from-blue-400 to-blue-600"
-               :style="{ width: systemInfo.cpu_percent + '%' }"></div>
-        </div>
-      </div>
-
-      <div class="bg-white p-4 rounded-lg border shadow-sm">
-        <div class="flex items-center justify-between mb-2">
-          <div class="text-sm font-semibold text-gray-700">🧠 内存使用</div>
-          <div class="text-xl font-bold text-purple-600">
+        <!-- 内存使用 -->
+        <div class="sao-card">
+          <div class="sao-label">Memory Usage</div>
+          <div class="sao-value sao-value-highlight">
             {{ ((systemInfo.memory_used / systemInfo.memory_total) * 100).toFixed(1) }}%
           </div>
-        </div>
-        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-          <div class="h-2.5 rounded-full transition-all bg-gradient-to-r from-purple-400 to-purple-600"
-               :style="{ width: (systemInfo.memory_used / systemInfo.memory_total) * 100 + '%' }"></div>
-        </div>
-        <div class="text-xs text-gray-500 mt-1">
-          {{ (systemInfo.memory_used / (1024*1024*1024)).toFixed(2) }} GB /
-          {{ (systemInfo.memory_total / (1024*1024*1024)).toFixed(2) }} GB
+          <div class="sao-progress-bar">
+            <div class="sao-progress-fill"
+                 :class="{ 'warning': (systemInfo.memory_used / systemInfo.memory_total) > 0.7, 'danger': (systemInfo.memory_used / systemInfo.memory_total) > 0.9 }"
+                 :style="{ width: (systemInfo.memory_used / systemInfo.memory_total * 100) + '%' }"></div>
+          </div>
+          <div class="text-xs text-gray-500 mt-2">
+            {{ (systemInfo.memory_used / (1024*1024*1024)).toFixed(1) }} / {{ (systemInfo.memory_total / (1024*1024*1024)).toFixed(1) }} GB
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 磁盘容量信息 -->
-    <div class="bg-white p-4 rounded-lg border shadow-sm">
-      <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-        <span>💾</span> 磁盘容量
-      </h4>
-      <div class="space-y-3 max-h-64 overflow-y-auto pr-2">
-        <div v-for="disk in disks" :key="disk.mount"
-             class="border-b last:border-b-0 pb-3 last:pb-0">
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2 flex-1 min-w-0">
-              <span class="text-xl flex-shrink-0">{{ disk.ec_scheme ? '🛡️' : '💾' }}</span>
-              <span class="font-mono font-bold text-gray-800 text-sm truncate"
-                    :title="disk.mount">
-                {{ disk.mount }}
-              </span>
-              <span v-if="disk.ec_scheme"
-                    class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded flex-shrink-0">
+    <!-- 硬件监控 -->
+    <div>
+      <div class="sao-section-title">🌡️ HARDWARE MONITOR</div>
+      <div class="sao-grid">
+        <!-- CPU温度 -->
+        <div class="sao-card">
+          <div class="sao-label">CPU Temp</div>
+          <div class="sao-value" :class="{ 'sao-value-highlight': (systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value || 0) > 70 }">
+            {{ systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value?.toFixed(0) || '--' }}°C
+          </div>
+        </div>
+        <!-- CPU频率 -->
+        <div class="sao-card">
+          <div class="sao-label">CPU Freq</div>
+          <div class="sao-value">{{ systemInfo.cpu_freq || '--' }} GHz</div>
+        </div>
+        <!-- CPU功耗 -->
+        <div class="sao-card">
+          <div class="sao-label">CPU Power</div>
+          <div class="sao-value">{{ systemInfo.cpu_power || '--' }} W</div>
+        </div>
+        <!-- 风扇转速 -->
+        <div class="sao-card">
+          <div class="sao-label">Fan Speed</div>
+          <div class="sao-value">{{ systemInfo.fans?.[0]?.value?.toFixed(0) || '--' }} RPM</div>
+        </div>
+        <!-- 硬盘温度 -->
+        <div class="sao-card">
+          <div class="sao-label">Disk Temp</div>
+          <div class="sao-value">
+            {{ (systemInfo.disks_temp?.[0]?.value || systemInfo.temperatures?.find(t => t.name === 'Temperature')?.value || 0).toFixed(0) }}°C
+          </div>
+        </div>
+        <!-- 网络 -->
+        <div class="sao-card">
+          <div class="sao-label">Network I/O</div>
+          <div class="sao-value" style="font-size: 14px;">
+            ↓{{ systemInfo.network_download || '--' }} ↑{{ systemInfo.network_upload || '--' }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 磁盘容量 -->
+    <div>
+      <div class="sao-section-title">💾 STORAGE</div>
+      <div class="space-y-3">
+        <div v-for="disk in disks" :key="disk.mount" class="sao-card">
+          <div class="flex justify-between items-center mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">{{ disk.ec_scheme ? '🛡️' : '💾' }}</span>
+              <span class="font-mono text-white">{{ disk.mount }}</span>
+              <span v-if="disk.ec_scheme" class="text-xs bg-orange-500/30 text-orange-400 px-2 py-0.5 rounded">
                 {{ disk.ec_scheme }}
               </span>
             </div>
-            <div class="text-sm text-gray-600 flex-shrink-0 ml-2">
-              {{ formatSize(disk.bytes_total) }}
-            </div>
+            <div class="text-sm text-gray-400">{{ formatSize(disk.bytes_total) }}</div>
           </div>
-          <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-            <div class="h-3 rounded-full transition-all flex items-center justify-center text-xs text-white font-semibold"
-                 :class="disk.percent > 90 ? 'bg-gradient-to-r from-red-400 to-red-600' :
-                         disk.percent > 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
-                         'bg-gradient-to-r from-green-400 to-green-600'"
-                 :style="{ width: disk.percent + '%' }">
-              {{ disk.percent }}%
-            </div>
+          <div class="sao-progress-bar">
+            <div class="sao-progress-fill"
+                 :class="{ 'warning': (disk.bytes_used / disk.bytes_total) > 0.7, 'danger': (disk.bytes_used / disk.bytes_total) > 0.9 }"
+                 :style="{ width: (disk.bytes_used / disk.bytes_total * 100) + '%' }"></div>
           </div>
           <div class="flex justify-between text-xs text-gray-500 mt-1">
-            <span>已用: {{ formatSize(disk.bytes_used) }}</span>
-            <span>可用: {{ formatSize(disk.bytes_free) }}</span>
+            <span>已用 {{ formatSize(disk.bytes_used) }}</span>
+            <span>{{ (disk.bytes_used / disk.bytes_total * 100).toFixed(1) }}%</span>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 总览统计 -->
-    <div class="grid grid-cols-3 gap-3">
-      <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow-lg">
-        <div class="text-xs opacity-90 mb-1">总容量</div>
-        <div class="text-lg font-bold truncate"
-             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0))">
-          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_total, 0)) }}
-        </div>
-      </div>
-      <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow-lg">
-        <div class="text-xs opacity-90 mb-1">可用空间</div>
-        <div class="text-lg font-bold truncate"
-             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0))">
-          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_free, 0)) }}
-        </div>
-      </div>
-      <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow-lg">
-        <div class="text-xs opacity-90 mb-1">已用空间</div>
-        <div class="text-lg font-bold truncate"
-             :title="formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0))">
-          {{ formatSize(disks.reduce((sum, d) => sum + d.bytes_used, 0)) }}
         </div>
       </div>
     </div>
@@ -1118,7 +1470,7 @@
                   <button @click="window.activeTab = 'encryption'"
                           :class="window.activeTab === 'encryption' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
                           class="px-4 py-2 rounded-t-lg font-semibold transition">
-                    🔐 磁盘加密
+                    🔐 加密
                   </button>
                   <button @click="window.activeTab = 'raid'"
                           :class="window.activeTab === 'raid' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'"
@@ -1130,22 +1482,29 @@
 
 
 
-                <!-- 磁盘加密 -->
-                <div v-if="window.activeTab === 'encryption'" class="space-y-4">
-    <div class="bg-purple-50 border-l-4 border-purple-500 p-4 rounded-md">
-        <div class="flex items-start gap-3">
-            <span class="text-2xl mt-1">💡</span>
-            <div>
-                <h4 class="font-semibold text-purple-900 mb-1">全盘加密</h4>
-                <p class="text-sm text-purple-800">为物理硬盘设置密码，保护数据安全。加密后的硬盘在解锁前无法访问。服务器重启后所有硬盘将自动锁定。</p>
-            </div>
-        </div>
+           <!-- 加密管理 -->
+<div v-if="window.activeTab === 'encryption'" class="space-y-6">
+
+    <div v-if="!user.is_admin" class="text-center text-red-500 p-4 bg-red-50 rounded-md">
+        需要管理员权限才能管理加密设置。
     </div>
-    <div v-if="!user.is_admin" class="text-center text-red-500 p-4 bg-red-50 rounded-md">需要管理员权限才能管理磁盘加密。</div>
-    <div v-else class="bg-white border rounded-lg shadow-sm">
-        <div class="p-4 border-b font-semibold text-gray-700">加密状态</div>
-        <div class="space-y-2 p-4">
-            <div v-for="disk in encryptionStatus" :key="disk.drive" class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50 transition-all">
+
+    <template v-else>
+
+       <!-- ========== 磁盘加密 ========== -->
+<div class="bg-white border rounded-lg shadow-sm">
+    <div class="p-4 border-b font-semibold text-gray-700 flex items-center gap-2">
+        <span class="text-xl">💾</span> 磁盘加密
+    </div>
+    <div class="p-4">
+        <div class="bg-purple-50 border-l-4 border-purple-500 p-3 rounded-md mb-4">
+            <p class="text-sm text-purple-800">为独立物理硬盘设置密码保护。已加入容量池的磁盘请使用下方的"容量池加密"。</p>
+        </div>
+
+        <!-- 磁盘列表 -->
+        <div v-if="standaloneDiskEncryption.length > 0" class="space-y-2">
+            <div v-for="disk in standaloneDiskEncryption" :key="disk.drive"
+                 class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50 transition-all">
                 <div class="flex items-center gap-4">
                     <span class="text-3xl">{{ disk.is_configured ? (disk.is_unlocked ? '🔓' : '🔒') : '💾' }}</span>
                     <div>
@@ -1158,41 +1517,98 @@
                     </div>
                 </div>
                 <div class="flex gap-2">
-  <!-- 🔹 1. 解锁磁盘 -->
-  <button
-    v-if="disk.is_configured && !disk.is_unlocked"
-    @click="unlockDisk(disk.drive)"
-    class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
-    解锁
-  </button>
-
-  <!-- 🔹 2. 锁定磁盘 -->
-  <button
-    v-if="disk.is_configured && disk.is_unlocked"
-    @click="lockDisk(disk.drive)"
-    class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">
-    锁定
-  </button>
-
-  <!-- 🔹 3. 设密码 / 改密码 -->
-  <button
-    @click="setEncryptionPassword(disk.drive, disk.is_configured)"
-    class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
-    {{ disk.is_configured ? '改密码' : '设密码' }}
-  </button>
-
-  <!-- 🔹 4. 移除加密（永久解密） -->
-  <button
-    v-if="disk.is_configured"
-    @click="decryptDiskPermanently(disk.drive)"
-    class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
-    移除加密
-  </button>
-</div>
-
+                    <button v-if="disk.is_configured && !disk.is_unlocked"
+                            @click="unlockDisk(disk.drive)"
+                            class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+                        解锁
+                    </button>
+                    <button v-if="disk.is_configured && disk.is_unlocked"
+                            @click="lockDisk(disk.drive)"
+                            class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">
+                        锁定
+                    </button>
+                    <button @click="setEncryptionPassword(disk.drive, disk.is_configured)"
+                            class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
+                        {{ disk.is_configured ? '改密码' : '设密码' }}
+                    </button>
+                    <button v-if="disk.is_configured"
+                            @click="decryptDiskPermanently(disk.drive)"
+                            class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
+                        移除加密
+                    </button>
+                </div>
             </div>
         </div>
+
+        <!-- 空状态 -->
+        <div v-else class="p-4 text-center text-gray-500">
+            <p>没有独立磁盘</p>
+            <p class="text-xs mt-1">（已加入容量池的磁盘请使用下方"容量池加密"）</p>
+        </div>
     </div>
+</div>
+
+        <!-- ========== 容量池加密 ========== -->
+        <div v-if="poolStatus.is_configured" class="bg-white border rounded-lg shadow-sm">
+            <div class="p-4 border-b font-semibold text-gray-700 flex items-center gap-2">
+                <span class="text-xl">📦</span> 容量池加密
+            </div>
+            <div class="p-4">
+                <div class="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-md mb-4">
+                    <p class="text-sm text-blue-800">对容量池中分布在各磁盘上的文件进行统一加密保护。加密后需解锁才能访问池内文件。</p>
+                </div>
+
+                <!-- 池加密状态 -->
+                <div class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50">
+                    <div class="flex items-center gap-4">
+                        <span class="text-3xl">{{ poolEncryptionStatus.main?.is_encrypted ? (poolEncryptionStatus.main?.is_unlocked ? '🔓' : '🔒') : '📦' }}</span>
+                        <div>
+                            <div class="font-bold">主存储池</div>
+                            <div v-if="poolEncryptionStatus.main?.is_encrypted">
+                                <span v-if="poolEncryptionStatus.main?.is_unlocked"
+                                      class="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已解锁</span>
+                                <span v-else
+                                      class="text-xs font-semibold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">已锁定</span>
+                            </div>
+                            <div v-else class="text-xs text-gray-500">未加密 · {{ poolStatus.total_files || 0 }} 个文件</div>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <!-- 未加密：显示设密码 -->
+                        <button v-if="!poolEncryptionStatus.main?.is_encrypted"
+                                @click="encryptPool"
+                                class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
+                            设密码
+                        </button>
+                        <!-- 已加密未解锁：显示解锁 -->
+                        <button v-if="poolEncryptionStatus.main?.is_encrypted && !poolEncryptionStatus.main?.is_unlocked"
+                                @click="unlockPool"
+                                class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+                            解锁
+                        </button>
+                        <!-- 已加密已解锁：显示锁定 -->
+                        <button v-if="poolEncryptionStatus.main?.is_encrypted && poolEncryptionStatus.main?.is_unlocked"
+                                @click="lockPool"
+                                class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">
+                            锁定
+                        </button>
+                        <!-- 已加密：显示移除加密 -->
+                        <button v-if="poolEncryptionStatus.main?.is_encrypted"
+                                @click="decryptPool"
+                                class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
+                            移除加密
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 未配置容量池时的提示 -->
+        <div v-else class="bg-gray-50 border rounded-lg p-6 text-center text-gray-500">
+            <div class="text-4xl mb-2">📦</div>
+            <p>尚未配置容量池，配置后可在此设置池加密</p>
+        </div>
+    </template>
 </div>
 
                <!-- 容错管理(纠删码) -->
@@ -1201,53 +1617,74 @@
     <div class="flex items-start gap-3">
       <span class="text-2xl">ℹ️</span>
       <div>
-        <h4 class="font-semibold text-blue-900 mb-1">什么是纠删码?</h4>
-        <p class="text-sm text-blue-800">纠删码(Erasure Coding)是一种数据保护技术,可以在部分硬盘损坏时恢复数据。配置后,数据会被分散存储在多个硬盘上。</p>
+       <h4 class="font-semibold text-blue-900 mb-1">什么是容错保护?</h4>
+<p class="text-sm text-blue-800">容错保护可以让您的数据在部分硬盘损坏时仍能完整恢复。数据会被分散存储在多个硬盘上，即使有硬盘故障，也不会丢失文件。</p>
       </div>
     </div>
   </div>
 
   <div class="bg-white border rounded-lg p-4 shadow-sm">
     <h4 class="font-semibold mb-3">当前配置状态</h4>
-    <div v-if="ecStatus.is_configured" class="space-y-2">
+   <div v-if="ecStatus.is_configured" class="space-y-4">
+      <!-- 状态头部 -->
       <div class="flex items-center gap-2">
         <span :class="ecStatus.is_healthy ? 'text-green-600' : 'text-red-600'" class="text-2xl">
           {{ ecStatus.is_healthy ? '✅' : '⚠️' }}
         </span>
-        <span class="font-semibold">{{ ecStatus.is_healthy ? '系统健康' : '系统异常' }}</span>
-      </div>
-      <div class="text-sm text-gray-600">
-        配置方案: Reed-Solomon ({{ ecStatus.k }}+{{ ecStatus.m }})
-      </div>
-      <div class="text-sm text-gray-600">
-        参与磁盘: {{ ecStatus.config_disks?.length || 0 }} 个
-      </div>
-      <div class="text-sm text-gray-600">
-        可用容量: {{ formatSize(ecStatus.usable_bytes || 0) }}
+        <span class="font-semibold text-lg">{{ ecStatus.is_healthy ? '系统健康' : '系统异常' }}</span>
+        <span class="ml-auto text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
+          容错: 最多 {{ ecStatus.m }} 块硬盘
+        </span>
       </div>
 
-      <div class="flex gap-2 mt-4">
-      <button @click="openFilesWindow('ec_volume')"
-              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
-        打开纠删码卷
-      </button>
+      <!-- 空间使用进度条 -->
+      <div class="bg-gray-100 rounded-lg p-3">
+        <div class="flex justify-between text-sm mb-2">
+          <span class="text-gray-600">存储空间</span>
+          <span class="font-semibold">
+            {{ formatSize(ecStatus.used_bytes || 0) }} / {{ formatSize(ecStatus.total_bytes || 0) }}
+          </span>
+        </div>
+        <div class="w-full bg-gray-300 rounded-full h-3 overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-500"
+               :class="(ecStatus.used_bytes / ecStatus.total_bytes * 100) > 90 ? 'bg-red-500' :
+                       (ecStatus.used_bytes / ecStatus.total_bytes * 100) > 70 ? 'bg-yellow-500' : 'bg-blue-500'"
+               :style="{ width: ((ecStatus.used_bytes || 0) / (ecStatus.total_bytes || 1) * 100) + '%' }">
+          </div>
+        </div>
+        <div class="text-xs text-gray-500 mt-1">
+          已用 {{ ((ecStatus.used_bytes || 0) / (ecStatus.total_bytes || 1) * 100).toFixed(1) }}% · 可用 {{ formatSize(ecStatus.usable_bytes || 0) }}
+        </div>
+      </div>
 
-          <!-- ✅ 新增：批量导出按钮 -->
-  <button @click="exportAllEcFiles()"
-          class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
-    📦 导出所有文件
-  </button>
+      <!-- 参与硬盘 -->
+      <div class="text-sm text-gray-600">
+        参与硬盘:
+        <span v-for="(disk, idx) in ecStatus.config_disks" :key="disk" class="font-mono">
+          {{ disk.replace(':/', '').replace('/', '') }}盘<span v-if="idx < ecStatus.config_disks.length - 1">、</span>
+        </span>
+        <span class="text-gray-400 ml-1">(共 {{ ecStatus.config_disks?.length || 0 }} 块)</span>
+      </div>
 
-      <!-- ✅ 新增：删除配置按钮 -->
-      <button @click="removeEcConfig()"
-              class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
-        🗑️ 删除配置
-      </button>
+      <!-- 操作按钮 -->
+      <div class="flex gap-2 pt-2">
+        <button @click="openFilesWindow('ec_volume')"
+                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+          📂 打开存储
+        </button>
+        <button @click="exportAllEcFiles()"
+                class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+          📦 导出文件
+        </button>
+        <button @click="removeEcConfig()"
+                class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+          🗑️ 删除配置
+        </button>
+      </div>
     </div>
-  </div>
 
   <div v-else class="text-gray-500">
-    <p class="mb-3">尚未配置纠删码</p>
+    <p class="mb-3">尚未配置容错保护</p>
     <button @click="openEcSetupDialog()"
             class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
       开始配置
@@ -1272,7 +1709,7 @@
   <!-- 健康检查区域 -->
   <div v-if="ecStatus.is_configured" class="bg-white border rounded-lg p-4 shadow-sm">
     <div class="flex justify-between items-center mb-3">
-      <h4 class="font-semibold">🏥 EC卷健康检查</h4>
+      <h4 class="font-semibold">🏥 容错存储卷健康检查</h4>
       <button @click="performHealthCheck(window)"
               class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
         🔍 执行检查
@@ -1625,11 +2062,6 @@
 
 
 
-              <!-- ONLYOFFICE 编辑器窗口 -->
-<div v-else-if="window.type === 'onlyoffice-editor'" class="h-full flex flex-col bg-gray-100">
-  <!-- 编辑器容器 -->
-  <div :id="'editor-' + window.id" class="flex-1 w-full h-full"></div>
-</div>
 
 
               <div v-else-if="window.type === 'ec-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
@@ -1662,16 +2094,16 @@
                     <h4 class="font-semibold mb-3 text-gray-700">配置参数</h4>
                     <div class="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <div class="text-gray-500">纠删码方案</div>
-                        <div class="font-semibold text-gray-800">Reed-Solomon</div>
+                        <div class="text-gray-500">保护方案</div>
+<div class="font-semibold text-gray-800">容错存储</div>
                       </div>
                       <div>
-                        <div class="text-gray-500">数据块 (K) / 校验块 (M)</div>
-                        <div class="font-semibold text-gray-800">{{ window.ecDetails.k }} + {{ window.ecDetails.m }}</div>
+                       <div class="text-gray-500">数据分布</div>
+<div class="font-semibold text-gray-800">{{ window.ecDetails.k }} 份数据 + {{ window.ecDetails.m }} 份备份</div>
                       </div>
                       <div>
                         <div class="text-gray-500">容错能力</div>
-                        <div class="font-semibold text-gray-800">允许 {{ window.ecDetails.m }} 个磁盘损坏</div>
+<div class="font-semibold text-gray-800">最多允许 {{ window.ecDetails.m }} 块硬盘同时损坏</div>
                       </div>
                       <div>
                         <div class="text-gray-500">数据可恢复性</div>
@@ -1703,7 +2135,7 @@
 
                   <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-md mt-6">
                       <h4 class="font-semibold text-red-900 mb-2">危险操作</h4>
-                      <p class="text-sm text-red-800 mb-3">删除配置后，您将需要重新设置纠删码。此操作无法撤销。</p>
+                      <p class="text-sm text-red-800 mb-3">删除配置后，您将需要重新设置容错保护。此操作无法撤销。</p>
                       <button @click="deleteEcConfig(window)"
                               class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
                         🗑️ 删除配置
@@ -1713,115 +2145,158 @@
               </div>
 
               <!-- 空间池管理窗口 -->
-              <div v-else-if="window.type === 'pool-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
-                <div class="px-6 py-4 border-b bg-white flex justify-between items-center">
-                  <h3 class="text-xl font-bold flex items-center gap-2">
-                    <span class="text-3xl">📦</span>
-                    空间池管理
-                  </h3>
-                  <div class="flex gap-2">
-                    <button @click="rebuildPoolIndex"
-                            class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200">
-                      🔄 重建索引
-                    </button>
-                    <button @click="removePool"
-                            class="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200">
-                      🗑️ 删除池
-                    </button>
-                  </div>
-                </div>
+            <div v-else-if="window.type === 'pool-detail'" class="h-full flex flex-col overflow-hidden bg-gray-50">
+  <div class="px-6 py-4 border-b bg-white flex justify-between items-center">
+    <h3 class="text-xl font-bold flex items-center gap-2">
+      <span class="text-3xl">📦</span>
+      空间池管理
+    </h3>
+    <div class="flex gap-2">
+      <button @click="fetchPoolHealth" class="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm hover:bg-green-200">
+        🩺 健康检查
+      </button>
+      <button @click="previewRebalance" class="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg text-sm hover:bg-yellow-200">
+        ⚖️ 数据平衡
+      </button>
+      <button @click="rebuildPoolIndex" class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200">
+        🔄 重建索引
+      </button>
+      <button @click="removePool" class="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200">
+        🗑️ 删除池
+      </button>
+    </div>
+  </div>
 
-                <div class="flex-1 overflow-y-auto p-6 space-y-4">
-                  <!-- 状态概览 -->
-                  <div class="bg-white border rounded-lg p-4 shadow-sm">
-                    <h4 class="font-semibold mb-3 text-gray-700">状态总览</h4>
-                    <div class="grid grid-cols-3 gap-4 text-center">
-                      <div class="bg-purple-50 rounded-lg p-4">
-                        <div class="text-2xl font-bold text-purple-600">{{ poolStatus.pool?.disks?.length || 0 }}</div>
-                        <div class="text-sm text-gray-600">物理磁盘</div>
-                      </div>
-                      <div class="bg-green-50 rounded-lg p-4">
-                        <div class="text-2xl font-bold text-green-600">{{ Object.keys(poolStatus.volumes || {}).length }}</div>
-                        <div class="text-sm text-gray-600">逻辑卷</div>
-                      </div>
-                      <div class="bg-blue-50 rounded-lg p-4">
-                        <div class="text-2xl font-bold text-blue-600">{{ poolStatus.total_files || 0 }}</div>
-                        <div class="text-sm text-gray-600">总文件数</div>
-                      </div>
-                    </div>
-                  </div>
+  <div class="flex-1 overflow-y-auto p-6 space-y-4">
+    <!-- 健康状态警告 -->
+    <div v-if="poolHealth && poolHealth.offline_count > 0" class="bg-red-50 border-l-4 border-red-500 p-4 rounded-md">
+      <h4 class="font-semibold text-red-800 mb-2">⚠️ 磁盘离线警告</h4>
+      <p class="text-sm text-red-700">{{ poolHealth.offline_count }} 个磁盘不可访问，共 {{ poolHealth.affected_files?.length || 0 }} 个文件受影响</p>
+      <div v-if="poolHealth.offline" class="mt-2 space-y-1">
+        <div v-for="disk in poolHealth.offline" :key="disk.disk" class="text-sm text-red-600">
+          • {{ disk.disk }} - {{ disk.error }}
+        </div>
+      </div>
+    </div>
 
-                  <!-- 磁盘列表 -->
-                  <div class="bg-white border rounded-lg shadow-sm">
-                    <div class="p-4 border-b font-semibold text-gray-700">💾 物理磁盘</div>
-                    <div class="max-h-48 overflow-y-auto">
-                      <div v-for="disk in poolStatus.disks" :key="disk.disk"
-                           class="flex items-center justify-between px-4 py-3 border-b last:border-b-0">
-                        <div class="flex items-center gap-3">
-                          <span class="text-2xl">💿</span>
-                          <div>
-                            <div class="font-mono font-bold">{{ disk.disk }}</div>
-                            <div class="text-xs text-gray-500">总容量: {{ formatSize(disk.total) }}</div>
-                          </div>
-                        </div>
-                        <div class="text-right">
-                          <div class="text-green-600 font-semibold text-sm">{{ formatSize(disk.free) }} 可用</div>
-                          <div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden mt-1">
-                            <div class="h-full bg-blue-500" :style="{width: ((disk.total - disk.free) / disk.total * 100) + '%'}"></div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+    <div v-if="poolHealth && poolHealth.warnings?.length > 0" class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-md">
+      <h4 class="font-semibold text-yellow-800 mb-2">⚠️ 警告</h4>
+      <div class="space-y-1">
+        <div v-for="disk in poolHealth.warnings" :key="disk.disk" class="text-sm text-yellow-700">
+          • {{ disk.disk }} - {{ disk.warning || disk.error }}
+        </div>
+      </div>
+    </div>
 
-                  <!-- 逻辑卷列表 -->
-                  <div class="bg-white border rounded-lg shadow-sm">
-                    <div class="p-4 border-b font-semibold text-gray-700 flex justify-between items-center">
-                      <span>📁 逻辑卷</span>
-                      <button @click="openVolumeDialog"
-                              class="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
-                        ➕ 新建
-                      </button>
-                    </div>
-                    <div v-if="Object.keys(poolStatus.volumes || {}).length === 0"
-                         class="p-8 text-center text-gray-500">
-                      <div class="text-4xl mb-2">📭</div>
-                      <p>还没有创建逻辑卷</p>
-                    </div>
-                    <div v-else class="max-h-64 overflow-y-auto">
-                      <div v-for="(vol, volName) in poolStatus.volumes" :key="volName"
-                           class="flex items-center justify-between px-4 py-3 border-b last:border-b-0 hover:bg-gray-50">
-                        <div class="flex items-center gap-3">
-                          <span class="text-2xl">{{ vol.icon }}</span>
-                          <div>
-                            <div class="font-bold">{{ vol.display_name }}</div>
-                            <div class="text-xs text-gray-500">
-                              标识: {{ volName }} ·
-                              {{ {largest_free: '最大剩余优先', round_robin: '轮询', balanced: '均衡'}[vol.strategy] || vol.strategy }}
-                            </div>
-                          </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                          <div class="text-right text-sm">
-                            <div class="font-semibold">{{ vol.file_count || 0 }} 文件</div>
-                            <div class="text-gray-500">{{ formatSize(vol.used_bytes || 0) }}</div>
-                          </div>
-                          <button @click="deleteVolume(volName)"
-                                  class="p-2 text-red-500 hover:bg-red-100 rounded-lg" title="删除">
-                            🗑️
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+    <!-- 状态概览 -->
+    <div class="bg-white border rounded-lg p-4 shadow-sm">
+      <h4 class="font-semibold mb-3 text-gray-700">状态总览</h4>
+      <div class="grid grid-cols-4 gap-4 text-center">
+        <div class="bg-purple-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-purple-600">{{ poolStatus.pool?.disks?.length || 0 }}</div>
+          <div class="text-sm text-gray-600">物理磁盘</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-green-600">{{ Object.keys(poolStatus.volumes || {}).length }}</div>
+          <div class="text-sm text-gray-600">逻辑卷</div>
+        </div>
+        <div class="bg-blue-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-blue-600">{{ poolStatus.total_files || 0 }}</div>
+          <div class="text-sm text-gray-600">总文件数</div>
+        </div>
+        <div class="bg-indigo-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-indigo-600">{{ formatSize(poolStatus.total_free || 0) }}</div>
+          <div class="text-sm text-gray-600">可用空间</div>
+        </div>
+      </div>
+    </div>
 
-                  <!-- 说明 -->
-                  <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md">
-                    <h4 class="font-semibold text-blue-900 mb-1">💡 使用说明</h4>
-                    <p class="text-sm text-blue-800">创建逻辑卷后，可在文件管理器侧边栏看到对应的卷，上传文件会根据分配策略自动选择物理磁盘存储。</p>
-                  </div>
-                </div>
+    <!-- 磁盘列表 -->
+    <div class="bg-white border rounded-lg shadow-sm">
+      <div class="p-4 border-b font-semibold text-gray-700 flex justify-between items-center">
+        <span>💾 物理磁盘</span>
+        <button @click="openAddDiskDialog" class="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700">
+          ➕ 添加磁盘
+        </button>
+      </div>
+      <div class="max-h-48 overflow-y-auto">
+        <div v-for="disk in poolStatus.disks" :key="disk.disk"
+             class="flex items-center justify-between px-4 py-3 border-b last:border-b-0"
+             :class="{'bg-red-50': disk.error}">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">{{ disk.error ? '⚠️' : '💿' }}</span>
+            <div>
+              <div class="font-mono font-bold">{{ disk.disk }}</div>
+              <div class="text-xs text-gray-500">
+                <span v-if="disk.error" class="text-red-500">{{ disk.error }}</span>
+                <span v-else>总容量: {{ formatSize(disk.total) }}</span>
               </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div v-if="!disk.error" class="text-right">
+              <div class="text-green-600 font-semibold text-sm">{{ formatSize(disk.free) }} 可用</div>
+              <div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden mt-1">
+                <div class="h-full"
+                     :class="(disk.total - disk.free) / disk.total > 0.9 ? 'bg-red-500' : 'bg-blue-500'"
+                     :style="{width: ((disk.total - disk.free) / disk.total * 100) + '%'}"></div>
+              </div>
+            </div>
+            <button v-if="poolStatus.disks.length > 1"
+                    @click="removeDiskFromPool(disk.disk)"
+                    class="p-2 text-red-500 hover:bg-red-100 rounded-lg" title="移除磁盘">
+              ✖️
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 逻辑卷列表 -->
+    <div class="bg-white border rounded-lg shadow-sm">
+      <div class="p-4 border-b font-semibold text-gray-700 flex justify-between items-center">
+        <span>📁 逻辑卷</span>
+        <button @click="openVolumeDialog" class="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+          ➕ 新建
+        </button>
+      </div>
+      <div v-if="Object.keys(poolStatus.volumes || {}).length === 0" class="p-8 text-center text-gray-500">
+        <div class="text-4xl mb-2">📭</div>
+        <p>还没有创建逻辑卷</p>
+      </div>
+      <div v-else class="max-h-64 overflow-y-auto">
+        <div v-for="(vol, volName) in poolStatus.volumes" :key="volName"
+             class="flex items-center justify-between px-4 py-3 border-b last:border-b-0 hover:bg-gray-50">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">{{ vol.icon }}</span>
+            <div>
+              <div class="font-bold">{{ vol.display_name }}</div>
+              <div class="text-xs text-gray-500">
+                标识: {{ volName }} ·
+                {{ {largest_free: '最大剩余优先', round_robin: '轮询', balanced: '均衡'}[vol.strategy] || vol.strategy }}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="text-right text-sm">
+              <div class="font-semibold">{{ vol.file_count || 0 }} 文件</div>
+              <div class="text-gray-500">{{ formatSize(vol.used_bytes || 0) }}</div>
+            </div>
+            <button @click="deleteVolume(volName)" class="p-2 text-red-500 hover:bg-red-100 rounded-lg" title="删除">
+              🗑️
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 说明 -->
+    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md">
+      <h4 class="font-semibold text-blue-900 mb-1">💡 使用说明</h4>
+      <p class="text-sm text-blue-800">创建逻辑卷后，可在文件管理器侧边栏看到对应的卷，上传文件会根据分配策略自动选择物理磁盘存储。</p>
+    </div>
+  </div>
+</div>
 
           </div>
         </div>
@@ -1895,17 +2370,24 @@
       <!-- 开始菜单 -->
 <div v-if="showStartMenu" class="start-menu">
   <div class="start-menu-header">
-    <div class="flex items-center gap-2">
-      <div class="text-xl font-bold">{{ user.username }}</div>
-      <!-- 显示角色徽章 -->
-      <span v-if="user.is_admin"
-            class="text-xs bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded-full font-semibold">
-        👑 管理员
-      </span>
-      <span v-else
-            class="text-xs bg-blue-400 text-blue-900 px-2 py-0.5 rounded-full font-semibold">
-        👤 普通用户
-      </span>
+    <div class="flex items-center gap-3">
+      <!-- 头像 -->
+      <div class="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center overflow-hidden border-2 border-white/50">
+        <img v-if="user.avatar" :src="user.avatar" class="w-full h-full object-cover">
+        <span v-else class="text-2xl">👤</span>
+      </div>
+      <div>
+        <div class="text-xl font-bold">{{ user.username }}</div>
+        <!-- 显示角色徽章 -->
+        <span v-if="user.is_admin"
+              class="text-xs bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded-full font-semibold">
+          👑 管理员
+        </span>
+        <span v-else
+              class="text-xs bg-blue-400 text-blue-900 px-2 py-0.5 rounded-full font-semibold">
+          👤 普通用户
+        </span>
+      </div>
     </div>
   </div>
 
@@ -2068,26 +2550,26 @@
       <div v-if="showEcSetupDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
   <div class="bg-white w-[700px] rounded-xl shadow-2xl overflow-hidden flex flex-col" style="max-height: 90vh;">
     <div class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex justify-between items-center">
-      <h3 class="text-lg font-bold">🛡️ 配置纠删码 (Reed-Solomon)</h3>
+      <h3 class="text-lg font-bold">🛡️ 配置容错保护</h3>
       <button @click="closeEcSetupDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
     </div>
 
     <div class="p-6 overflow-y-auto space-y-6">
       <div class="grid grid-cols-2 gap-6">
         <div class="bg-gray-50 p-4 rounded-lg border">
-          <label class="block text-sm font-semibold text-gray-700 mb-2">数据块 (K)</label>
-          <input type="number" v-model.number="ecSetupForm.k" min="1" class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none">
-          <p class="text-xs text-gray-500 mt-2">原始数据将被拆分成的份数。</p>
+          <label class="block text-sm font-semibold text-gray-700 mb-2">数据份数</label>
+<input type="number" ...>
+<p class="text-xs text-gray-500 mt-2">文件会被拆分成多少份存储。</p>
         </div>
         <div class="bg-gray-50 p-4 rounded-lg border">
-          <label class="block text-sm font-semibold text-gray-700 mb-2">校验块 (M)</label>
-          <input type="number" v-model.number="ecSetupForm.m" min="1" class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none">
-          <p class="text-xs text-gray-500 mt-2">生成的冗余数据份数，最多可容忍 M 个磁盘损坏。</p>
+          <label class="block text-sm font-semibold text-gray-700 mb-2">容错份数</label>
+<input type="number" ...>
+<p class="text-xs text-gray-500 mt-2">额外保存的备份份数。<strong class="text-blue-600">最多允许 {{ ecSetupForm.m }} 块硬盘同时损坏而不丢失数据。</strong></p>
         </div>
       </div>
 
       <div>
-        <label class="block text-sm font-semibold text-gray-700 mb-2">选择磁盘 (至少选择 K+M = {{ ecSetupForm.k + ecSetupForm.m }} 个)</label>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">选择磁盘 (至少需要 {{ ecSetupForm.k + ecSetupForm.m }} 块硬盘)</label>
         <div class="border rounded-lg max-h-60 overflow-y-auto p-2 space-y-1 bg-white">
           <div v-for="disk in ecSetupForm.availableDisks" :key="disk.drive" class="flex items-center p-2 rounded hover:bg-blue-50">
             <input type="checkbox" :value="disk.drive" v-model="ecSetupForm.selectedDisks" :id="'disk-'+disk.drive" class="h-4 w-4 mr-3">
@@ -2247,6 +2729,101 @@
           创建逻辑卷
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+
+      <!-- 添加磁盘对话框 -->
+<div v-if="showAddDiskDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
+  <div class="bg-white w-[500px] rounded-xl shadow-2xl overflow-hidden flex flex-col">
+    <div class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 py-4 flex justify-between items-center">
+      <h3 class="text-lg font-bold">💾 添加磁盘到池</h3>
+      <button @click="closeAddDiskDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+    </div>
+
+    <div class="p-6">
+      <div v-if="poolAvailableDisks.length === 0" class="text-center py-8 text-gray-500">
+        <div class="text-4xl mb-2">😕</div>
+        <p>没有可添加的磁盘</p>
+      </div>
+      <div v-else class="space-y-2">
+        <p class="text-sm text-gray-600 mb-4">选择要添加到存储池的磁盘：</p>
+        <div v-for="disk in poolAvailableDisks" :key="disk.drive"
+             @click="addDiskToPool(disk.drive)"
+             class="flex items-center justify-between p-4 border rounded-lg hover:bg-purple-50 cursor-pointer transition">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">💿</span>
+            <div>
+              <div class="font-mono font-bold">{{ disk.drive }}</div>
+              <div class="text-xs text-gray-500">总容量: {{ formatSize(disk.total) }}</div>
+            </div>
+          </div>
+          <div class="text-green-600 font-semibold">
+            {{ formatSize(disk.free) }} 可用
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 bg-gray-50 border-t flex justify-end">
+      <button @click="closeAddDiskDialog" class="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 数据平衡对话框 -->
+<div v-if="showRebalanceDialog" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm">
+  <div class="bg-white w-[650px] rounded-xl shadow-2xl overflow-hidden flex flex-col" style="max-height: 85vh;">
+    <div class="bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-6 py-4 flex justify-between items-center">
+      <h3 class="text-lg font-bold">⚖️ 数据重新平衡</h3>
+      <button @click="closeRebalanceDialog" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+    </div>
+
+    <div class="p-6 overflow-y-auto space-y-4" v-if="rebalancePreview">
+      <!-- 当前分布 -->
+      <div class="bg-gray-50 p-4 rounded-lg">
+        <h4 class="font-semibold text-gray-700 mb-3">当前数据分布</h4>
+        <div class="space-y-2">
+          <div v-for="(info, disk) in rebalancePreview.current_distribution" :key="disk" class="flex items-center gap-3">
+            <span class="font-mono text-sm w-16">{{ disk.replace(':/', '') }}盘</span>
+            <div class="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+              <div class="h-full bg-blue-500" :style="{width: info.usage_percent + '%'}"></div>
+            </div>
+            <span class="text-sm text-gray-600 w-20 text-right">{{ info.usage_percent }}%</span>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">目标平均使用率: {{ rebalancePreview.target_ratio }}%</p>
+      </div>
+
+      <!-- 计划迁移 -->
+      <div class="bg-yellow-50 p-4 rounded-lg">
+        <h4 class="font-semibold text-yellow-800 mb-2">计划迁移</h4>
+        <div v-if="rebalancePreview.planned_moves.length === 0" class="text-sm text-yellow-700">
+          ✅ 数据分布已经比较均衡，无需迁移
+        </div>
+        <div v-else>
+          <p class="text-sm text-yellow-700 mb-2">
+            将迁移 {{ rebalancePreview.planned_moves.length }} 个文件，共 {{ formatSize(rebalancePreview.total_bytes_to_move) }}
+          </p>
+          <div class="max-h-40 overflow-y-auto space-y-1">
+            <div v-for="(move, idx) in rebalancePreview.planned_moves" :key="idx" class="text-xs text-gray-600 flex gap-2">
+              <span class="truncate flex-1" :title="move.file">{{ move.file.split('/').pop() }}</span>
+              <span class="text-gray-400">{{ move.from.replace(':/', '') }} → {{ move.to?.replace(':/', '') || '?' }}</span>
+              <span class="text-gray-500">{{ formatSize(move.size) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
+      <button @click="closeRebalanceDialog" class="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">取消</button>
+      <button @click="executeRebalance"
+              :disabled="!rebalancePreview || rebalancePreview.planned_moves.length === 0"
+              class="px-5 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed">
+        执行平衡
+      </button>
     </div>
   </div>
 </div>

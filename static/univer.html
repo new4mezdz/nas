@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文档编辑器</title>
+    <title>协作文档编辑器</title>
     <!-- Excel 相关 -->
     <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/css/pluginsCss.css' />
     <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/plugins.css' />
@@ -16,116 +16,436 @@
         html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
         #app { height: 100%; display: flex; flex-direction: column; }
         #toolbar {
-            height: 40px; background: #f5f5f5; border-bottom: 1px solid #ddd;
+            height: 50px; background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+            border-bottom: 1px solid #ddd;
             display: flex; align-items: center; padding: 0 15px; justify-content: space-between;
         }
         #sheet-container { flex: 1; position: relative; width: 100%; display: none; }
         #word-container { flex: 1; overflow: auto; background: #fff; display: none; }
         #word-editor { height: 100%; }
+        #ppt-container { flex: 1; overflow: auto; background: #2d2d2d; display: none; padding: 20px; }
         .ql-container { font-size: 14px; border: none !important; }
         .ql-editor { min-height: 100%; padding: 40px 60px; }
         .ql-toolbar { border-left: none !important; border-right: none !important; border-top: none !important; }
         .btn {
-            padding: 6px 16px; background: #4b89ff; color: white; border: none;
-            border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;
+            padding: 8px 18px; background: #4b89ff; color: white; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
+            transition: all 0.2s;
         }
-        .btn:hover { background: #3370ff; }
-        .btn:disabled { background: #ccc; cursor: not-allowed; }
-        #status { font-size: 12px; color: #666; margin-right: 10px; }
+        .btn:hover { background: #3370ff; transform: translateY(-1px); }
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        #status { font-size: 12px; color: #666; margin-right: 15px; }
         .luckysheet-icon { padding-bottom: 0px !important; }
+
+        /* 协作用户显示 */
+        #collab-users {
+            display: flex; align-items: center; gap: 8px; margin-right: 20px;
+        }
+        .user-avatar {
+            width: 32px; height: 32px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: bold; color: white;
+            border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        .user-avatar:hover::after {
+            content: attr(data-name);
+            position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%);
+            background: #333; color: white; padding: 4px 8px; border-radius: 4px;
+            font-size: 11px; white-space: nowrap; z-index: 100;
+        }
+        .online-count {
+            background: #52c41a; color: white; padding: 4px 10px;
+            border-radius: 12px; font-size: 12px; font-weight: 500;
+        }
+
+        /* 远程用户光标 */
+        .remote-cursor {
+            position: absolute; width: 2px; background: red;
+            pointer-events: none; z-index: 1000;
+        }
+        .remote-cursor-label {
+            position: absolute; top: -20px; left: 0;
+            background: red; color: white; padding: 2px 6px;
+            border-radius: 3px; font-size: 11px; white-space: nowrap;
+        }
+
+        /* PPT 样式保持不变 */
+        .ppt-slide { background: white; margin: 20px auto; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 960px; }
+        .ppt-nav { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 10px 20px; border-radius: 30px; display: flex; align-items: center; gap: 15px; z-index: 100; }
+        .ppt-nav button { background: transparent; border: none; color: white; font-size: 20px; cursor: pointer; padding: 5px 15px; }
+        .ppt-nav button:hover { background: rgba(255,255,255,0.2); border-radius: 5px; }
+        .ppt-nav span { color: white; font-size: 14px; }
+        #ppt-slides { text-align: center; }
+        #ppt-slides .slide { display: none; }
+        #ppt-slides .slide.active { display: block; }
+        /* 分享对话框 */
+.share-modal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;
+}
+.share-modal.show { display: flex; }
+.share-dialog {
+    background: white; border-radius: 12px; padding: 24px; width: 450px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.share-dialog h3 { margin: 0 0 20px; font-size: 18px; }
+.share-input {
+    width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px;
+    font-size: 14px; margin-bottom: 12px; box-sizing: border-box;
+}
+.share-link-box {
+    background: #f5f5f5; padding: 12px; border-radius: 6px; word-break: break-all;
+    font-size: 13px; margin: 15px 0; border: 1px solid #e0e0e0;
+}
+.share-btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.share-btn-row .btn { padding: 10px 20px; }
+.btn-secondary { background: #6c757d !important; }
     </style>
 </head>
 <body>
     <div id="app">
         <div id="toolbar">
-            <div id="title" style="font-weight: bold; color: #333;">📄 文档编辑器</div>
-            <div>
-                <span id="status">准备就绪</span>
-                <button id="save-btn" class="btn" onclick="saveFile()">💾 保存 (Ctrl+S)</button>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <div id="title" style="font-weight: bold; color: #333; font-size: 16px;">📄 协作文档</div>
+                <div id="collab-users">
+                    <span class="online-count" id="online-count">1 人在线</span>
+                    <div id="user-avatars" style="display: flex; gap: -8px;"></div>
+                </div>
             </div>
+           <div style="display: flex; align-items: center;">
+    <span id="status">准备就绪</span>
+    <button id="share-btn" class="btn" onclick="showShareDialog()" style="margin-right:10px; background:#52c41a;">🔗 分享协作</button>
+    <button id="save-btn" class="btn" onclick="saveFile()" style="display:none;">💾 保存</button>
+</div>
         </div>
-        <!-- Excel 容器 -->
         <div id="sheet-container"></div>
-        <!-- Word 容器 -->
         <div id="word-container">
             <div id="word-editor"></div>
         </div>
+        <div id="ppt-container">
+            <div id="ppt-slides"></div>
+            <div class="ppt-nav" id="ppt-nav" style="display:none;">
+                <button onclick="prevSlide()">◀</button>
+                <span id="slide-info">1 / 1</span>
+                <button onclick="nextSlide()">▶</button>
+                <button onclick="toggleFullscreen()">⛶</button>
+            </div>
+        </div>
+
+        <!-- 分享协作对话框 -->
+<div id="share-modal" class="share-modal" onclick="if(event.target===this)closeShareDialog()">
+    <div class="share-dialog">
+        <h3>🔗 分享协作链接</h3>
+        <div id="share-step1">
+            <label style="display:block;margin-bottom:8px;font-weight:500;">访客昵称前缀（可选）</label>
+            <input type="text" id="guest-prefix" class="share-input" placeholder="如：访客、Guest" value="访客">
+            <label style="display:block;margin-bottom:8px;font-weight:500;">有效期（小时）</label>
+            <input type="number" id="share-expire" class="share-input" value="24" min="1" max="168">
+            <div class="share-btn-row">
+                <button class="btn btn-secondary" onclick="closeShareDialog()">取消</button>
+                <button class="btn" onclick="generateShareLink()">生成链接</button>
+            </div>
+        </div>
+        <div id="share-step2" style="display:none;">
+            <p style="color:#52c41a;font-weight:500;">✅ 链接已生成！</p>
+            <div class="share-link-box" id="share-link-display"></div>
+            <div class="share-btn-row">
+                <button class="btn btn-secondary" onclick="closeShareDialog()">关闭</button>
+                <button class="btn" onclick="copyShareLink()">📋 复制链接</button>
+            </div>
+        </div>
+    </div>
+</div>
     </div>
 
-    <!-- Excel 相关 JS -->
+    <!-- JS 库 -->
     <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/js/plugin.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/luckysheet.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luckyexcel/dist/luckyexcel.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
-    <!-- Word 相关 JS -->
     <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery-mousewheel@3.1.13/jquery.mousewheel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <!-- Socket.IO 客户端 -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 
     <script>
+        // ==================== 全局变量 ====================
         var currentFilePath = '';
         var authToken = '';
         var baseUrl = '';
-        var fileType = ''; // 'excel' 或 'word'
+        var fileType = '';
         var quill = null;
+        var currentSlide = 0;
+        var totalSlides = 0;
 
-        window.onload = function() {
-            const params = new URLSearchParams(window.location.search);
-            currentFilePath = params.get('path');
-            authToken = params.get('token');
-            baseUrl = params.get('baseUrl') || '';
+        // 协作相关
+        var socket = null;
+        var docId = '';
+        var currentUser = '';
+        var currentUserAvatar = '';  // 添加头像变量
+        var userColor = '';
+        var isRemoteChange = false;  // 防止循环广播
+        var userColors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dfe6e9', '#a29bfe', '#fd79a8'];
+        var isGuest = false;  // 添加这行
 
-            if (!currentFilePath || !authToken) {
-                alert("❌ 参数缺失: 无法加载文件");
-                return;
-            }
+        // ==================== 初始化 ====================
+       window.onload = function() {
+    const params = new URLSearchParams(window.location.search);
+    currentFilePath = params.get('path');
+    authToken = params.get('token');
+    baseUrl = params.get('baseUrl') || '';
 
-            // 根据扩展名判断文件类型
+    // 检测访客模式
+    isGuest = params.get('guest') === '1';
+    const guestName = params.get('guestName');
+
+    if (isGuest && guestName) {
+        currentUser = decodeURIComponent(guestName);
+        document.getElementById('share-btn').style.display = 'none'; // 访客不能分享
+    } else {
+        currentUser = params.get('username') || '用户' + Math.floor(Math.random() * 1000);
+    }
+    currentUserAvatar = params.get('avatar') || '';
+
+    // 生成文档ID和用户颜色
+    docId = hashCode(currentFilePath);
+    userColor = userColors[Math.abs(hashCode(currentUser)) % userColors.length];
+
+    if (!currentFilePath || !authToken) {
+        alert("❌ 参数缺失");
+        return;
+    }
+
+
             const ext = currentFilePath.split('.').pop().toLowerCase();
             if (ext === 'xlsx' || ext === 'xls') {
                 fileType = 'excel';
-                document.getElementById('title').innerHTML = '📊 表格编辑器';
+                document.getElementById('title').innerHTML = '📊 协作表格';
                 document.getElementById('sheet-container').style.display = 'block';
+                document.getElementById('save-btn').style.display = 'inline-block';
             } else if (ext === 'docx' || ext === 'doc') {
                 fileType = 'word';
-                document.getElementById('title').innerHTML = '📄 文档编辑器';
+                document.getElementById('title').innerHTML = '📄 协作文档';
                 document.getElementById('word-container').style.display = 'block';
-                // 初始化 Quill
-                quill = new Quill('#word-editor', {
-                    theme: 'snow',
-                    modules: {
-                        toolbar: [
-                            [{ 'header': [1, 2, 3, false] }],
-                            ['bold', 'italic', 'underline', 'strike'],
-                            [{ 'color': [] }, { 'background': [] }],
-                            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                            [{ 'align': [] }],
-                            ['link', 'image'],
-                            ['clean']
-                        ]
-                    }
-                });
-            } else {
-                alert("❌ 不支持的文件格式");
-                return;
+                document.getElementById('save-btn').style.display = 'inline-block';
+                initQuill();
+            } else if (ext === 'pptx' || ext === 'ppt') {
+                fileType = 'ppt';
+                document.getElementById('title').innerHTML = '📽️ 演示文稿';
+                document.getElementById('ppt-container').style.display = 'block';
             }
 
+            // 初始化 Socket 连接
+            initSocket();
             loadFile();
         }
 
-        async function loadFile() {
-            setStatus("正在下载文件...", "blue");
-            try {
-                const response = await fetch(`${baseUrl}/api/download?path=${encodeURIComponent(currentFilePath)}`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
+        function hashCode(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                hash |= 0;
+            }
+            return 'doc_' + Math.abs(hash).toString(16);
+        }
 
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // ==================== Socket.IO 协作 ====================
+       function initSocket() {
+    // 代理模式下，Socket.IO 需要连接到当前页面的 origin，并通过代理路径转发
+    let socketUrl = window.location.origin;
+    let socketPath = '/socket.io';
+
+    // 如果是代理模式，需要调整 path
+    if (baseUrl && baseUrl.startsWith('/proxy/')) {
+        // 代理模式：socketPath 需要包含代理前缀
+        socketPath = baseUrl + '/socket.io';
+    }
+
+    console.log('[协作] 连接到:', socketUrl, '路径:', socketPath);
+
+    socket = io(socketUrl, {
+        transports: ['polling', 'websocket'],  // 先用 polling，再升级到 websocket
+        path: socketPath,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000
+    });
+
+    socket.on('connect', () => {
+        console.log('[协作] 已连接, socket id:', socket.id);
+        socket.emit('join_doc', {
+            doc_id: docId,
+        username: currentUser,
+        avatar: currentUserAvatar });
+        setStatus('🟢 已连接', 'green');
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('[协作] 断开连接:', reason);
+        setStatus('🔴 已断开', 'red');
+    });
+
+    socket.on('connect_error', (error) => {
+        console.log('[协作] 连接错误:', error.message);
+        setStatus('⚠️ 连接失败', 'red');
+    });
+
+    socket.on('users_update', (data) => {
+        console.log('[协作] 在线用户:', data.users);
+        updateUserDisplay(data.users, data.count);
+    });
+
+    socket.on('doc_change', (data) => {
+        console.log('[协作] 收到变更来自:', data.username);
+        applyRemoteChange(data.change, data.username);
+    });
+
+    socket.on('cursor_move', (data) => {
+        showRemoteCursor(data.username, data.position, data.color);
+    });
+}
+
+       function updateUserDisplay(users, count) {
+    document.getElementById('online-count').textContent = count + ' 人在线';
+
+    const container = document.getElementById('user-avatars');
+    container.innerHTML = '';
+
+    users.slice(0, 5).forEach((user, idx) => {
+        // 兼容新旧数据格式
+        const name = typeof user === 'string' ? user : user.username;
+        const avatar = typeof user === 'object' ? user.avatar : '';
+
+        const avatarDiv = document.createElement('div');
+        avatarDiv.className = 'user-avatar';
+        avatarDiv.style.marginLeft = idx > 0 ? '-8px' : '0';
+        avatarDiv.style.zIndex = 10 - idx;
+        avatarDiv.setAttribute('data-name', name);
+
+        if (avatar) {
+            // 有头像，显示图片
+            avatarDiv.style.background = 'transparent';
+            avatarDiv.style.padding = '0';
+            avatarDiv.innerHTML = `<img src="${avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+        } else {
+            // 无头像，显示首字母
+            avatarDiv.style.background = userColors[idx % userColors.length];
+            avatarDiv.textContent = name.charAt(0).toUpperCase();
+        }
+
+        container.appendChild(avatarDiv);
+    });
+
+    if (users.length > 5) {
+        const more = document.createElement('div');
+        more.className = 'user-avatar';
+        more.style.background = '#666';
+        more.style.marginLeft = '-8px';
+        more.textContent = '+' + (users.length - 5);
+        container.appendChild(more);
+    }
+}
+        // ==================== Quill 编辑器 (Word) ====================
+        function initQuill() {
+            quill = new Quill('#word-editor', {
+                theme: 'snow',
+                modules: {
+                    toolbar: [
+                        [{ 'header': [1, 2, 3, false] }],
+                        ['bold', 'italic', 'underline', 'strike'],
+                        [{ 'color': [] }, { 'background': [] }],
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                        [{ 'align': [] }],
+                        ['link', 'image'],
+                        ['clean']
+                    ]
+                }
+            });
+
+            // 监听文本变化，广播给其他用户
+            quill.on('text-change', (delta, oldDelta, source) => {
+                if (source === 'user' && !isRemoteChange) {
+                    socket.emit('doc_change', {
+                        doc_id: docId,
+                        username: currentUser,
+                        change: {
+                            type: 'quill_delta',
+                            delta: delta
+                        }
+                    });
+                }
+            });
+
+            // 监听选区变化，同步光标
+            quill.on('selection-change', (range) => {
+                if (range) {
+                    socket.emit('cursor_move', {
+                        doc_id: docId,
+                        username: currentUser,
+                        position: { type: 'quill', index: range.index },
+                        color: userColor
+                    });
+                }
+            });
+        }
+
+        // 应用远程修改
+        function applyRemoteChange(change, username) {
+            isRemoteChange = true;
+
+            if (fileType === 'word' && change.type === 'quill_delta') {
+                quill.updateContents(change.delta, 'api');
+            } else if (fileType === 'excel' && change.type === 'luckysheet') {
+                // Luckysheet 单元格更新
+                if (change.cellData) {
+                    luckysheet.setCellValue(
+                        change.cellData.r,
+                        change.cellData.c,
+                        change.cellData.v,
+                        { order: change.sheetIndex }
+                    );
+                }
+            }
+
+            setTimeout(() => { isRemoteChange = false; }, 50);
+            setStatus(`${username} 正在编辑...`, 'blue');
+        }
+
+        // 显示远程用户光标
+        function showRemoteCursor(username, position, color) {
+            // 简化实现：仅显示提示
+            // 完整实现需要在编辑器中渲染光标位置
+        }
+
+        // ==================== Excel 协作钩子 ====================
+
+
+        // ==================== 文件加载/保存 ====================
+        async function loadFile() {
+    setStatus("正在下载...", "blue");
+    try {
+        const apiUrl = isGuest ? '/api/collab_download' : '/api/download';
+        const headers = isGuest ? {} : { 'Authorization': `Bearer ${authToken}` };
+        const tokenParam = isGuest ? `&token=${encodeURIComponent(authToken)}` : '';
+
+        const response = await fetch(`${baseUrl}${apiUrl}?path=${encodeURIComponent(currentFilePath)}${tokenParam}`, {
+            headers: headers
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
 
                 if (fileType === 'excel') {
                     await loadExcel(response);
+
                 } else if (fileType === 'word') {
                     await loadWord(response);
+                } else if (fileType === 'ppt') {
+                    await loadPPT(response);
                 }
             } catch (e) {
                 console.error(e);
@@ -134,49 +454,99 @@
             }
         }
 
-        async function loadExcel(response) {
-            const blob = await response.blob();
-            setStatus("正在解析 Excel...", "blue");
+       async function loadExcel(response) {
+    const arrayBuffer = await response.arrayBuffer();
+    setStatus("正在解析...", "blue");
 
-            LuckyExcel.transformExcelToLucky(blob, function(exportJson, luckysheetfile){
-                if(exportJson.sheets == null || exportJson.sheets.length == 0){
-                    alert("文件读取失败或格式不支持");
-                    return;
-                }
-
-                luckysheet.create({
-                    container: 'sheet-container',
-                    showinfobar: false,
-                    data: exportJson.sheets,
-                    title: exportJson.info?.name || '',
-                    userInfo: exportJson.info?.creator || '',
-                    lang: 'zh',
-                    allowUpdate: true,
-                    loadUrl: "",
-                });
-
-                setStatus("加载完成", "green");
-            });
+    LuckyExcel.transformExcelToLucky(new Blob([arrayBuffer]), function(exportJson) {
+        if (!exportJson.sheets || exportJson.sheets.length === 0) {
+            throw new Error("无法解析Excel");
         }
-
+        luckysheet.create({
+            container: 'sheet-container',
+            data: exportJson.sheets,
+            showtoolbar: true,
+            showinfobar: false,
+            showsheetbar: true,
+            showstatisticBar: true,
+            enableAddRow: true,
+            enableAddBackTop: false,
+            lang: 'zh',
+            // ✅ hook 配置放在这里
+            hook: {
+                cellUpdated: function(r, c, oldVal, newVal, isRefresh) {
+                    if (!isRemoteChange && !isRefresh && socket && socket.connected) {
+                        socket.emit('doc_change', {
+                            doc_id: docId,
+                            username: currentUser,
+                            change: {
+                                type: 'luckysheet',
+                                sheetIndex: luckysheet.getActiveSheetIndex(),
+                                cellData: { r, c, v: newVal }
+                            }
+                        });
+                    }
+                }
+            }
+        });
+        setStatus("✅ 已加载", "green");
+    });
+}
         async function loadWord(response) {
             const arrayBuffer = await response.arrayBuffer();
-            setStatus("正在解析文档...", "blue");
+            setStatus("正在解析...", "blue");
 
-            const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+            const result = await mammoth.convertToHtml({ arrayBuffer });
             quill.root.innerHTML = result.value;
-            setStatus("加载完成", "green");
+            setStatus("✅ 已加载", "green");
+        }
+
+        async function loadPPT(response) {
+            // PPT 加载逻辑保持不变...
+            const arrayBuffer = await response.arrayBuffer();
+            setStatus("正在解析 PPT...", "blue");
+
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+            try {
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                totalSlides = pdf.numPages;
+                const container = document.getElementById('ppt-slides');
+                container.innerHTML = '';
+
+                for (let i = 1; i <= totalSlides; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.5 });
+
+                    const slideDiv = document.createElement('div');
+                    slideDiv.className = 'slide ppt-slide' + (i === 1 ? ' active' : '');
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    slideDiv.appendChild(canvas);
+                    container.appendChild(slideDiv);
+                }
+
+                document.getElementById('ppt-nav').style.display = 'flex';
+                updateSlideInfo();
+                setStatus(`✅ 共 ${totalSlides} 页`, "green");
+            } catch (e) {
+                document.getElementById('ppt-slides').innerHTML = `<div style="color:#fff;text-align:center;padding:50px;">预览失败: ${e.message}</div>`;
+            }
         }
 
         async function saveFile() {
+            if (fileType === 'ppt') return;
+
             const btn = document.getElementById('save-btn');
             btn.disabled = true;
-            btn.innerText = "正在保存...";
+            btn.textContent = "保存中...";
 
             try {
-                let blob;
-                let mimeType;
-
+                let blob, mimeType;
                 if (fileType === 'excel') {
                     blob = await saveExcel();
                     mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -185,24 +555,20 @@
                     mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
                 }
 
-                // 上传
-                setStatus("正在上传...", "blue");
                 const formData = new FormData();
-                const fileName = currentFilePath.split('/').pop();
-                const file = new File([blob], fileName, { type: mimeType });
+formData.append('file', new File([blob], currentFilePath.split('/').pop(), { type: mimeType }));
+formData.append('path', currentFilePath.substring(0, currentFilePath.lastIndexOf('/')) || '/');
 
-                formData.append('file', file);
+// 访客模式使用不同的API和参数
+const apiUrl = isGuest ? '/api/collab_upload' : '/api/upload';
+const headers = isGuest ? {} : { 'Authorization': `Bearer ${authToken}` };
+if (isGuest) formData.append('token', authToken);
 
-                let parentDir = currentFilePath.replace(/\\/g, '/');
-                parentDir = parentDir.substring(0, parentDir.lastIndexOf('/'));
-                if(!parentDir) parentDir = '/';
-                formData.append('path', parentDir);
-
-                const res = await fetch(`${baseUrl}/api/upload`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${authToken}` },
-                    body: formData
-                });
+const res = await fetch(`${baseUrl}${apiUrl}`, {
+    method: 'POST',
+    headers: headers,
+    body: formData
+});
 
                 const result = await res.json();
                 if (result.success) {
@@ -211,61 +577,119 @@
                     throw new Error(result.error);
                 }
             } catch (e) {
-                console.error(e);
                 alert("保存失败: " + e.message);
                 setStatus("保存失败", "red");
             } finally {
                 btn.disabled = false;
-                btn.innerText = "💾 保存 (Ctrl+S)";
+                btn.textContent = "💾 保存";
             }
         }
 
         async function saveExcel() {
-            setStatus("正在生成 Excel...", "blue");
             const sheets = luckysheet.getAllSheets();
             const workbook = new ExcelJS.Workbook();
-
-            sheets.forEach(function(sheet) {
-                if(sheet.data.length === 0) return;
-                const worksheet = workbook.addWorksheet(sheet.name);
-
-                for(let r = 0; r < sheet.data.length; r++){
-                    const row = sheet.data[r];
-                    if(!row) continue;
-
-                    const rowData = [];
-                    for(let c = 0; c < row.length; c++){
-                        const cell = row[c];
-                        let val = cell ? (cell.v !== undefined ? cell.v : cell.m) : null;
-                        rowData.push(val);
-                    }
-                    worksheet.addRow(rowData);
-                }
+            sheets.forEach(sheet => {
+                if (!sheet.data?.length) return;
+                const ws = workbook.addWorksheet(sheet.name);
+                sheet.data.forEach(row => {
+                    if (row) ws.addRow(row.map(cell => cell?.v ?? cell?.m ?? null));
+                });
             });
-
-            const buffer = await workbook.xlsx.writeBuffer();
-            return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            return new Blob([await workbook.xlsx.writeBuffer()]);
         }
 
         async function saveWord() {
-            setStatus("正在生成文档...", "blue");
-            const htmlContent = quill.root.innerHTML;
-            const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${htmlContent}</body></html>`;
-            return htmlDocx.asBlob(fullHtml);
+            return htmlDocx.asBlob(`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${quill.root.innerHTML}</body></html>`);
+        }
+
+        // PPT 导航
+        function prevSlide() { if (currentSlide > 0) showSlide(currentSlide - 1); }
+        function nextSlide() { if (currentSlide < totalSlides - 1) showSlide(currentSlide + 1); }
+        function showSlide(idx) {
+            document.querySelectorAll('#ppt-slides .slide').forEach((s, i) => s.classList.toggle('active', i === idx));
+            currentSlide = idx;
+            updateSlideInfo();
+        }
+        function updateSlideInfo() { document.getElementById('slide-info').textContent = `${currentSlide + 1} / ${totalSlides}`; }
+        function toggleFullscreen() {
+            document.fullscreenElement ? document.exitFullscreen() : document.getElementById('ppt-container').requestFullscreen();
         }
 
         function setStatus(text, color) {
             const el = document.getElementById('status');
-            el.innerText = text;
+            el.textContent = text;
             el.style.color = color === 'red' ? '#ff4d4f' : (color === 'green' ? '#52c41a' : '#1890ff');
         }
 
+        // 键盘快捷键
         document.addEventListener('keydown', (e) => {
+            if (fileType === 'ppt') {
+                if (e.key === 'ArrowLeft') prevSlide();
+                if (e.key === 'ArrowRight' || e.key === ' ') nextSlide();
+            }
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
                 saveFile();
             }
         });
+
+        // 页面关闭时离开房间
+        window.addEventListener('beforeunload', () => {
+            if (socket) socket.emit('leave_doc', { doc_id: docId });
+        });
+
+        // ==================== 分享协作功能 ====================
+var generatedShareLink = '';
+
+function showShareDialog() {
+    document.getElementById('share-modal').classList.add('show');
+    document.getElementById('share-step1').style.display = 'block';
+    document.getElementById('share-step2').style.display = 'none';
+}
+
+function closeShareDialog() {
+    document.getElementById('share-modal').classList.remove('show');
+}
+
+async function generateShareLink() {
+    const prefix = document.getElementById('guest-prefix').value || '访客';
+    const expireHours = parseInt(document.getElementById('share-expire').value) || 24;
+
+    try {
+        const res = await fetch(`${baseUrl}/api/collab_share`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                file_path: currentFilePath,
+                guest_prefix: prefix,
+                expire_hours: expireHours
+            })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+            generatedShareLink = data.share_url;
+            document.getElementById('share-link-display').textContent = generatedShareLink;
+            document.getElementById('share-step1').style.display = 'none';
+            document.getElementById('share-step2').style.display = 'block';
+        } else {
+            alert('生成失败: ' + (data.error || '未知错误'));
+        }
+    } catch (e) {
+        alert('生成分享链接失败: ' + e.message);
+    }
+}
+
+function copyShareLink() {
+    navigator.clipboard.writeText(generatedShareLink).then(() => {
+        alert('✅ 链接已复制到剪贴板！');
+    }).catch(() => {
+        prompt('请手动复制:', generatedShareLink);
+    });
+}
     </script>
 </body>
 </html>

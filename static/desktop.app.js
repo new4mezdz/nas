@@ -5,13 +5,16 @@ createApp({
   data() {
   return {
     loggedIn: false, // 保留这个
-user: { username: '', is_admin: false },
+user: { username: '', is_admin: false, avatar: '' },
 
     // ========== 桌面系统 ==========
     windows: [],
     nextWindowId: 1,
     maxZIndex: 100,
     dragging: null,
+    // ========== 搜索 ==========
+searchQuery: '',
+    searchBarOpen: false,
 
     // ========== 任务栏 ==========
     showStartMenu: false,
@@ -58,7 +61,14 @@ user: { username: '', is_admin: false },
       error: ''
     },
     // 空间池状态
+    poolEncryptionStatus: {},  // 池加密状态
 poolStatus: { is_configured: false },
+    poolHealth: null,  // 新增
+poolAvailableDisks: [],  // 新增
+showAddDiskDialog: false,  // 新增
+showRebalanceDialog: false,  // 新增
+rebalancePreview: null,  // 新增
+
 
 // 空间池配置对话框
 showPoolSetupDialog: false,
@@ -128,6 +138,61 @@ async getEcCapacityEstimate() {
     }
 },
 
+async doSearch() {
+  if (!this.searchQuery.trim()) return;
+
+  this.showToast(`🔍 正在搜索: ${this.searchQuery}...`, 'info');
+
+  try {
+    const response = await axios.get('/api/search_global', {
+      params: { keyword: this.searchQuery, limit: 200 }
+    });
+
+    if (response.data.success) {
+      const results = response.data.items || [];
+
+      if (results.length === 0) {
+        this.showToast(`未找到包含 "${this.searchQuery}" 的文件`, 'warning');
+        return;
+      }
+
+      // 打开文件窗口并显示搜索结果
+      const storageList = this.buildStorageList();
+      const window = this.createWindow('files', `搜索结果: ${this.searchQuery}`, '🔍', {
+        width: 1100,
+        height: 700,
+        sidebar: {
+          storage: storageList,
+          favorites: [],
+          recent: []
+        },
+        currentDrive: 'search',
+        currentPath: `搜索: "${this.searchQuery}"`,
+        files: results,
+        selectedFiles: [],
+        viewMode: 'list',
+        history: [],
+        historyIndex: 0,
+        clipboard: { mode: null, items: [], sourceDrive: null, sourcePath: null },
+        searchKeyword: this.searchQuery,
+        isSearching: false,
+        isSearchMode: true,
+        searchResults: results,
+        sortBy: 'name',
+        sortOrder: 'asc'
+      });
+
+      this.showToast(`✅ 找到 ${results.length} 个结果`, 'success');
+      this.searchQuery = ''; // 清空搜索框
+    } else {
+      this.showToast(response.data.error || '搜索失败', 'error');
+    }
+  } catch (e) {
+    console.error('搜索失败:', e);
+    this.showToast('搜索失败: ' + (e.response?.data?.error || e.message), 'error');
+  }
+},
+
     logout() {
   // 清除本地状态
   localStorage.removeItem('token');
@@ -184,6 +249,7 @@ async getEcCapacityEstimate() {
           this.fetchAvailableDrives(),
           this.fetchEcStatus(),
           this.fetchEncryptionStatus(),
+            this.fetchPoolEncryptionStatus(),
             this.fetchPoolStatus()
         ]);
       } catch (e) {
@@ -411,7 +477,9 @@ async submitPasswordChange(window) {
           sourcePath: null
         },
         searchKeyword: '',
-        searching: false,
+isSearching: false,
+isSearchMode: false,
+searchResults: [],
         sortBy: 'name',
         sortOrder: 'asc'
       });
@@ -548,10 +616,52 @@ async changePassword(window) {
     return;
   }
 
+  // ==============================
+  // 🟢 新增: 处理收藏夹视图
+  // ==============================
+  if (window.currentDrive === 'favorites') {
+    try {
+      const res = await axios.get('/api/favorites');
+      window.files = res.data.items || [];
+      window.currentPath = '收藏夹'; // 强制设置导航栏显示名称
+      this.sortFiles(window); // 保持排序功能
+      return; // 直接返回，不走后面的逻辑
+    } catch (e) {
+      console.error('加载收藏夹失败:', e);
+      this.showToast('加载收藏夹失败', 'error');
+      return;
+    }
+  }
+
+  // ==============================
+  // 🟢 新增: 处理最近访问视图
+  // ==============================
+  if (window.currentDrive === 'recent') {
+    try {
+      const res = await axios.get('/api/recent');
+      window.files = res.data.items || [];
+      window.currentPath = '最近访问'; // 强制设置导航栏显示名称
+      this.sortFiles(window); // 保持排序功能
+      return; // 直接返回
+    } catch (e) {
+      console.error('加载最近访问失败:', e);
+      this.showToast('加载最近访问失败', 'error');
+      return;
+    }
+  }
+
+  // ==============================
+  // 🟡 原有逻辑: 处理普通文件路径
+  // ==============================
   let fullPath;
   if (window.currentDrive === 'ec_volume') {
     fullPath = window.currentPath.startsWith('ec_volume') ? window.currentPath : 'ec_volume';
+  } else if (window.currentDrive.startsWith('pool://')) {
+    // 针对空间池做个小优化，防止缺少斜杠 (pool://volsub/path)
+    const cleanPath = window.currentPath.replace(/^\//, '');
+    fullPath = cleanPath ? `${window.currentDrive}/${cleanPath}` : window.currentDrive;
   } else {
+    // 物理磁盘 (D:/)
     const cleanPath = window.currentPath.replace(/^\//, '');
     fullPath = window.currentDrive + cleanPath;
   }
@@ -584,6 +694,28 @@ async changePassword(window) {
     } else {
       this.showToast(`❌ 加载失败: ${errorMsg}`, 'error');
     }
+  }
+},
+
+    // 2. 添加记录最近访问的方法
+async addToRecent(file, window) {
+  try {
+    // 如果已经在“最近访问”列表中，就不需要构建路径了，直接用 file.path
+    // 但为了统一，我们重新构建完整路径
+    let fullPath = file.path; // 收藏夹和最近访问接口返回的数据里有 path
+
+    // 如果是在普通视图中，需要构建路径
+    if (window.currentDrive !== 'favorites' && window.currentDrive !== 'recent') {
+        fullPath = this.buildFullPath(window, file.name);
+    }
+
+    await axios.post('/api/recent/add', {
+      path: fullPath,
+      name: file.name,
+      is_dir: file.is_dir
+    });
+  } catch (e) {
+    console.error('添加到最近访问失败', e);
   }
 },
 
@@ -746,17 +878,91 @@ async changePassword(window) {
       window.selectedFiles = [];
     },
 
-    handleDoubleClick(window, file) {
-    if (file.is_dir) {
-        this.openFolder(window, file.name);
+   handleDoubleClick(window, file) {
+
+   if (window.isSearchMode) {
+        this.openSearchResult(window, file);
+        return;
+    }
+
+  // 如果当前是在 收藏夹 或 最近访问 视图中
+  if (window.currentDrive === 'favorites' || window.currentDrive === 'recent') {
+      if (file.is_dir) {
+          // 跳转到该文件夹所在的真实路径
+          this.jumpToLocation(window, file.path);
+      } else {
+          // 记录最近访问并预览
+          this.addToRecent(file, window);
+          // 对于文件，我们也需要知道它的真实 window 上下文来构建 API 请求
+          // 这里我们做一个特殊的临时处理，或者修改 previewFile 支持绝对路径
+          // 简单的做法：修改 previewFile 让它支持直接传 path
+          this.previewFile(window, file, file.path);
+      }
+      return;
+  }
+
+  // 原有逻辑
+  if (file.is_dir) {
+    this.openFolder(window, file.name);
+  } else {
+    this.addToRecent(file, window); // <--- 添加这行
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (['xlsx', 'xls', 'docx', 'doc', 'pptx', 'ppt'].includes(ext)) {
+      this.openUniverEditor(file, window);
     } else {
-        const ext = file.name.split('.').pop().toLowerCase();
-        // Excel 和 Word 文件直接打开编辑器
-        if (['xlsx', 'xls', 'docx', 'doc'].includes(ext)) {
-            this.openUniverEditor(file, window);
-        } else {
-            this.previewFile(window, file);
+      this.previewFile(window, file);
+    }
+  }
+},
+
+    jumpToLocation(window, fullPath) {
+    // 解析 fullPath，设置 window.currentDrive 和 window.currentPath
+    // 假设 fullPath 格式为 "D:/data/docs" 或 "ec_volume/photos"
+
+    if (fullPath.startsWith('ec_volume')) {
+        window.currentDrive = 'ec_volume';
+        window.currentPath = fullPath;
+    } else if (fullPath.startsWith('pool://')) {
+        const parts = fullPath.split('/'); // pool://pool1/sub
+        window.currentDrive = parts.slice(0, 3).join('/'); // pool://pool1
+        window.currentPath = '/' + parts.slice(3).join('/');
+    } else {
+        // 物理盘 D:/xxx
+        const driveMatch = fullPath.match(/^([a-zA-Z]:\/|\/)/);
+        if (driveMatch) {
+            window.currentDrive = driveMatch[0]; // D:/
+            window.currentPath = fullPath.substring(window.currentDrive.length);
+            if (!window.currentPath.startsWith('/')) window.currentPath = '/' + window.currentPath;
         }
+    }
+
+    this.loadFiles(window);
+},
+    async toggleFavorite(window, file) {
+    const fullPath = window.currentDrive === 'favorites' || window.currentDrive === 'recent'
+        ? file.path
+        : this.buildFullPath(window, file.name);
+
+    try {
+        // 先检查是否已收藏 (这里简化逻辑，如果是在收藏夹视图，肯定是移除)
+        if (window.currentDrive === 'favorites') {
+             await axios.post('/api/favorites/remove', { path: fullPath });
+             this.showToast('🗑️ 已取消收藏', 'success');
+             this.loadFiles(window); // 刷新列表
+             return;
+        }
+
+        // 检查状态 (为了交互更好，可以先 check 接口，或者直接用 add/remove)
+        // 这里为了简单，我们做成“添加到收藏”
+        await axios.post('/api/favorites/add', {
+            path: fullPath,
+            name: file.name,
+            is_dir: file.is_dir
+        });
+        this.showToast('⭐ 已添加到收藏夹', 'success');
+
+    } catch (e) {
+        this.showToast('操作失败: ' + e.message, 'error');
     }
 },
    buildFullPath(window, fileName) {
@@ -785,8 +991,11 @@ async changePassword(window) {
   }
 },
 
-    downloadFile(win, file) { // <--- 修改这里
-  const fullPath = this.buildFullPath(win, file.name); // <--- 修改这里
+    downloadFile(win, file) {
+  // 收藏夹/最近访问视图使用 file.path，其他情况构建路径
+  const fullPath = (win.currentDrive === 'favorites' || win.currentDrive === 'recent')
+    ? file.path
+    : this.buildFullPath(win, file.name);
   const token = localStorage.getItem('token');
   const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
   // 直接调用全局的 window.open()，或者省略 window. 也是一样的效果
@@ -1192,142 +1401,156 @@ if (uploadPath.startsWith('pool://')) {
 
 
 
- showFileContextMenu(event, file, win) {
-      event.preventDefault();
+showFileContextMenu(event, file, win) {
+    event.preventDefault();
 
-      // 1. 获取扩展名
-      const ext = file.name.split('.').pop().toLowerCase();
-      const isEncrypted = file.name.endsWith('.encrypted');
+    // 1. 获取扩展名
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isEncrypted = file.name.endsWith('.encrypted');
 
-      // 2. 定义基础菜单项
-      const menuItems = [
+    // 2. 定义基础菜单项
+    const menuItems = [
         {
-          icon: file.is_dir ? '📂' : '👁️',
-          label: file.is_dir ? '打开' : '预览',
-          action: () => {
-            if (file.is_dir) {
-              this.handleDoubleClick(win, file);
-            } else {
-              this.previewFile(win, file);
-            }
-            this.closeContextMenu();
-          },
-          disabled: !this.canRead || isEncrypted
-        },
-        {
-          icon: '📥',
-          label: '下载',
-          action: () => {
-            this.downloadFile(win, file);
-            this.closeContextMenu();
-          },
-          disabled: !this.canRead || file.is_dir || isEncrypted
-        },
-        {
-          icon: '🔗',
-          label: '分享',
-          action: () => {
-            this.shareFile(win, file);
-            this.closeContextMenu();
-          },
-          disabled: !this.canRead || file.is_dir || isEncrypted
-        }
-      ];
-
-     // ✅ [保留] 文档编辑入口 (Excel + Word)
-if (['xlsx', 'xls', 'docx', 'doc'].includes(ext)) {
-    const isExcel = ext === 'xlsx' || ext === 'xls';
-    menuItems.push({
-        icon: isExcel ? '📊' : '📄',
-        label: isExcel ? '表格编辑' : '文档编辑',
-        action: () => {
-            this.openUniverEditor(file, win);
-            this.closeContextMenu();
-        },
-        disabled: !this.canWrite || isEncrypted
-    });
+            icon: file.is_dir ? '📂' : '👁️',
+            label: file.is_dir ? '打开' : '预览',
+            action: () => {
+                if (file.is_dir) {
+                    this.handleDoubleClick(win, file);
+                } else {
+    // 收藏夹/最近访问视图传入完整路径
+    const overridePath = (win.currentDrive === 'favorites' || win.currentDrive === 'recent') ? file.path : null;
+    this.previewFile(win, file, overridePath);
 }
-
-      // ❌ [已删除] OnlyOffice 协作编辑入口
-
-      // 3. 通用文件操作
-      menuItems.push(
-        { separator: true },
-        {
-          icon: '✂️',
-          label: '剪切',
-          action: () => {
-            this.cutFile(win, file);
-            this.closeContextMenu();
-          },
-          disabled: !this.canWrite
+                this.closeContextMenu();
+            },
+            disabled: !this.canRead || isEncrypted
         },
         {
-          icon: '📋',
-          label: '复制',
-          action: () => {
-            this.copyFile(win, file);
-            this.closeContextMenu();
-          },
-          disabled: !this.canRead
-        },
-        { separator: true },
-        {
-          icon: '✏️',
-          label: '重命名',
-          action: () => {
-            this.renameFile(win, file);
-            this.closeContextMenu();
-          },
-          disabled: !this.canWrite
+            icon: '📥',
+            label: '下载',
+            action: () => {
+                this.downloadFile(win, file);
+                this.closeContextMenu();
+            },
+            disabled: !this.canRead || file.is_dir || isEncrypted
         },
         {
-          icon: '🗑️',
-          label: '删除',
-          action: () => {
-            this.deleteFile(win, file);
-          },
-          disabled: !this.canDelete
+            icon: '🔗',
+            label: '分享',
+            action: () => {
+                this.shareFile(win, file);
+                this.closeContextMenu();
+            },
+            disabled: !this.canRead || file.is_dir || isEncrypted
         },
-        { separator: true },
+        // ✅ [新增] 收藏夹功能
         {
-          icon: isEncrypted ? '🔓' : '🔒',
-          label: isEncrypted ? '解密文件' : '加密文件',
-          action: () => {
-            if (isEncrypted) {
-              this.decryptFileOrFolder(win, file);
-            } else {
-              this.encryptFileOrFolder(win, file);
+            icon: '⭐',
+            // 如果当前是在收藏夹视图，显示"取消收藏"，否则显示"收藏"
+            label: win.currentDrive === 'favorites' ? '取消收藏' : '收藏',
+            action: () => {
+                this.toggleFavorite(win, file);
+                this.closeContextMenu();
             }
-            this.closeContextMenu();
-          },
-          disabled: !this.canDelete
+            // 收藏功能通常不需要特殊权限，只要能看到文件即可
         }
-      );
+    ];
 
-      // 4. 计算显示位置
-      const menuWidth = 200;
-      let menuHeight = 16;
-      menuItems.forEach(item => {
+    // ✅ 文档编辑/预览入口 (Excel + Word + PPT)
+    if (['xlsx', 'xls', 'docx', 'doc', 'pptx', 'ppt'].includes(ext)) {
+        const isExcel = ext === 'xlsx' || ext === 'xls';
+        const isWord = ext === 'docx' || ext === 'doc';
+        const isPPT = ext === 'pptx' || ext === 'ppt';
+
+        menuItems.push({
+            icon: isExcel ? '📊' : (isWord ? '📄' : '📽️'),
+            label: isPPT ? '预览演示文稿' : (isExcel ? '表格编辑' : '文档编辑'),
+            action: () => {
+                this.openUniverEditor(file, win);
+                this.closeContextMenu();
+            },
+            disabled: !this.canRead || isEncrypted
+        });
+    }
+
+    // 3. 通用文件操作
+    menuItems.push(
+        { separator: true },
+        {
+            icon: '✂️',
+            label: '剪切',
+            action: () => {
+                this.cutFile(win, file);
+                this.closeContextMenu();
+            },
+            disabled: !this.canWrite
+        },
+        {
+            icon: '📋',
+            label: '复制',
+            action: () => {
+                this.copyFile(win, file);
+                this.closeContextMenu();
+            },
+            disabled: !this.canRead
+        },
+        { separator: true },
+        {
+            icon: '✏️',
+            label: '重命名',
+            action: () => {
+                this.renameFile(win, file);
+                this.closeContextMenu();
+            },
+            disabled: !this.canWrite
+        },
+        {
+            icon: '🗑️',
+            label: '删除',
+            action: () => {
+                this.deleteFile(win, file);
+            },
+            disabled: !this.canDelete
+        },
+        { separator: true },
+        {
+            icon: isEncrypted ? '🔓' : '🔒',
+            label: isEncrypted ? '解密文件' : '加密文件',
+            action: () => {
+                if (isEncrypted) {
+                    this.decryptFileOrFolder(win, file);
+                } else {
+                    this.encryptFileOrFolder(win, file);
+                }
+                this.closeContextMenu();
+            },
+            disabled: !this.canDelete
+        }
+    );
+
+    // 4. 计算显示位置
+    const menuWidth = 200;
+    let menuHeight = 16;
+    menuItems.forEach(item => {
         menuHeight += item.separator ? 1 : 44;
-      });
+    });
 
-      let x = event.clientX;
-      let y = event.clientY;
-      const availableHeight = window.innerHeight - 50;
-      const availableWidth = window.innerWidth;
+    let x = event.clientX;
+    let y = event.clientY;
+    const availableHeight = window.innerHeight - 50;
+    const availableWidth = window.innerWidth;
 
-      if (availableWidth < 768) { x = 10; }
-      else if (x + menuWidth > availableWidth - 20) { x = x - menuWidth - 10; }
-      else { x = x + 10; }
-      if (x < 10) x = 10;
+    if (availableWidth < 768) { x = 10; }
+    else if (x + menuWidth > availableWidth - 20) { x = x - menuWidth - 10; }
+    else { x = x + 10; }
+    if (x < 10) x = 10;
 
-      if (y + menuHeight > availableHeight) { y = y - menuHeight; }
-      if (y < 50) y = 50;
-      if (y + menuHeight > availableHeight) { y = availableHeight - menuHeight - 10; }
+    if (y + menuHeight > availableHeight) { y = y - menuHeight; }
+    if (y < 50) y = 50;
+    if (y + menuHeight > availableHeight) { y = availableHeight - menuHeight - 10; }
 
-      this.contextMenu = { show: true, x, y, items: menuItems };
-    },
+    this.contextMenu = { show: true, x, y, items: menuItems };
+},
 
     showEmptyAreaContextMenu(event, window) {
       event.preventDefault();
@@ -1356,82 +1579,6 @@ if (['xlsx', 'xls', 'docx', 'doc'].includes(ext)) {
   const ext = filename.split('.').pop().toLowerCase();
   const docTypes = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt'];
   return docTypes.includes(ext);
-},
-    isEditableByOnlyOffice(filename) {
-  const ext = filename.split('.').pop().toLowerCase();
-  const editableExts = [
-    'docx', 'doc', 'odt', 'rtf', 'txt', 'html', 'htm',
-    'xlsx', 'xls', 'ods', 'csv',
-    'pptx', 'ppt', 'odp', 'ppsx'
-  ];
-  return editableExts.includes(ext);
-},
-
-    async openCollaborationEditor(file, fileWindow) {
-  try {
-    // 获取编辑器配置
-    const response = await axios.post('/api/onlyoffice/config', {
-      file_path: fileWindow.currentPath + '/' + file.name,
-      mode: 'edit'  // 或 'view' 只读模式
-    }, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      }
-    });
-
-    const config = response.data;
-
-    // 创建编辑器窗口
-    const editorWindow = {
-      id: Date.now(),
-      type: 'onlyoffice-editor',
-      title: `📝 ${file.name}`,
-      x: 100,
-      y: 100,
-      width: 1200,
-      height: 800,
-      minimized: false,
-      maximized: false,
-      zIndex: this.getMaxZIndex() + 1,
-
-      // 编辑器配置
-      editorConfig: config,
-      filePath: fileWindow.currentPath + '/' + file.name,
-      fileName: file.name
-    };
-
-    this.windows.push(editorWindow);
-    this.focusWindow(editorWindow.id);
-  } catch (error) {
-    console.error('打开编辑器失败:', error);
-    alert('打开编辑器失败');
-  }
-},
-
-    // 初始化 ONLYOFFICE 编辑器
-initOnlyOfficeEditor(window) {
-  const containerId = 'editor-' + window.id;
-  const container = document.getElementById(containerId);
-
-  if (!container || window.editorInitialized) return;
-
-  // 加载 ONLYOFFICE API(如果未加载)
-  if (typeof DocsAPI === 'undefined') {
-    const script = document.createElement('script');
-    script.src = 'http://localhost:8081/web-apps/apps/api/documents/api.js';
-    script.onload = () => {
-      this.createEditor(window, containerId);
-    };
-    document.head.appendChild(script);
-  } else {
-    this.createEditor(window, containerId);
-  }
-},
-
-// 创建编辑器实例
-createEditor(window, containerId) {
-  window.editorInstance = new DocsAPI.DocEditor(containerId, window.editorConfig);
-  window.editorInitialized = true;
 },
 
     showDesktopMenu(event) {
@@ -1688,7 +1835,7 @@ createEditor(window, containerId) {
 
     // 文件: static/desktop.app.js
 
-async previewFile(window, file) {
+async previewFile(window, file, overridePath = null) {
   if (file.is_dir) {
     alert('无法预览文件夹');
     return;
@@ -1697,7 +1844,8 @@ async previewFile(window, file) {
     alert(`不支持预览此文件格式`);
     return;
   }
-  const fullPath = this.buildFullPath(window, file.name);
+  // 收藏夹/最近访问会传入 overridePath，否则构建路径
+  const fullPath = overridePath || this.buildFullPath(window, file.name);
   const token = localStorage.getItem('token');
 
   let previewType = '';
@@ -1776,7 +1924,10 @@ async shareFile(window, file) {
     return;
   }
 
-  const fullPath = this.buildFullPath(window, file.name);
+  // 收藏夹/最近访问视图使用 file.path
+const fullPath = (window.currentDrive === 'favorites' || window.currentDrive === 'recent')
+  ? file.path
+  : this.buildFullPath(window, file.name);
 
   // 显示分享对话框
   const password = prompt('设置分享密码(可选，直接确定则无密码):');
@@ -2148,7 +2299,240 @@ async fetchPoolStatus() {
     this.poolStatus = { is_configured: false };
   }
 },
+// ==================== 池健康检查 ====================
+async fetchPoolHealth() {
+    try {
+        const res = await axios.get('/api/pool/health');
+        this.poolHealth = res.data;
+        return res.data;
+    } catch (e) {
+        console.error('获取池健康状态失败:', e);
+        this.poolHealth = null;
+    }
+},
 
+// ==================== 获取可添加的磁盘 ====================
+async fetchAvailableDisksForPool() {
+    try {
+        const res = await axios.get('/api/pool/available-disks');
+        this.poolAvailableDisks = res.data;
+    } catch (e) {
+        console.error('获取可用磁盘失败:', e);
+        this.poolAvailableDisks = [];
+    }
+},
+
+// ==================== 打开添加磁盘对话框 ====================
+async openAddDiskDialog() {
+    await this.fetchAvailableDisksForPool();
+    this.showAddDiskDialog = true;
+},
+
+closeAddDiskDialog() {
+    this.showAddDiskDialog = false;
+},
+
+// ==================== 添加磁盘到池 ====================
+async addDiskToPool(disk) {
+    if (!confirm(`确定要将 ${disk} 添加到存储池吗？`)) return;
+
+    try {
+        const res = await axios.post('/api/pool/disk/add', { disk });
+        this.showToast(`✅ ${res.data.message}`, 'success');
+        this.showAddDiskDialog = false;
+        await this.fetchPoolStatus();
+        await this.fetchPoolHealth();
+    } catch (e) {
+        this.showToast(`❌ 添加失败: ${e.response?.data?.error || e.message}`, 'error');
+    }
+},
+
+// ==================== 从池移除磁盘 ====================
+async removeDiskFromPool(disk) {
+    try {
+        // 1. 先预检查
+        const checkRes = await axios.post('/api/pool/disk/remove-check', { disk });
+        const check = checkRes.data;
+
+        // 2. 构建提示信息
+        let msg = `确定要移除磁盘 ${disk} 吗？\n\n`;
+        msg += `📁 该磁盘上有 ${check.file_count} 个文件\n`;
+        msg += `💾 共占用 ${this.formatSize(check.used_bytes)}\n\n`;
+
+        if (check.file_count === 0) {
+            msg += `✅ 该磁盘上没有文件，可以安全移除。`;
+        } else if (check.can_migrate) {
+            msg += `✅ 其他磁盘剩余空间充足（${this.formatSize(check.other_free_bytes)}）\n`;
+            msg += `文件将自动迁移到其他磁盘。`;
+        } else {
+            msg += `⚠️ 警告：其他磁盘空间不足！\n`;
+            msg += `需要: ${this.formatSize(check.used_bytes)}\n`;
+            msg += `可用: ${this.formatSize(check.other_free_bytes)}\n`;
+            msg += `缺少: ${this.formatSize(check.shortage_bytes)}\n\n`;
+            msg += `如继续移除，该磁盘上的 ${check.file_count} 个文件将丢失！`;
+        }
+
+        if (!confirm(msg)) return;
+
+        // 3. 如果空间不足且有文件，二次确认
+        let migrate = true;
+        if (!check.can_migrate && check.file_count > 0) {
+            if (!confirm('⚠️ 最后确认：空间不足，继续将导致数据丢失！\n\n确定要强制移除吗？')) {
+                return;
+            }
+            migrate = false;  // 强制移除，不迁移
+        }
+
+        // 4. 显示进度
+        this.encryptionProgress.show = true;
+        this.encryptionProgress.status = 'running';
+        this.encryptionProgress.title = migrate && check.file_count > 0
+            ? `正在迁移 ${check.file_count} 个文件...`
+            : '正在移除磁盘...';
+        this.encryptionProgress.percent = 50;
+
+        // 5. 执行移除
+        const res = await axios.post('/api/pool/disk/remove', { disk, migrate });
+
+        // 6. 显示结果
+        let resultMsg = res.data.message || `已移除磁盘 ${disk}`;
+        if (res.data.migrated_count > 0) {
+            resultMsg = `✅ 已迁移 ${res.data.migrated_count} 个文件`;
+        }
+        if (res.data.failed_files?.length > 0) {
+            resultMsg += `\n⚠️ ${res.data.failed_files.length} 个文件迁移失败`;
+        }
+
+        this.encryptionProgress.status = 'complete';
+        this.encryptionProgress.title = resultMsg;
+        this.encryptionProgress.percent = 100;
+
+        await this.fetchPoolStatus();
+        await this.fetchPoolHealth();
+
+    } catch (e) {
+        this.encryptionProgress.status = 'error';
+        this.encryptionProgress.title = `❌ 操作失败: ${e.response?.data?.error || e.message}`;
+    }
+
+    setTimeout(() => { this.encryptionProgress.show = false; }, 3000);
+},
+
+// ==================== 预览重新平衡 ====================
+async previewRebalance() {
+    try {
+        this.showToast('🔄 正在分析数据分布...', 'info');
+        const res = await axios.post('/api/pool/rebalance', { dry_run: true });
+        this.rebalancePreview = res.data;
+        this.showRebalanceDialog = true;
+    } catch (e) {
+        this.showToast(`❌ 分析失败: ${e.response?.data?.error || e.message}`, 'error');
+    }
+},
+
+closeRebalanceDialog() {
+    this.showRebalanceDialog = false;
+    this.rebalancePreview = null;
+},
+
+// ==================== 执行重新平衡 ====================
+async executeRebalance() {
+    if (!confirm('确定要执行数据重新平衡吗？\n\n这可能需要一些时间，请勿关闭页面。')) return;
+
+    try {
+        this.showToast('🔄 正在重新平衡数据...', 'info');
+        const res = await axios.post('/api/pool/rebalance', { dry_run: false });
+
+        this.showToast(`✅ 平衡完成！成功迁移 ${res.data.success_count || 0} 个文件`, 'success');
+        this.showRebalanceDialog = false;
+        this.rebalancePreview = null;
+        await this.fetchPoolStatus();
+        await this.fetchPoolHealth();
+    } catch (e) {
+        this.showToast(`❌ 平衡失败: ${e.response?.data?.error || e.message}`, 'error');
+    }
+},
+
+
+// 执行搜索
+async performSearch(window) {
+    const keyword = window.searchKeyword?.trim();
+    if (!keyword) {
+        this.showToast('请输入搜索关键词', 'warning');
+        return;
+    }
+
+    // 确定搜索路径
+    let searchPath = '';
+    if (window.currentDrive === 'favorites' || window.currentDrive === 'recent') {
+        this.showToast('请先选择一个存储位置再搜索', 'warning');
+        return;
+    } else if (window.currentDrive === 'ec_volume') {
+        searchPath = 'ec_volume';
+    } else if (window.currentDrive.startsWith('pool://')) {
+        searchPath = window.currentDrive;
+    } else {
+        // 物理磁盘 - 搜索当前目录
+        searchPath = window.currentDrive + (window.currentPath || '').replace(/^\//, '');
+    }
+
+    window.isSearching = true;
+    window.isSearchMode = true;
+
+    try {
+        const response = await axios.get('/api/search', {
+            params: {
+                keyword: keyword,
+                path: searchPath,
+                limit: 200
+            }
+        });
+
+        if (response.data.success) {
+            window.files = response.data.items || [];
+            window.currentPath = `搜索: "${keyword}"`;
+            window.searchResults = response.data.items || [];
+            this.showToast(`找到 ${response.data.count} 个结果`, 'success');
+        } else {
+            this.showToast(response.data.error || '搜索失败', 'error');
+        }
+    } catch (e) {
+        console.error('搜索失败:', e);
+        this.showToast('搜索失败: ' + (e.response?.data?.error || e.message), 'error');
+    } finally {
+        window.isSearching = false;
+    }
+},
+
+// 清除搜索，返回正常浏览模式
+clearSearch(window) {
+    window.searchKeyword = '';
+    window.isSearchMode = false;
+    window.searchResults = [];
+
+    // 如果是全局搜索窗口（currentDrive === 'search'），直接关闭窗口
+    if (window.currentDrive === 'search') {
+        this.closeWindow(window.id);
+        return;
+    }
+
+    // 否则返回正常浏览模式
+    this.loadFiles(window);
+},
+// 从搜索结果中打开文件/文件夹
+openSearchResult(window, file) {
+    if (file.is_dir) {
+        // 跳转到文件夹位置
+        this.jumpToLocation(window, file.path);
+    } else {
+        // 预览文件，传入完整路径
+        this.addToRecent(file, window);
+        this.previewFile(window, file, file.path);
+    }
+    // 清除搜索模式
+    window.isSearchMode = false;
+    window.searchKeyword = '';
+},
 // ==================== 打开池配置对话框 ====================
 openPoolWindow() {
   // 如果已配置，打开管理窗口；否则打开配置对话框
@@ -2246,6 +2630,117 @@ async removePool() {
   } catch (error) {
     this.showToast(`❌ 删除失败: ${error.response?.data?.error || error.message}`, 'error');
   }
+},
+
+
+// 获取池加密状态
+async fetchPoolEncryptionStatus() {
+    try {
+        const res = await axios.get('/api/pool/encryption/status');
+        this.poolEncryptionStatus = res.data;
+    } catch (e) {
+        this.poolEncryptionStatus = {};
+    }
+},
+
+// 加密容量池
+async encryptPool() {
+    const password = prompt('请设置容量池加密密码:');
+    if (!password) return;
+
+    const confirm = prompt('请再次输入密码确认:');
+    if (password !== confirm) {
+        alert('两次密码不一致');
+        return;
+    }
+
+    this.encryptionProgress.show = true;
+    this.encryptionProgress.status = 'running';
+    this.encryptionProgress.title = '正在加密容量池...';
+    this.encryptionProgress.percent = 0;
+
+    try {
+        const res = await axios.post('/api/pool/encrypt', {
+            pool_name: 'main',  // 或从poolStatus获取
+            password
+        });
+
+        if (res.data.success) {
+            this.encryptionProgress.status = 'complete';
+            this.encryptionProgress.title = `✅ 加密完成，共处理 ${res.data.processed} 个文件`;
+            this.encryptionProgress.percent = 100;
+            await this.fetchPoolEncryptionStatus();
+        } else {
+            throw new Error(res.data.error);
+        }
+    } catch (e) {
+        this.encryptionProgress.status = 'error';
+        this.encryptionProgress.title = `❌ 加密失败: ${e.response?.data?.error || e.message}`;
+    }
+
+    setTimeout(() => { this.encryptionProgress.show = false; }, 3000);
+},
+
+// 解密容量池
+async decryptPool() {
+    const password = prompt('请输入容量池密码以永久解密:');
+    if (!password) return;
+
+    if (!confirm('确定要永久解密容量池吗？解密后数据将以明文存储。')) return;
+
+    this.encryptionProgress.show = true;
+    this.encryptionProgress.status = 'running';
+    this.encryptionProgress.title = '正在解密容量池...';
+
+    try {
+        const res = await axios.post('/api/pool/decrypt', {
+            pool_name: 'main',
+            password
+        });
+
+        if (res.data.success) {
+            this.encryptionProgress.status = 'complete';
+            this.encryptionProgress.title = `✅ 解密完成`;
+            this.encryptionProgress.percent = 100;
+            await this.fetchPoolEncryptionStatus();
+        } else {
+            throw new Error(res.data.error);
+        }
+    } catch (e) {
+        this.encryptionProgress.status = 'error';
+        this.encryptionProgress.title = `❌ 解密失败: ${e.response?.data?.error || e.message}`;
+    }
+
+    setTimeout(() => { this.encryptionProgress.show = false; }, 3000);
+},
+
+// 解锁池
+async unlockPool() {
+    const password = prompt('请输入密码解锁容量池:');
+    if (!password) return;
+
+    try {
+        const res = await axios.post('/api/pool/unlock', { pool_name: 'main', password });
+        if (res.data.success) {
+            alert('✅ 容量池已解锁');
+            await this.fetchPoolEncryptionStatus();
+        } else {
+            alert('❌ 密码错误');
+        }
+    } catch (e) {
+        alert('解锁失败: ' + (e.response?.data?.error || e.message));
+    }
+},
+
+// 锁定池
+async lockPool() {
+    try {
+        await axios.post('/api/pool/lock', { pool_name: 'main' });
+        await this.fetchPoolEncryptionStatus();
+        alert('🔒 容量池已锁定');
+    } catch (e) {
+        alert('锁定失败');
+    }
 },
 
 // ==================== 逻辑卷管理 ====================
@@ -2350,9 +2845,7 @@ openPoolDetailWindow() {
             baseUrl = baseUrl.slice(0, -1);
         }
 
-        // ✅ 拼接正确的 URL
-      const editorUrl = `${baseUrl}/static/univer.html?path=${encodeURIComponent(fullPath)}&name=${encodeURIComponent(file.name)}&token=${encodeURIComponent(token)}&baseUrl=${encodeURIComponent(baseUrl)}`;
-
+      const editorUrl = `${baseUrl}/static/univer.html?path=${encodeURIComponent(fullPath)}&name=${encodeURIComponent(file.name)}&token=${encodeURIComponent(token)}&baseUrl=${encodeURIComponent(baseUrl)}&username=${encodeURIComponent(this.user.username)}&avatar=${encodeURIComponent(this.user.avatar || '')}`;
         console.log('[DEBUG] 打开 Univer URL:', editorUrl); // 方便你排查
 
         // 创建一个新窗口来承载 iframe
@@ -2663,14 +3156,18 @@ async checkCurrentUser() {
         token: accessToken
       });
 
-      if (res.data.success && res.data.user && res.data.token) {
-        this.user = res.data.user;
-        this.loggedIn = true;
+     if (res.data.success && res.data.user && res.data.token) {
+    this.user = {
+        ...res.data.user,
+        avatar: res.data.user.avatar || ''  // 确保头像字段存在
+    };
+    this.loggedIn = true;
 
-        // 保存新的长期 token
-        localStorage.setItem('token', res.data.token);
-        localStorage.setItem('user', JSON.stringify(res.data.user));
-        axios.defaults.headers.common['Authorization'] = 'Bearer ' + res.data.token;
+    // 保存新的长期 token
+    localStorage.setItem('token', res.data.token);
+    localStorage.setItem('user', JSON.stringify(this.user));
+    localStorage.setItem('userAvatar', res.data.user.avatar || '');  // 单独保存头像
+    axios.defaults.headers.common['Authorization'] = 'Bearer ' + res.data.token;
 
         // ✅ 清除 URL 中的 token(安全!)
         window.history.replaceState({}, document.title, '/desktop');
@@ -2707,11 +3204,14 @@ async checkCurrentUser() {
       const res = await axios.get('/api/current-user');
 
       if (res.data.user) {
-        this.user = res.data.user;
-        this.loggedIn = true;
-        await this.loadData();
-        return;
-      }
+    this.user = {
+        ...res.data.user,
+        avatar: res.data.user.avatar || localStorage.getItem('userAvatar') || ''
+    };
+    this.loggedIn = true;
+    await this.loadData();
+    return;
+}
     } catch (err) {
       // token 过期,清除
       localStorage.removeItem('token');
@@ -2768,22 +3268,59 @@ async checkCurrentUser() {
     },
 
     getFileIcon(filename) {
-  if (!filename) return '📄';
+      if (!filename) return '📄';
 
-  // ✅ 加密文件显示锁图标
-  if (filename.endsWith('.encrypted')) {
-    return '🔒';
-  }
+      // ✅ 1. 加密文件显示锁图标 (保持原逻辑)
+      if (filename.endsWith('.encrypted')) {
+        return '🔒';
+      }
 
-  const ext = filename.split('.').pop().toLowerCase();
-  const icons = {
-    txt: '📄', pdf: '📕', doc: '📘', docx: '📘',
-    jpg: '🖼️', png: '🖼️', gif: '🖼️',
-    mp3: '🎵', mp4: '🎬', avi: '🎬',
-    zip: '📦', rar: '📦'
-  };
-  return icons[ext] || '📄';
-},
+      const ext = filename.split('.').pop().toLowerCase();
+
+      // ✅ 2. 扩展图标库映射
+      const icons = {
+        // Office - Word (蓝色)
+        docx: '📘', doc: '📘', odt: '📘',
+
+        // Office - Excel (图表/绿色系)
+        xlsx: '📊', xls: '📊', csv: '📈', ods: '📊',
+
+        // Office - PPT (投影仪/橙色系)
+        pptx: '📽️', ppt: '📽️', odp: '📽️',
+
+        // PDF (红色)
+        pdf: '📕',
+
+        // 图片
+        jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️',
+        bmp: '🖼️', webp: '🖼️', svg: '🎨', ico: '🎨',
+
+        // 视频
+        mp4: '🎬', mkv: '🎬', avi: '🎬', mov: '🎬',
+        wmv: '🎬', flv: '🎬', webm: '🎬',
+
+        // 音频
+        mp3: '🎵', wav: '🎵', flac: '🎵', m4a: '🎵',
+        wma: '🎵', ogg: '🎵', aac: '🎵',
+
+        // 压缩包
+        zip: '📦', rar: '📦', '7z': '📦', tar: '📦',
+        gz: '📦', xz: '📦', iso: '💿',
+
+        // 代码/文本
+        txt: '📝', md: '📝', log: '📝',
+        html: '🌐', htm: '🌐',
+        js: '📜', ts: '📜', json: '⚙️', css: '🎨',
+        py: '🐍', java: '☕', c: '💻', cpp: '💻',
+
+        // 系统/执行
+        exe: '🚀', sh: '💻', bat: '💻'
+      };
+
+      return icons[ext] || '📄';
+    },
+
+
     copyToClipboard(text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
@@ -2874,7 +3411,26 @@ async checkCurrentUser() {
 
   canUpload() {
     return this.canWrite;
-  }
+  },
+
+  standaloneDiskEncryption() {
+        if (!this.encryptionStatus || !Array.isArray(this.encryptionStatus)) {
+            return [];
+        }
+
+        // 获取池中的磁盘列表
+        const poolDisks = (this.poolStatus.disks || []).map(d => {
+            // 统一格式：大写 + 反斜杠
+            const disk = typeof d === 'string' ? d : d.disk;
+            return disk?.toUpperCase().replace(/\//g, '\\');
+        });
+
+        // 过滤掉池内磁盘
+        return this.encryptionStatus.filter(disk => {
+            const normalizedDrive = disk.drive?.toUpperCase().replace(/\//g, '\\');
+            return !poolDisks.includes(normalizedDrive);
+        });
+    }
 },
 
   mounted() {
@@ -2910,13 +3466,6 @@ async checkCurrentUser() {
 
 },
 updated() {
-  // 初始化 ONLYOFFICE 编辑器
-  this.windows.forEach(win => {
-    if (win.type === 'onlyoffice-editor' && !win.editorInitialized) {
-      this.$nextTick(() => {
-        this.initOnlyOfficeEditor(win);
-      });
-    }
-  });
+
 }
 }).mount('#app');

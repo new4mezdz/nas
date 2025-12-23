@@ -284,8 +284,32 @@
         });
 
         // 页面加载时自动聚焦第一个输入框
-        window.addEventListener('load', () => {
-            document.getElementById('masterUrl').focus();
+        // 页面加载时自动聚焦第一个输入框，并尝试加载已有配置
+        window.addEventListener('load', async () => {
+            // 尝试获取现有配置进行回显
+            try {
+                const response = await axios.get('/api/setup/current-config');
+                const config = response.data;
+
+                if (config.master_url) {
+                    document.getElementById('masterUrl').value = config.master_url;
+                    // 如果有旧配置，提示用户只是密钥错了
+                    showMessage('⚠️ 检测到密钥可能已失效，请更新共享密钥', 'error');
+                }
+                if (config.node_id) {
+                    document.getElementById('nodeId').value = config.node_id;
+                }
+
+                // 如果回显了数据，光标直接聚焦到密钥输入框
+                if (config.master_url && config.node_id) {
+                    document.getElementById('sharedSecret').focus();
+                } else {
+                    document.getElementById('masterUrl').focus();
+                }
+            } catch (e) {
+                // 忽略错误，说明可能是全新安装
+                document.getElementById('masterUrl').focus();
+            }
         });
     </script>
 </body>
