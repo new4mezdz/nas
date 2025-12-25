@@ -514,17 +514,17 @@ this.availableDrives.forEach(drive => {
   }
 
   // ✅ 【新增】跳过已加入空间池的磁盘
-  if (this.poolStatus.is_configured && this.poolStatus.disks) {
-    const normalizedPoolDisks = this.poolStatus.disks.map(d =>
-  (d.disk || d).toString().toUpperCase().replace(/\\/g, '/')
+if (this.poolStatus.is_configured && this.poolStatus.disks) {
+  const normalizedPoolDisks = this.poolStatus.disks.map(d =>
+  (d.path || d.disk || d).toString().toUpperCase().replace(/\\/g, '/')
 );
-    if (normalizedPoolDisks.includes(drive.drive)) {
-      console.log('[DEBUG] ✅ 跳过空间池磁盘:', drive.drive);
-      return;
-    }
+  const normalizedDrive = drive.drive.toUpperCase().replace(/\\/g, '/');
+  if (normalizedPoolDisks.includes(normalizedDrive)) {
+    console.log('[DEBUG] ✅ 跳过空间池磁盘:', drive.drive);
+    return;
   }
+}
 
-  // ... 后面的代码不变
 
     const diskInfo = this.disks.find(d => d.mount === drive.drive);
     const driveLabel = drive.drive.replace(':/', '');
