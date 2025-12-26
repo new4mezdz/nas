@@ -104,7 +104,8 @@ def get_pool_status() -> dict:
                 "disk": disk,
                 "total": usage.total,
                 "used": usage.used,
-                "free": usage.free
+                "free": usage.free,
+                "healthy": True
             })
             total_size += usage.total
             total_free += usage.free
@@ -114,6 +115,7 @@ def get_pool_status() -> dict:
                 "total": 0,
                 "used": 0,
                 "free": 0,
+                "healthy": False,
                 "error": "磁盘不可访问"
             })
 
@@ -358,6 +360,7 @@ def select_disk(config: dict, volume_name: str, file_size: int = 0) -> str:
         candidates.sort(key=lambda x: x["free"], reverse=True)
         return candidates[0]["path"]
 
+
 def list_files(volume_name: str, subpath: str = "") -> List[dict]:
     """
     列出逻辑卷中的文件
@@ -376,7 +379,9 @@ def list_files(volume_name: str, subpath: str = "") -> List[dict]:
 
     items = []
     seen_dirs = set()
+    seen_files = set()
 
+    # 1. 从索引读取文件
     for vpath, file_info in config.get("files", {}).items():
         if not vpath.startswith(prefix):
             continue
@@ -395,6 +400,7 @@ def list_files(volume_name: str, subpath: str = "") -> List[dict]:
                 })
         else:
             # 直接文件
+            seen_files.add(relative)
             items.append({
                 "name": relative,
                 "is_dir": False,
@@ -402,6 +408,29 @@ def list_files(volume_name: str, subpath: str = "") -> List[dict]:
                 "mtime": file_info.get("mtime", 0),
                 "disk": file_info.get("disk", "")
             })
+
+    # 2. 扫描物理目录，找出空文件夹（索引中没有的）
+    for disk in config["pool"]["disks"]:
+        if subpath:
+            scan_dir = os.path.join(disk, POOL_DIR_NAME, volume_name, subpath)
+        else:
+            scan_dir = os.path.join(disk, POOL_DIR_NAME, volume_name)
+
+        if not os.path.exists(scan_dir):
+            continue
+
+        try:
+            for entry in os.scandir(scan_dir):
+                if entry.is_dir() and entry.name not in seen_dirs:
+                    seen_dirs.add(entry.name)
+                    items.append({
+                        "name": entry.name,
+                        "is_dir": True,
+                        "size": 0,
+                        "mtime": int(entry.stat().st_mtime)
+                    })
+        except:
+            pass
 
     # 排序：目录在前
     items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
@@ -609,3 +638,584 @@ def rebuild_index() -> dict:
     save_config(config)
 
     return {"message": f"索引重建完成，共 {len(new_files)} 个文件"}
+
+
+# ==================== 磁盘健康管理 ====================
+
+def check_disk_health() -> dict:
+    """
+    检查所有池成员磁盘的健康状态
+    返回: { "healthy": [...], "offline": [...], "warnings": [...] }
+    """
+    config = load_config()
+
+    if not config.get("pool"):
+        return {"error": "存储池未配置"}
+
+    healthy = []
+    offline = []
+    warnings = []
+
+    for disk in config["pool"]["disks"]:
+        disk_status = {
+            "disk": disk,
+            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+        }
+
+        # 检查磁盘是否可访问
+        if not os.path.exists(disk):
+            disk_status["status"] = "offline"
+            disk_status["error"] = "磁盘不可访问"
+            offline.append(disk_status)
+            continue
+
+        # 检查 .pool 目录是否存在
+        pool_dir = os.path.join(disk, POOL_DIR_NAME)
+        if not os.path.exists(pool_dir):
+            disk_status["status"] = "warning"
+            disk_status["error"] = ".pool 目录丢失"
+            warnings.append(disk_status)
+            continue
+
+        # 检查磁盘空间
+        try:
+            usage = shutil.disk_usage(disk)
+            disk_status["total"] = usage.total
+            disk_status["used"] = usage.used
+            disk_status["free"] = usage.free
+            disk_status["usage_percent"] = round(usage.used / usage.total * 100, 1)
+
+            # 空间不足警告 (< 10%)
+            if usage.free / usage.total < 0.1:
+                disk_status["status"] = "warning"
+                disk_status["warning"] = "磁盘空间不足 (< 10%)"
+                warnings.append(disk_status)
+            else:
+                disk_status["status"] = "healthy"
+                healthy.append(disk_status)
+        except Exception as e:
+            disk_status["status"] = "error"
+            disk_status["error"] = str(e)
+            offline.append(disk_status)
+
+    # 统计受影响的文件
+    affected_files = []
+    for vpath, file_info in config.get("files", {}).items():
+        if file_info["disk"] in [d["disk"] for d in offline]:
+            affected_files.append({
+                "path": vpath,
+                "disk": file_info["disk"],
+                "size": file_info.get("size", 0)
+            })
+
+    return {
+        "healthy": healthy,
+        "offline": offline,
+        "warnings": warnings,
+        "affected_files": affected_files,
+        "total_disks": len(config["pool"]["disks"]),
+        "healthy_count": len(healthy),
+        "offline_count": len(offline)
+    }
+
+
+def add_disk_to_pool(disk: str) -> dict:
+    """
+    向现有池添加新磁盘
+    :param disk: 磁盘路径 "D:/"
+    """
+    config = load_config()
+
+    if not config.get("pool"):
+        raise Exception("存储池未配置")
+
+    # 标准化磁盘路径
+    disk = disk.upper().replace("\\", "/")
+    if not disk.endswith("/"):
+        disk += "/"
+
+    # 检查磁盘是否存在
+    if not os.path.exists(disk):
+        raise Exception(f"磁盘 {disk} 不存在或不可访问")
+
+    # 检查是否已在池中
+    if disk in config["pool"]["disks"]:
+        raise Exception(f"磁盘 {disk} 已在池中")
+
+    # 创建 .pool 目录
+    pool_dir = os.path.join(disk, POOL_DIR_NAME)
+    os.makedirs(pool_dir, exist_ok=True)
+
+    # 为每个逻辑卷创建目录
+    for vol_name in config.get("volumes", {}).keys():
+        vol_dir = os.path.join(pool_dir, vol_name)
+        os.makedirs(vol_dir, exist_ok=True)
+
+    # 添加到配置
+    config["pool"]["disks"].append(disk)
+    save_config(config)
+
+    return {
+        "message": f"磁盘 {disk} 已添加到池",
+        "total_disks": len(config["pool"]["disks"])
+    }
+def check_remove_disk(disk: str, force: bool = False) -> dict:
+    """
+    移除磁盘前的预检查
+    :param disk: 磁盘路径
+    :param force: 是否强制（用于处理离线磁盘）
+    :return: 检查结果
+    """
+    config = load_config()
+
+    if not config.get("pool"):
+        raise Exception("存储池未配置")
+
+    # 标准化传入的路径
+    input_disk = disk.upper().replace("\\", "/")
+    if not input_disk.endswith("/"):
+        input_disk += "/"
+
+    # 在配置的磁盘列表中查找匹配项
+    matched_disk = None
+    for d in config["pool"]["disks"]:
+        normalized_d = d.upper().replace("\\", "/")
+        if not normalized_d.endswith("/"):
+            normalized_d += "/"
+        if normalized_d == input_disk:
+            matched_disk = d
+            break
+
+    if not matched_disk:
+        raise Exception(f"磁盘 {disk} 不在池中")
+
+    disk = matched_disk
+
+    # 检查磁盘是否在线
+    disk_online = os.path.exists(disk)
+
+    # 查找该磁盘上的文件
+    files_on_disk = []
+    disk_used = 0
+    for vpath, info in config.get("files", {}).items():
+        if info.get("disk") == disk:
+            files_on_disk.append(vpath)
+            disk_used += info.get("size", 0)
+
+    # 计算其他磁盘的剩余空间
+    other_disks = [d for d in config["pool"]["disks"] if d != disk]
+    other_free = 0
+    for d in other_disks:
+        try:
+            usage = shutil.disk_usage(d)
+            other_free += usage.free
+        except:
+            pass
+
+    # 判断是否可以迁移（保留1GB余量）
+    reserved = 1073741824  # 1GB
+    can_migrate = disk_online and other_free > (disk_used + reserved)
+    shortage = (disk_used + reserved) - other_free if not can_migrate else 0
+
+    return {
+        "disk": disk,
+        "disk_online": disk_online,
+        "file_count": len(files_on_disk),
+        "used_bytes": disk_used,
+        "other_free_bytes": other_free,
+        "can_migrate": can_migrate,
+        "shortage_bytes": max(0, shortage),
+        "other_disk_count": len(other_disks)
+    }
+
+def remove_disk_from_pool(disk: str, migrate: bool = True) -> dict:
+    """
+    从池中移除磁盘
+    :param disk: 磁盘路径
+    :param migrate: 是否迁移数据到其他磁盘
+    """
+    config = load_config()
+
+    if not config.get("pool"):
+        raise Exception("存储池未配置")
+
+    # 标准化
+    disk = disk.upper().replace("\\", "/")
+    if not disk.endswith("/"):
+        disk += "/"
+
+    if disk not in config["pool"]["disks"]:
+        raise Exception(f"磁盘 {disk} 不在池中")
+
+    if len(config["pool"]["disks"]) <= 1:
+        raise Exception("无法移除最后一个磁盘，请删除整个池")
+
+    # 查找该磁盘上的文件
+    files_on_disk = {
+        vpath: info for vpath, info in config.get("files", {}).items()
+        if info["disk"] == disk
+    }
+
+    migrated_count = 0
+    failed_files = []
+
+    if migrate and files_on_disk:
+        # 迁移文件到其他磁盘
+        other_disks = [d for d in config["pool"]["disks"] if d != disk]
+
+        for vpath, file_info in files_on_disk.items():
+            old_full_path = os.path.join(file_info["disk"], file_info["real_path"])
+
+            # 检查源文件是否存在
+            if not os.path.exists(old_full_path):
+                # 文件已丢失，直接删除记录
+                del config["files"][vpath]
+                failed_files.append({"path": vpath, "error": "源文件不存在"})
+                continue
+
+            try:
+                # 选择目标磁盘（最大剩余空间）
+                target_disk = None
+                max_free = 0
+                for d in other_disks:
+                    try:
+                        usage = shutil.disk_usage(d)
+                        if usage.free > max_free and usage.free > file_info.get("size", 0):
+                            max_free = usage.free
+                            target_disk = d
+                    except:
+                        continue
+
+                if not target_disk:
+                    failed_files.append({"path": vpath, "error": "没有足够空间的目标磁盘"})
+                    continue
+
+                # 构建新路径
+                new_full_path = os.path.join(target_disk, file_info["real_path"])
+                os.makedirs(os.path.dirname(new_full_path), exist_ok=True)
+
+                # 复制文件
+                shutil.copy2(old_full_path, new_full_path)
+
+                # 更新索引
+                config["files"][vpath]["disk"] = target_disk
+
+                # 删除原文件
+                os.remove(old_full_path)
+                migrated_count += 1
+
+            except Exception as e:
+                failed_files.append({"path": vpath, "error": str(e)})
+
+    elif not migrate and files_on_disk:
+        # 不迁移，直接删除文件记录（文件将丢失！）
+        for vpath in files_on_disk.keys():
+            del config["files"][vpath]
+
+    # 从池中移除磁盘
+    config["pool"]["disks"].remove(disk)
+    save_config(config)
+
+    return {
+        "message": f"磁盘 {disk} 已从池中移除",
+        "migrated_count": migrated_count,
+        "failed_files": failed_files,
+        "remaining_disks": len(config["pool"]["disks"])
+    }
+
+
+def rebalance_pool(dry_run: bool = True) -> dict:
+    """
+    重新平衡池中各磁盘的数据分布
+    :param dry_run: 是否只预览不实际执行
+    """
+    config = load_config()
+
+    if not config.get("pool"):
+        raise Exception("存储池未配置")
+
+    disks = config["pool"]["disks"]
+    if len(disks) < 2:
+        raise Exception("至少需要2个磁盘才能进行平衡")
+
+    # 计算当前各磁盘使用情况
+    disk_usage = {}
+    for disk in disks:
+        try:
+            usage = shutil.disk_usage(disk)
+            disk_usage[disk] = {
+                "total": usage.total,
+                "used": usage.used,
+                "free": usage.free,
+                "pool_used": 0,  # 池内文件占用
+                "files": []
+            }
+        except:
+            continue
+
+    # 统计各磁盘上的池文件
+    for vpath, file_info in config.get("files", {}).items():
+        disk = file_info["disk"]
+        if disk in disk_usage:
+            disk_usage[disk]["pool_used"] += file_info.get("size", 0)
+            disk_usage[disk]["files"].append({
+                "path": vpath,
+                "size": file_info.get("size", 0)
+            })
+
+    # 计算平均使用率
+    total_pool_used = sum(d["pool_used"] for d in disk_usage.values())
+    total_capacity = sum(d["total"] for d in disk_usage.values())
+    target_ratio = total_pool_used / total_capacity if total_capacity > 0 else 0
+
+    # 找出需要迁移的文件
+    moves = []
+    for disk, info in disk_usage.items():
+        current_ratio = info["pool_used"] / info["total"] if info["total"] > 0 else 0
+        # 如果使用率超过平均值 5% 以上，考虑迁出
+        if current_ratio > target_ratio + 0.05:
+            excess_bytes = int((current_ratio - target_ratio) * info["total"])
+            # 按文件大小排序，迁移大文件
+            sorted_files = sorted(info["files"], key=lambda x: x["size"], reverse=True)
+            moved_bytes = 0
+            for f in sorted_files:
+                if moved_bytes >= excess_bytes:
+                    break
+                moves.append({
+                    "file": f["path"],
+                    "size": f["size"],
+                    "from": disk
+                })
+                moved_bytes += f["size"]
+
+    # 为每个要迁移的文件选择目标磁盘
+    for move in moves:
+        # 选择使用率最低的磁盘
+        best_target = None
+        lowest_ratio = 1.0
+        for disk, info in disk_usage.items():
+            if disk == move["from"]:
+                continue
+            ratio = info["pool_used"] / info["total"] if info["total"] > 0 else 0
+            if ratio < lowest_ratio and info["free"] > move["size"]:
+                lowest_ratio = ratio
+                best_target = disk
+        move["to"] = best_target
+
+    # 过滤掉无法迁移的
+    moves = [m for m in moves if m.get("to")]
+
+    result = {
+        "dry_run": dry_run,
+        "current_distribution": {
+            disk: {
+                "pool_used": info["pool_used"],
+                "usage_percent": round(info["pool_used"] / info["total"] * 100, 1) if info["total"] > 0 else 0
+            }
+            for disk, info in disk_usage.items()
+        },
+        "target_ratio": round(target_ratio * 100, 1),
+        "planned_moves": moves,
+        "total_bytes_to_move": sum(m["size"] for m in moves)
+    }
+
+    if not dry_run and moves:
+        # 实际执行迁移
+        success_count = 0
+        for move in moves:
+            try:
+                file_info = config["files"][move["file"]]
+                old_path = os.path.join(file_info["disk"], file_info["real_path"])
+                new_path = os.path.join(move["to"], file_info["real_path"])
+
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                shutil.copy2(old_path, new_path)
+                os.remove(old_path)
+
+                config["files"][move["file"]]["disk"] = move["to"]
+                success_count += 1
+            except Exception as e:
+                move["error"] = str(e)
+
+        save_config(config)
+        result["executed"] = True
+        result["success_count"] = success_count
+
+    return result
+
+
+def get_pool_actual_path(pool_path):
+    """
+    将 pool://volume_name/subpath 转换为实际文件系统路径
+    """
+    config = load_config()
+    pool_cfg = config.get("pool")
+    if not pool_cfg or not pool_cfg.get("is_configured"):
+        return None
+
+    # 解析 pool://volume_name/subpath
+    # 去掉 pool:// 前缀
+    path_part = pool_path.replace('pool://', '')
+    parts = path_part.split('/', 1)
+    volume_name = parts[0]
+    sub_path = parts[1] if len(parts) > 1 else ''
+
+    # 获取卷信息
+    volumes = pool_cfg.get("volumes", [])
+    for vol in volumes:
+        if vol.get("name") == volume_name:
+            # 获取卷的实际挂载路径
+            mount_disk = vol.get("disk")  # 卷所在的磁盘
+            mount_path = vol.get("path", "")  # 卷的相对路径
+
+            if mount_disk:
+                actual_base = os.path.join(mount_disk, mount_path.lstrip('/\\'))
+                if sub_path:
+                    return os.path.join(actual_base, sub_path.replace('/', os.sep))
+                return actual_base
+
+    # 如果没找到对应卷，尝试用第一个磁盘
+    disks = pool_cfg.get("disks", [])
+    if disks:
+        first_disk = disks[0]
+        base_path = os.path.join(first_disk, ".pool_data", volume_name)
+        if sub_path:
+            return os.path.join(base_path, sub_path.replace('/', os.sep))
+        return base_path
+
+    return None
+
+
+def search_in_pool(pool_path, keyword):
+    """在空间池中搜索文件"""
+    results = []
+    keyword_lower = keyword.lower()
+    max_results = 200
+
+    try:
+        config = load_config()
+
+        if not config.get("pool"):
+            return {'success': False, 'error': '空间池未配置', 'items': [], 'count': 0}
+
+        # 解析 pool://volume_name/subpath
+        path_part = pool_path.replace('pool://', '')
+        parts = path_part.split('/', 1)
+        volume_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ''
+
+        # 构建搜索前缀
+        if sub_path:
+            search_prefix = f"{volume_name}/{sub_path.strip('/')}/"
+        else:
+            search_prefix = f"{volume_name}/"
+
+        # 用于记录已添加的目录，避免重复
+        seen_dirs = set()
+
+        # 从配置中的 files 字典搜索
+        for vpath, file_info in config.get("files", {}).items():
+            # 只搜索指定卷/路径下的文件
+            if not vpath.startswith(search_prefix) and not vpath.startswith(volume_name + "/"):
+                continue
+
+            # 如果指定了子路径，确保文件在该子路径下
+            if sub_path and not vpath.startswith(search_prefix):
+                continue
+
+            # 获取文件名
+            filename = vpath.split('/')[-1]
+
+            # 模糊匹配
+            if keyword_lower in filename.lower():
+                results.append({
+                    'name': filename,
+                    'path': f"pool://{vpath}",
+                    'is_dir': False,
+                    'size': file_info.get('size', 0),
+                    'mtime': file_info.get('mtime', 0)
+                })
+
+                if len(results) >= max_results:
+                    break
+
+            # 同时检查路径中的目录名是否匹配
+            path_parts = vpath.split('/')
+            for i, part in enumerate(path_parts[:-1]):  # 排除最后的文件名
+                if keyword_lower in part.lower():
+                    dir_path = '/'.join(path_parts[:i + 1])
+                    if dir_path not in seen_dirs:
+                        seen_dirs.add(dir_path)
+                        results.append({
+                            'name': part,
+                            'path': f"pool://{dir_path}",
+                            'is_dir': True,
+                            'size': 0,
+                            'mtime': 0
+                        })
+
+                        if len(results) >= max_results:
+                            break
+
+        # 按目录优先、名称排序
+        results.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+
+        return {
+            'success': True,
+            'keyword': keyword,
+            'count': len(results),
+            'items': results
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'error': str(e), 'items': [], 'count': 0}
+
+
+def get_available_disks() -> List[dict]:
+    """
+    获取可添加到池的可用磁盘列表
+    """
+    config = load_config()
+    current_disks = config.get("pool", {}).get("disks", []) if config.get("pool") else []
+
+    available = []
+
+    # Windows 盘符检测
+    if os.name == 'nt':
+        import string
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:/"
+            if os.path.exists(drive):
+                # 排除已在池中的磁盘
+                if drive not in current_disks:
+                    try:
+                        usage = shutil.disk_usage(drive)
+                        available.append({
+                            "drive": drive,
+                            "total": usage.total,
+                            "free": usage.free,
+                            "in_pool": False
+                        })
+                    except:
+                        pass
+    else:
+        # Linux: 检测 /mnt 和 /media 下的挂载点
+        for mount_base in ['/mnt', '/media']:
+            if os.path.exists(mount_base):
+                for name in os.listdir(mount_base):
+                    mount_path = os.path.join(mount_base, name)
+                    if os.path.ismount(mount_path):
+                        if mount_path not in current_disks:
+                            try:
+                                usage = shutil.disk_usage(mount_path)
+                                available.append({
+                                    "drive": mount_path,
+                                    "total": usage.total,
+                                    "free": usage.free,
+                                    "in_pool": False
+                                })
+                            except:
+                                pass
+
+    return available

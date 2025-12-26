@@ -172,3 +172,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+backend/LibreHardwareMonitor-net472/
+backend/tool/

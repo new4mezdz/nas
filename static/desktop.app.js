@@ -907,11 +907,11 @@ async addToRecent(file, window) {
   } else {
     this.addToRecent(file, window); // <--- 添加这行
     const ext = file.name.split('.').pop().toLowerCase();
-    if (['xlsx', 'xls', 'docx', 'doc', 'pptx', 'ppt'].includes(ext)) {
-      this.openUniverEditor(file, window);
-    } else {
-      this.previewFile(window, file);
-    }
+    if (['xlsx', 'docx'].includes(ext)) {
+  this.openUniverEditor(file, window);
+} else {
+  this.previewFile(window, file);
+}
   }
 },
 
@@ -1120,17 +1120,28 @@ renameSelected(window) {
     },
 // 重命名文件/文件夹
 async renameFile(window, file, newName) {
-  // 如果没有提供新名称,弹出输入框
-  if (!newName) {
-    const oldName = typeof file === 'string' ? file : file.name;
-    newName = prompt('请输入新名称:', oldName);
-  }
-
-  if (!newName || !newName.trim()) {
-    return;
-  }
-
   const oldName = typeof file === 'string' ? file : file.name;
+  const isDir = typeof file === 'object' && file.is_dir;
+
+  // 分离文件名和后缀
+  let baseName = oldName;
+  let ext = '';
+  if (!isDir) {
+    const lastDot = oldName.lastIndexOf('.');
+    if (lastDot > 0) {
+      baseName = oldName.substring(0, lastDot);
+      ext = oldName.substring(lastDot);  // 包含点，如 ".mp4"
+    }
+  }
+
+  // 如果没有提供新名称，弹出输入框（只显示文件名部分）
+  if (!newName) {
+    const inputName = prompt(`请输入新名称:${ext ? '\n(后缀 ' + ext + ' 将自动保留)' : ''}`, baseName);
+    if (!inputName || !inputName.trim()) {
+      return;
+    }
+    newName = inputName.trim() + ext;  // 自动补上后缀
+  }
 
   // 名称没有变化
   if (newName === oldName) {
@@ -1457,21 +1468,20 @@ showFileContextMenu(event, file, win) {
     ];
 
     // ✅ 文档编辑/预览入口 (Excel + Word + PPT)
-    if (['xlsx', 'xls', 'docx', 'doc', 'pptx', 'ppt'].includes(ext)) {
-        const isExcel = ext === 'xlsx' || ext === 'xls';
-        const isWord = ext === 'docx' || ext === 'doc';
-        const isPPT = ext === 'pptx' || ext === 'ppt';
+    // ✅ 新格式 - 支持协作编辑
+if (['xlsx', 'docx'].includes(ext)) {
+    menuItems.push({
+        icon: ext === 'xlsx' ? '📊' : '📄',
+        label: ext === 'xlsx' ? '表格编辑' : '文档编辑',
+        action: () => {
+            this.openUniverEditor(file, win);
+            this.closeContextMenu();
+        },
+        disabled: !this.canRead || isEncrypted
+    });
+}
 
-        menuItems.push({
-            icon: isExcel ? '📊' : (isWord ? '📄' : '📽️'),
-            label: isPPT ? '预览演示文稿' : (isExcel ? '表格编辑' : '文档编辑'),
-            action: () => {
-                this.openUniverEditor(file, win);
-                this.closeContextMenu();
-            },
-            disabled: !this.canRead || isEncrypted
-        });
-    }
+
 
     // 3. 通用文件操作
     menuItems.push(
@@ -1722,11 +1732,10 @@ showFileContextMenu(event, file, win) {
           // 5. 选择API
           const apiUrl = mode === 'cut' ? '/api/move' : '/api/copy';
 
-          const response = await axios.post(apiUrl, {
-            source_path: sourceFullPath.replace(/\/\//g, '/'),
-            target_path: targetFullPath.replace(/\/\//g, '/')
-          });
-
+         const response = await axios.post(apiUrl, {
+  source_path: sourceFullPath.replace(/([^:])\/\//g, '$1/'),
+  target_path: targetFullPath.replace(/([^:])\/\//g, '$1/')
+});
           if (response.data.success) {
             successCount++;
           } else {
@@ -1827,11 +1836,13 @@ showFileContextMenu(event, file, win) {
     isText(file) {
       return /\.(txt|log|md|py|js|html|css|json)$/i.test(file.name);
     },
-
+    isOffice(file) {
+  return /\.(doc|docx|xls|xlsx|ppt|pptx)$/i.test(file.name);
+},
     isPreviewable(file) {
-      return this.isImage(file) || this.isVideo(file) || this.isAudio(file) ||
-             this.isPdf(file) || this.isText(file);
-    },
+  return this.isImage(file) || this.isVideo(file) || this.isAudio(file) ||
+         this.isPdf(file) || this.isText(file) || this.isOffice(file);
+},
 
     // 文件: static/desktop.app.js
 
@@ -1878,7 +1889,20 @@ async previewFile(window, file, overridePath = null) {
     }
     return;
   }
-
+  if (this.isOffice(file)) {
+    try {
+      previewWindow.fileType = 'pdf';
+      const convertUrl = `/api/office/convert-pdf?path=${encodeURIComponent(fullPath)}`;
+      const response = await axios.get(convertUrl, { responseType: 'blob' });
+      const pdfBlob = new Blob([response.data], { type: 'application/pdf' });
+      previewWindow.previewContent = URL.createObjectURL(pdfBlob);
+      previewWindow.isLoading = false;
+    } catch (error) {
+      previewWindow.previewError = 'Office 文件预览失败: ' + (error.response?.data?.error || error.message);
+      previewWindow.isLoading = false;
+    }
+    return;
+  }
   // 其他文件类型逻辑
   const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
   if (this.isImage(file) || this.isVideo(file) || this.isAudio(file)) {
@@ -1954,10 +1978,10 @@ const fullPath = (window.currentDrive === 'favorites' || window.currentDrive ===
     if (data.success) {
       // 显示分享链接 - ✅ 修改这里
       let shareUrl = data.full_url;
-      if (!shareUrl) {
-        const proxyPrefix = axios.defaults.baseURL || '';
-        shareUrl = window.location.origin + proxyPrefix + data.share_url;
-      }
+if (!shareUrl) {
+  const proxyPrefix = axios.defaults.baseURL || '';
+  shareUrl = location.origin + proxyPrefix + data.share_url;
+}
 
       // 创建分享结果窗口
       const shareWindow = this.createWindow('share-result', '分享链接', '🔗', {

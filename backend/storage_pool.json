@@ -2,65 +2,64 @@
   "pool": {
     "name": "主存储池",
     "disks": [
-      "E:/",
-      "F:/",
-      "G:/"
+      "F:/"
     ],
-    "created_at": "2025-12-08T14:12:32"
+    "created_at": "2025-12-24T14:08:43"
   },
   "volumes": {
-    "movie": {
+    "MOVIE": {
       "display_name": "电影",
       "icon": "🎬",
       "strategy": "largest_free",
-      "created_at": "2025-12-08T14:13:10"
+      "created_at": "2025-12-24T14:08:58"
+    },
+    "music": {
+      "display_name": "音乐",
+      "icon": "🎵",
+      "strategy": "largest_free",
+      "created_at": "2025-12-26T15:38:50"
     }
   },
   "files": {
-    "movie/基于差值直方图平移的密文域可逆信息隐藏算法_李志佳.pdf": {
+    "MOVIE/1/1.JPG": {
       "disk": "F:/",
-      "real_path": ".pool/movie/基于差值直方图平移的密文域可逆信息隐藏算法_李志佳.pdf",
-      "size": 1152496,
-      "mtime": 1750235514
-    },
-    "movie/IMG_6927.JPG": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/IMG_6927.JPG",
+      "real_path": ".pool/MOVIE/1/1.JPG",
       "size": 311075,
-      "mtime": 1765176188
+      "mtime": 1766735697
     },
-    "movie/1.mp4": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/1.mp4",
-      "size": 4591451,
-      "mtime": 1757900062
+    "MOVIE/1.JPG": {
+      "disk": "F:/",
+      "real_path": ".pool/MOVIE/1.JPG",
+      "size": 311075,
+      "mtime": 1766735709
     },
-    "movie/水管漏损的关键影响因素.docx": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/水管漏损的关键影响因素.docx",
-      "size": 41561,
-      "mtime": 1765183404
-    },
-    "movie/edges_simple.csv": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/edges_simple.csv",
-      "size": 627,
-      "mtime": 1765183437
-    },
-    "movie/edges_simple.xls": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/edges_simple.xls",
-      "size": 21504,
-      "mtime": 1765183718
-    },
-    "movie/edges_simple.xlsx": {
-      "disk": "G:/",
-      "real_path": ".pool/movie/edges_simple.xlsx",
+    "MOVIE/edges_simple.xlsx": {
+      "disk": "F:/",
+      "real_path": ".pool/MOVIE/edges_simple.xlsx",
       "size": 11365,
-      "mtime": 1765183803
+      "mtime": 1766737181
+    },
+    "MOVIE/供水管网.docx": {
+      "disk": "F:/",
+      "real_path": ".pool/MOVIE/供水管网.docx",
+      "size": 1162258,
+      "mtime": 1766737205
+    },
+    "MOVIE/供水管网输配漏损风险评估.pptx": {
+      "disk": "F:/",
+      "real_path": ".pool/MOVIE/供水管网输配漏损风险评估.pptx",
+      "size": 2022718,
+      "mtime": 1766737398
+    },
+    "MOVIE/分布式存储中的再生码综述_郝杰.pdf": {
+      "disk": "F:/",
+      "real_path": ".pool/MOVIE/分布式存储中的再生码综述_郝杰.pdf",
+      "size": 1324217,
+      "mtime": 1766737926
     }
   },
   "round_robin_index": {
-    "movie": 0
+    "MOVIE": 0,
+    "music": 0
   }
 }

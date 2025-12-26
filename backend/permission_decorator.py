@@ -59,20 +59,19 @@ def verify_user_permission_from_center(username):
 def permission_required(required_permission):
     """
     权限检查装饰器
-
-    使用方法:
-    @app.route('/api/something')
-    @permission_required('readonly')  # 或 'readwrite', 'fullcontrol'
-    def some_function():
-        ...
     """
 
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            # ✅ 方案1: 检查本地 session (本地登录用户)
+            # ✅ 方案1: 来自管理端的请求，直接信任
+            secret = request.headers.get('X-NAS-Secret')
+            if secret == NAS_SHARED_SECRET:
+                # 管理端已验证过用户登录和权限，直接放行
+                return f(*args, **kwargs)
+
+            # ✅ 方案2: 检查本地 session (本地登录用户)
             if 'user' in g and hasattr(g, 'user'):
-                # 从 session 获取用户权限
                 user_permission = session.get('file_permission', 'readonly')
 
                 if check_permission_level(user_permission, required_permission):
@@ -80,20 +79,16 @@ def permission_required(required_permission):
                 else:
                     return jsonify({'error': '权限不足'}), 403
 
-            # ✅ 方案2: 检查是否来自管理端 (跨节点访问)
+            # ✅ 方案3: 检查 Header 中的用户名并向管理端验证
             username = request.headers.get('X-NAS-Username')
-            secret = request.headers.get('X-NAS-Secret')
-
-            if username and secret == NAS_SHARED_SECRET:
-                # 来自管理端的请求,向管理端验证权限
+            if username:
                 perm_data = verify_user_permission_from_center(username)
-
                 if perm_data and check_permission_level(perm_data['file_permission'], required_permission):
                     return f(*args, **kwargs)
                 else:
                     return jsonify({'error': '权限不足或验证失败'}), 403
 
-            # ✅ 如果两种方案都不满足,返回未授权
+            # 如果都不满足，返回未授权
             return jsonify({'error': '未登录或未授权'}), 401
 
         return decorated_function

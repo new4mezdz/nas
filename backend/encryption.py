@@ -518,3 +518,58 @@ class EncryptionManager:
             "processed_files": processed_files,
             "failed_files": failed_files
         }
+
+    # 在 EncryptionManager 类中添加
+
+    def encrypt_pool(self, pool_name: str, password: str, pool_config: dict, status_callback=None) -> dict:
+        """
+        加密容量池(遍历所有磁盘上属于该池的文件)
+
+        Args:
+            pool_name: 池名称
+            password: 加密密码
+            pool_config: 池配置(包含 disks 和 files 信息)
+            status_callback: 进度回调
+        """
+        try:
+            # 1. 生成池级别的盐和密钥
+            salt = os.urandom(32)
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+            password_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+
+            # 2. 保存池加密配置
+            pool_key = f"pool:{pool_name}"
+            self.disk_configs[pool_key] = {
+                "password_salt": salt.hex(),
+                "password_hash": password_hash.hex(),
+                "type": "pool"
+            }
+            self._save_config()
+            self.unlocked_keys[pool_key] = key
+
+            # 3. 遍历池中所有文件(分布在各磁盘)
+            files = pool_config.get('files', {})
+            processed = 0
+            failed = []
+            total = len(files)
+
+            for virtual_path, file_info in files.items():
+                real_path = file_info.get('real_path')  # 实际物理路径
+                if not real_path or not os.path.exists(real_path):
+                    continue
+                try:
+                    with open(real_path, 'rb') as f:
+                        plaintext = f.read()
+                    encrypted = xor_cipher(plaintext, key)
+                    with open(real_path, 'wb') as f:
+                        f.write(encrypted)
+                    processed += 1
+
+                    if status_callback and processed % 20 == 0:
+                        status_callback(pool_name, f"加密中 ({processed}/{total})", processed / total * 100)
+                except Exception as e:
+                    failed.append({"path": real_path, "error": str(e)})
+
+            return {"success": True, "processed": processed, "failed": failed}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
