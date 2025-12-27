@@ -521,15 +521,10 @@ class EncryptionManager:
 
     # 在 EncryptionManager 类中添加
 
-    def encrypt_pool(self, pool_name: str, password: str, pool_config: dict, status_callback=None) -> dict:
+    def encrypt_pool(self, pool_name: str, password: str, pool_config: dict, files_config: dict = None,
+                     status_callback=None) -> dict:
         """
-        加密容量池(遍历所有磁盘上属于该池的文件)
-
-        Args:
-            pool_name: 池名称
-            password: 加密密码
-            pool_config: 池配置(包含 disks 和 files 信息)
-            status_callback: 进度回调
+        加密整个存储池
         """
         try:
             # 1. 生成池级别的盐和密钥
@@ -547,29 +542,204 @@ class EncryptionManager:
             self._save_config()
             self.unlocked_keys[pool_key] = key
 
-            # 3. 遍历池中所有文件(分布在各磁盘)
-            files = pool_config.get('files', {})
+            # 3. 获取磁盘列表，加密 .pool 目录下所有文件
+            disks = pool_config.get('disks', [])
             processed = 0
             failed = []
-            total = len(files)
 
-            for virtual_path, file_info in files.items():
-                real_path = file_info.get('real_path')  # 实际物理路径
-                if not real_path or not os.path.exists(real_path):
+            for disk in disks:
+                pool_dir = os.path.join(disk, '.pool')
+                if not os.path.exists(pool_dir):
                     continue
-                try:
-                    with open(real_path, 'rb') as f:
-                        plaintext = f.read()
-                    encrypted = xor_cipher(plaintext, key)
-                    with open(real_path, 'wb') as f:
-                        f.write(encrypted)
-                    processed += 1
 
-                    if status_callback and processed % 20 == 0:
-                        status_callback(pool_name, f"加密中 ({processed}/{total})", processed / total * 100)
-                except Exception as e:
-                    failed.append({"path": real_path, "error": str(e)})
+                for root, dirs, files in os.walk(pool_dir):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            with open(file_path, 'rb') as f:
+                                plaintext = f.read()
+                            encrypted = xor_cipher(plaintext, key)
+                            with open(file_path, 'wb') as f:
+                                f.write(encrypted)
+                            processed += 1
+                        except Exception as e:
+                            failed.append({"path": file_path, "error": str(e)})
+                            # 加密完成后自动锁定（清除内存中的密钥）
+                            if pool_key in self.unlocked_keys:
+                                del self.unlocked_keys[pool_key]
 
             return {"success": True, "processed": processed, "failed": failed}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def encrypt_volume(self, volume_name: str, password: str, volume_config: dict, disks: list = None,
+                       status_callback=None) -> dict:
+        """
+        加密单个逻辑卷
+        """
+        try:
+            # 1. 生成卷级别的盐和密钥
+            salt = os.urandom(32)
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+            password_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+
+            # 2. 保存卷加密配置
+            volume_key = f"volume:{volume_name}"
+            self.disk_configs[volume_key] = {
+                "password_salt": salt.hex(),
+                "password_hash": password_hash.hex(),
+                "type": "volume"
+            }
+            self._save_config()
+            self.unlocked_keys[volume_key] = key
+
+            # 3. 遍历所有磁盘，加密该卷的文件夹
+            disks = disks or []
+            processed = 0
+            failed = []
+
+            for disk in disks:
+                volume_dir = os.path.join(disk, '.pool', volume_name)
+                if not os.path.exists(volume_dir):
+                    continue
+
+                for root, dirs, files in os.walk(volume_dir):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            with open(file_path, 'rb') as f:
+                                plaintext = f.read()
+                            encrypted = xor_cipher(plaintext, key)
+                            with open(file_path, 'wb') as f:
+                                f.write(encrypted)
+                            processed += 1
+                        except Exception as e:
+                            failed.append({"path": file_path, "error": str(e)})
+
+                            # 加密完成后自动锁定（清除内存中的密钥）
+                            if pool_key in self.unlocked_keys:
+                                del self.unlocked_keys[volume_key]
+
+            return {"success": True, "processed": processed, "failed": failed}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def decrypt_pool(self, pool_name: str, password: str, disks: list) -> dict:
+        """解密整个存储池"""
+        try:
+            pool_key = f"pool:{pool_name}"
+            config = self.disk_configs.get(pool_key)
+            if not config:
+                return {"success": False, "error": "存储池未加密"}
+
+            # 验证密码
+            salt = bytes.fromhex(config.get("password_salt", ''))
+            stored_hash = bytes.fromhex(config.get("password_hash", ''))
+            new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+
+            if new_hash != stored_hash:
+                return {"success": False, "error": "密码错误"}
+
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+
+            processed = 0
+            failed = []
+
+            for disk in disks:
+                pool_dir = os.path.join(disk, '.pool')
+                if not os.path.exists(pool_dir):
+                    continue
+
+                for root, dirs, files in os.walk(pool_dir):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            with open(file_path, 'rb') as f:
+                                encrypted = f.read()
+                            decrypted = xor_cipher(encrypted, key)
+                            with open(file_path, 'wb') as f:
+                                f.write(decrypted)
+                            processed += 1
+                        except Exception as e:
+                            failed.append({"path": file_path, "error": str(e)})
+
+            # 删除加密配置
+            del self.disk_configs[pool_key]
+            self._save_config()
+            if pool_key in self.unlocked_keys:
+                del self.unlocked_keys[pool_key]
+
+            return {"success": True, "processed": processed, "failed": failed}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def decrypt_volume(self, volume_name: str, password: str, disks: list) -> dict:
+        """解密单个逻辑卷"""
+        try:
+            volume_key = f"volume:{volume_name}"
+            config = self.disk_configs.get(volume_key)
+            if not config:
+                return {"success": False, "error": "逻辑卷未加密"}
+
+            # 验证密码
+            salt = bytes.fromhex(config.get("password_salt", ''))
+            stored_hash = bytes.fromhex(config.get("password_hash", ''))
+            new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+
+            if new_hash != stored_hash:
+                return {"success": False, "error": "密码错误"}
+
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+
+            processed = 0
+            failed = []
+
+            for disk in disks:
+                volume_dir = os.path.join(disk, '.pool', volume_name)
+                if not os.path.exists(volume_dir):
+                    continue
+
+                for root, dirs, files in os.walk(volume_dir):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            with open(file_path, 'rb') as f:
+                                encrypted = f.read()
+                            decrypted = xor_cipher(encrypted, key)
+                            with open(file_path, 'wb') as f:
+                                f.write(decrypted)
+                            processed += 1
+                        except Exception as e:
+                            failed.append({"path": file_path, "error": str(e)})
+
+            # 删除加密配置
+            del self.disk_configs[volume_key]
+            self._save_config()
+            if volume_key in self.unlocked_keys:
+                del self.unlocked_keys[volume_key]
+
+            return {"success": True, "processed": processed, "failed": failed}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def unlock_pool_or_volume(self, key: str, password: str) -> bool:
+        """解锁存储池或逻辑卷"""
+        config = self.disk_configs.get(key)
+        if not config:
+            print(f"🔑 {key} 未配置加密")
+            return False
+
+        salt = bytes.fromhex(config.get("password_salt", ''))
+        stored_hash = bytes.fromhex(config.get("password_hash", ''))
+
+        # 验证密码
+        new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        if new_hash == stored_hash:
+            # 派生密钥并存入内存
+            self.unlocked_keys[key] = hashlib.pbkdf2_hmac(
+                'sha256', password.encode('utf-8'), salt, 100000, dklen=32
+            )
+            print(f"🔓 {key} 已解锁")
+            return True
+        print(f"🔑 {key} 密码错误")
+        return False

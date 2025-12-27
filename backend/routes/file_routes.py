@@ -102,6 +102,7 @@ def list_files():
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
         return jsonify({"success": True, "items": items})
 
+
     # 分支 2: 空间池卷
     elif full_path_from_request.startswith('pool://'):
         try:
@@ -112,6 +113,25 @@ def list_files():
 
             if not volume:
                 return jsonify({'error': '无效的存储池路径'}), 400
+
+            # 检查加密锁定状态
+            pool_key = "pool:main"
+            volume_key = f"volume:{volume}"
+
+            if volume_key in encryption_manager.disk_configs:
+                if volume_key not in encryption_manager.unlocked_keys:
+                    return jsonify({
+                        'error': f'逻辑卷 {volume} 已锁定，请先解锁',
+                        'error_type': 'pool_locked',
+                        'volume': volume
+                    }), 403
+            elif pool_key in encryption_manager.disk_configs:
+                if pool_key not in encryption_manager.unlocked_keys:
+                    return jsonify({
+                        'error': '存储池已锁定，请先解锁',
+                        'error_type': 'pool_locked',
+                        'volume': volume
+                    }), 403
 
             items = Storage_pool.list_files(volume, subpath)
             return jsonify({'success': True, 'items': items})
@@ -212,6 +232,7 @@ def upload_file_with_ec():
 
         return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件已写入逻辑盘并完成RS编码'})
 
+
     # 分支 2: 空间池卷
     elif upload_path.startswith('pool://'):
         try:
@@ -220,8 +241,28 @@ def upload_file_with_ec():
             volume = parts[0]
             subpath = parts[1] if len(parts) > 1 else ''
 
+            # 检查加密锁定状态
+            pool_key = "pool:main"
+            volume_key = f"volume:{volume}"
+            encrypt_key = None
+
+            if volume_key in encryption_manager.disk_configs:
+                if volume_key not in encryption_manager.unlocked_keys:
+                    return jsonify({'error': f'逻辑卷 {volume} 已锁定，请先解锁', 'locked': True}), 403
+                encrypt_key = encryption_manager.unlocked_keys[volume_key]
+            elif pool_key in encryption_manager.disk_configs:
+                if pool_key not in encryption_manager.unlocked_keys:
+                    return jsonify({'error': '存储池已锁定，请先解锁', 'locked': True}), 403
+                encrypt_key = encryption_manager.unlocked_keys[pool_key]
+
             for uploaded_file in uploaded_files:
                 file_data = uploaded_file.read()
+
+                # 如果有加密密钥，加密文件内容
+                if encrypt_key:
+                    from encryption import xor_cipher
+                    file_data = xor_cipher(file_data, encrypt_key)
+
                 Storage_pool.add_file(volume, subpath, uploaded_file.filename, file_data)
 
             return jsonify({'success': True, 'message': f'{len(uploaded_files)}个文件已上传到池卷'})

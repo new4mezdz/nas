@@ -18,6 +18,32 @@ def init_pool_routes(storage_pool, encryption_manager):
     _ctx['encryption_manager'] = encryption_manager
 
 
+def _check_encryption_access(encryption_manager, volume):
+    """
+    检查加密访问权限
+    返回: (可访问, 错误信息, 解密密钥)
+    """
+    pool_key = "pool:main"
+    volume_key = f"volume:{volume}"
+
+    # 检查卷是否加密
+    if volume_key in encryption_manager.disk_configs:
+        if volume_key in encryption_manager.unlocked_keys:
+            return True, None, encryption_manager.unlocked_keys[volume_key]
+        else:
+            return False, "逻辑卷已加密但未解锁，请先解锁", None
+
+    # 检查池是否加密
+    if pool_key in encryption_manager.disk_configs:
+        if pool_key in encryption_manager.unlocked_keys:
+            return True, None, encryption_manager.unlocked_keys[pool_key]
+        else:
+            return False, "存储池已加密但未解锁，请先解锁", None
+
+    # 未加密
+    return True, None, None
+
+
 # ========== 存储池管理 ==========
 
 @pool_bp.route('/status', methods=['GET'])
@@ -249,17 +275,23 @@ def api_pool_list():
     """列出逻辑卷中的文件"""
     try:
         Storage_pool = _ctx['Storage_pool']
+        encryption_manager = _ctx['encryption_manager']
+
         volume = request.args.get('volume')
         subpath = request.args.get('subpath', '')
 
         if not volume:
             return jsonify({"error": "请指定逻辑卷"}), 400
 
+        # 检查加密锁定状态
+        can_access, error, _ = _check_encryption_access(encryption_manager, volume)
+        if not can_access:
+            return jsonify({"error": error, "locked": True}), 403
+
         items = Storage_pool.list_files(volume, subpath)
         return jsonify({"items": items, "volume": volume, "subpath": subpath})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @pool_bp.route('/upload', methods=['POST'])
 @permission_required('readwrite')
@@ -267,11 +299,18 @@ def api_pool_upload():
     """上传文件到逻辑卷"""
     try:
         Storage_pool = _ctx['Storage_pool']
+        encryption_manager = _ctx['encryption_manager']
+
         volume = request.form.get('volume')
         subpath = request.form.get('subpath', '')
 
         if not volume:
             return jsonify({"error": "请指定逻辑卷"}), 400
+
+        # 检查加密锁定状态
+        can_access, error, encrypt_key = _check_encryption_access(encryption_manager, volume)
+        if not can_access:
+            return jsonify({"error": error, "locked": True}), 403
 
         if 'file' not in request.files:
             return jsonify({"error": "没有文件"}), 400
@@ -281,12 +320,16 @@ def api_pool_upload():
             return jsonify({"error": "未选择文件"}), 400
 
         file_data = file.read()
-        result = Storage_pool.add_file(volume, subpath, file.filename, file_data)
 
+        # 如果有加密密钥，需要加密
+        if encrypt_key:
+            from encryption import xor_cipher
+            file_data = xor_cipher(file_data, encrypt_key)
+
+        result = Storage_pool.add_file(volume, subpath, file.filename, file_data)
         return jsonify({"message": "上传成功", "file": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @pool_bp.route('/download', methods=['GET'])
 @permission_required('readonly')
@@ -294,15 +337,40 @@ def api_pool_download():
     """下载文件"""
     try:
         Storage_pool = _ctx['Storage_pool']
+        encryption_manager = _ctx['encryption_manager']
+
         virtual_path = request.args.get('path')
 
         if not virtual_path:
             return jsonify({"error": "请指定文件路径"}), 400
 
+        # 获取卷名
+        volume = virtual_path.split('/')[0] if '/' in virtual_path else virtual_path
+
+        # 检查加密锁定状态
+        can_access, error, decrypt_key = _check_encryption_access(encryption_manager, volume)
+        if not can_access:
+            return jsonify({"error": error, "locked": True}), 403
+
         full_path = Storage_pool.get_file_path(virtual_path)
 
         if not os.path.exists(full_path):
             return jsonify({"error": "文件不存在"}), 404
+
+        # 如果有解密密钥，需要解密
+        if decrypt_key:
+            from encryption import xor_cipher
+            from io import BytesIO
+
+            with open(full_path, 'rb') as f:
+                encrypted_data = f.read()
+            decrypted_data = xor_cipher(encrypted_data, decrypt_key)
+
+            return send_file(
+                BytesIO(decrypted_data),
+                as_attachment=True,
+                download_name=os.path.basename(full_path)
+            )
 
         return send_file(full_path, as_attachment=True)
     except Exception as e:
@@ -315,11 +383,19 @@ def api_pool_delete_file():
     """删除文件"""
     try:
         Storage_pool = _ctx['Storage_pool']
+        encryption_manager = _ctx['encryption_manager']
+
         data = request.json
         virtual_path = data.get('path')
 
         if not virtual_path:
             return jsonify({"error": "请指定文件路径"}), 400
+
+        # 获取卷名并检查加密锁定状态
+        volume = virtual_path.split('/')[0] if '/' in virtual_path else virtual_path
+        can_access, error, _ = _check_encryption_access(encryption_manager, volume)
+        if not can_access:
+            return jsonify({"error": error, "locked": True}), 403
 
         result = Storage_pool.delete_file(virtual_path)
         return jsonify(result)
@@ -333,6 +409,8 @@ def api_pool_mkdir():
     """创建文件夹"""
     try:
         Storage_pool = _ctx['Storage_pool']
+        encryption_manager = _ctx['encryption_manager']
+
         data = request.json
         volume = data.get('volume')
         subpath = data.get('subpath', '')
@@ -341,68 +419,141 @@ def api_pool_mkdir():
         if not volume or not folder_name:
             return jsonify({"error": "请指定逻辑卷和文件夹名"}), 400
 
+        # 检查加密锁定状态
+        can_access, error, _ = _check_encryption_access(encryption_manager, volume)
+        if not can_access:
+            return jsonify({"error": error, "locked": True}), 403
+
         result = Storage_pool.create_folder(volume, subpath, folder_name)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ========== 加密相关 ==========
 
 @pool_bp.route('/encryption/status', methods=['GET'])
 @permission_required('readonly')
 def get_pool_encryption_status():
-    """获取空间池加密状态"""
+    """获取空间池和逻辑卷加密状态"""
     try:
         encryption_manager = _ctx['encryption_manager']
 
-        pool_status = {}
+        pools_status = {}
+        volumes_status = {}
+
         for key, config in encryption_manager.disk_configs.items():
             if key.startswith('pool:'):
                 pool_name = key.replace('pool:', '')
-                pool_status[pool_name] = {
+                pools_status[pool_name] = {
                     'is_encrypted': True,
                     'is_unlocked': key in encryption_manager.unlocked_keys,
                     'type': config.get('type', 'pool')
                 }
+            elif key.startswith('volume:'):
+                volume_name = key.replace('volume:', '')
+                volumes_status[volume_name] = {
+                    'is_encrypted': True,
+                    'is_unlocked': key in encryption_manager.unlocked_keys,
+                    'type': config.get('type', 'volume')
+                }
 
-        if not pool_status:
-            return jsonify({'is_configured': False, 'pools': {}})
-
-        return jsonify({'is_configured': True, 'pools': pool_status})
+        return jsonify({
+            'is_configured': bool(pools_status or volumes_status),
+            'pools': pools_status,
+            'volumes': volumes_status
+        })
     except Exception as e:
-        return jsonify({'is_configured': False, 'pools': {}, 'error': str(e)})
-
+        return jsonify({'is_configured': False, 'pools': {}, 'volumes': {}, 'error': str(e)})
 
 @pool_bp.route('/encrypt', methods=['POST'])
+@permission_required('fullcontrol')
 def api_pool_encrypt():
-    """加密整个容量池"""
+    """加密存储池或逻辑卷"""
     Storage_pool = _ctx['Storage_pool']
     encryption_manager = _ctx['encryption_manager']
 
     data = request.get_json()
-    pool_name = data.get('pool_name')
     password = data.get('password')
+    target_type = data.get('type', 'pool')
+    target_name = data.get('name')
 
     config = Storage_pool.load_config()
-    pool_config = config.get('volumes', {}).get(pool_name)
+    pool_config = config.get('pool', {})
+    disks = pool_config.get('disks', [])
 
-    if not pool_config:
-        return jsonify({"success": False, "error": "池不存在"}), 404
+    if target_type == 'pool':
+        result = encryption_manager.encrypt_pool('main', password, pool_config)
+    else:
+        if not target_name:
+            return jsonify({"success": False, "error": "请指定逻辑卷名称"}), 400
+        volume_config = config.get('volumes', {}).get(target_name)
+        if not volume_config:
+            return jsonify({"success": False, "error": "逻辑卷不存在"}), 404
+        result = encryption_manager.encrypt_volume(target_name, password, volume_config, disks)
 
-    result = encryption_manager.encrypt_pool(pool_name, password, pool_config)
     return jsonify(result)
 
 
 @pool_bp.route('/unlock', methods=['POST'])
+@permission_required('fullcontrol')
 def api_pool_unlock():
-    """解锁容量池"""
+    """解锁存储池或逻辑卷"""
     encryption_manager = _ctx['encryption_manager']
 
     data = request.get_json()
-    pool_name = data.get('pool_name')
+    target_type = data.get('type', 'pool')
+    target_name = data.get('name', 'main')
     password = data.get('password')
 
-    pool_key = f"pool:{pool_name}"
-    success = encryption_manager.unlock(pool_key, password)
+    if target_type == 'pool':
+        key = f"pool:{target_name}"
+    else:
+        key = f"volume:{target_name}"
+
+    success = encryption_manager.unlock_pool_or_volume(key, password)
     return jsonify({"success": success})
+
+@pool_bp.route('/decrypt', methods=['POST'])
+@permission_required('fullcontrol')
+def api_pool_decrypt():
+    """解密存储池或逻辑卷"""
+    Storage_pool = _ctx['Storage_pool']
+    encryption_manager = _ctx['encryption_manager']
+
+    data = request.get_json()
+    password = data.get('password')
+    target_type = data.get('type', 'pool')
+    target_name = data.get('name', 'main')
+
+    config = Storage_pool.load_config()
+    pool_config = config.get('pool', {})
+    disks = pool_config.get('disks', [])
+
+    if target_type == 'pool':
+        result = encryption_manager.decrypt_pool('main', password, disks)
+    else:
+        result = encryption_manager.decrypt_volume(target_name, password, disks)
+
+    return jsonify(result)
+
+
+@pool_bp.route('/lock', methods=['POST'])
+@permission_required('fullcontrol')
+def api_pool_lock():
+    """锁定存储池或逻辑卷"""
+    encryption_manager = _ctx['encryption_manager']
+
+    data = request.get_json()
+    target_type = data.get('type', 'pool')
+    target_name = data.get('name', 'main')
+
+    if target_type == 'pool':
+        key = f"pool:{target_name}"
+    else:
+        key = f"volume:{target_name}"
+
+    if key in encryption_manager.unlocked_keys:
+        del encryption_manager.unlocked_keys[key]
+        return jsonify({"success": True})
+    else:
+        return jsonify({"success": False, "error": "未解锁或不存在"})

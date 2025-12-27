@@ -1548,60 +1548,61 @@
     </div>
 </div>
 
-        <!-- ========== 容量池加密 ========== -->
-        <div v-if="poolStatus.is_configured" class="bg-white border rounded-lg shadow-sm">
-            <div class="p-4 border-b font-semibold text-gray-700 flex items-center gap-2">
-                <span class="text-xl">📦</span> 容量池加密
-            </div>
-            <div class="p-4">
-                <div class="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-md mb-4">
-                    <p class="text-sm text-blue-800">对容量池中分布在各磁盘上的文件进行统一加密保护。加密后需解锁才能访问池内文件。</p>
-                </div>
 
-                <!-- 池加密状态 -->
-                <div class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50">
-                    <div class="flex items-center gap-4">
-                        <span class="text-3xl">{{ poolEncryptionStatus.main?.is_encrypted ? (poolEncryptionStatus.main?.is_unlocked ? '🔓' : '🔒') : '📦' }}</span>
-                        <div>
-                            <div class="font-bold">主存储池</div>
-                            <div v-if="poolEncryptionStatus.main?.is_encrypted">
-                                <span v-if="poolEncryptionStatus.main?.is_unlocked"
-                                      class="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已解锁</span>
-                                <span v-else
-                                      class="text-xs font-semibold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">已锁定</span>
-                            </div>
-                            <div v-else class="text-xs text-gray-500">未加密 · {{ poolStatus.total_files || 0 }} 个文件</div>
-                        </div>
+        <!-- ========== 容量池加密 ========== -->
+<div v-if="poolStatus.is_configured" class="bg-white border rounded-lg shadow-sm">
+    <div class="p-4 border-b font-semibold text-gray-700 flex items-center gap-2">
+        <span class="text-xl">📦</span> 容量池加密
+    </div>
+    <div class="p-4 space-y-4">
+        <div class="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-md">
+            <p class="text-sm text-blue-800">对容量池或单个逻辑卷进行加密保护。加密后需解锁才能访问。</p>
+        </div>
+
+        <!-- 整个池加密 -->
+        <div class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50">
+            <div class="flex items-center gap-4">
+                <span class="text-3xl">{{ poolEncryptionStatus.pools?.main?.is_encrypted ? (poolEncryptionStatus.pools?.main?.is_unlocked ? '🔓' : '🔒') : '📦' }}</span>
+                <div>
+                    <div class="font-bold">整个存储池</div>
+                    <div v-if="poolEncryptionStatus.pools?.main?.is_encrypted">
+                        <span v-if="poolEncryptionStatus.pools?.main?.is_unlocked" class="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已解锁</span>
+                        <span v-else class="text-xs font-semibold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">已锁定</span>
                     </div>
-                    <div class="flex gap-2">
-                        <!-- 未加密：显示设密码 -->
-                        <button v-if="!poolEncryptionStatus.main?.is_encrypted"
-                                @click="encryptPool"
-                                class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">
-                            设密码
-                        </button>
-                        <!-- 已加密未解锁：显示解锁 -->
-                        <button v-if="poolEncryptionStatus.main?.is_encrypted && !poolEncryptionStatus.main?.is_unlocked"
-                                @click="unlockPool"
-                                class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
-                            解锁
-                        </button>
-                        <!-- 已加密已解锁：显示锁定 -->
-                        <button v-if="poolEncryptionStatus.main?.is_encrypted && poolEncryptionStatus.main?.is_unlocked"
-                                @click="lockPool"
-                                class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">
-                            锁定
-                        </button>
-                        <!-- 已加密：显示移除加密 -->
-                        <button v-if="poolEncryptionStatus.main?.is_encrypted"
-                                @click="decryptPool"
-                                class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">
-                            移除加密
-                        </button>
-                    </div>
+                    <div v-else class="text-xs text-gray-500">未加密</div>
                 </div>
+            </div>
+            <div class="flex gap-2">
+                <button v-if="!poolEncryptionStatus.pools?.main?.is_encrypted" @click="encryptTarget('pool')" class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">设密码</button>
+                <button v-if="poolEncryptionStatus.pools?.main?.is_encrypted && !poolEncryptionStatus.pools?.main?.is_unlocked" @click="unlockTarget('pool', 'main')" class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">解锁</button>
+                <button v-if="poolEncryptionStatus.pools?.main?.is_encrypted && poolEncryptionStatus.pools?.main?.is_unlocked" @click="lockTarget('pool', 'main')" class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">锁定</button>
+                <button v-if="poolEncryptionStatus.pools?.main?.is_encrypted" @click="decryptTarget('pool', 'main')" class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">移除加密</button>
             </div>
         </div>
+
+        <!-- 逻辑卷加密 -->
+        <div class="text-sm font-semibold text-gray-600 mt-4">逻辑卷单独加密</div>
+        <div v-for="(vol, volName) in poolStatus.volumes" :key="volName" class="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50">
+    <div class="flex items-center gap-4">
+        <span class="text-3xl">{{ poolEncryptionStatus.volumes?.[volName]?.is_encrypted ? (poolEncryptionStatus.volumes?.[volName]?.is_unlocked ? '🔓' : '🔒') : vol.icon }}</span>
+        <div>
+            <div class="font-bold">{{ vol.display_name }}</div>
+            <div v-if="poolEncryptionStatus.volumes?.[volName]?.is_encrypted">
+                <span v-if="poolEncryptionStatus.volumes?.[volName]?.is_unlocked" class="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已解锁</span>
+                <span v-else class="text-xs font-semibold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">已锁定</span>
+            </div>
+            <div v-else class="text-xs text-gray-500">未加密</div>
+        </div>
+    </div>
+    <div class="flex gap-2">
+        <button v-if="!poolEncryptionStatus.volumes?.[volName]?.is_encrypted" @click="encryptTarget('volume', volName)" class="px-3 py-1.5 bg-purple-500 text-white rounded text-sm hover:bg-purple-600">设密码</button>
+        <button v-if="poolEncryptionStatus.volumes?.[volName]?.is_encrypted && !poolEncryptionStatus.volumes?.[volName]?.is_unlocked" @click="unlockTarget('volume', volName)" class="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">解锁</button>
+        <button v-if="poolEncryptionStatus.volumes?.[volName]?.is_encrypted && poolEncryptionStatus.volumes?.[volName]?.is_unlocked" @click="lockTarget('volume', volName)" class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">锁定</button>
+        <button v-if="poolEncryptionStatus.volumes?.[volName]?.is_encrypted" @click="decryptTarget('volume', volName)" class="px-3 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600">移除加密</button>
+    </div>
+</div>
+    </div>
+</div>
 
         <!-- 未配置容量池时的提示 -->
         <div v-else class="bg-gray-50 border rounded-lg p-6 text-center text-gray-500">

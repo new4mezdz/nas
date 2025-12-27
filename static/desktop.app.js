@@ -623,9 +623,9 @@ async changePassword(window) {
     try {
       const res = await axios.get('/api/favorites');
       window.files = res.data.items || [];
-      window.currentPath = '收藏夹'; // 强制设置导航栏显示名称
-      this.sortFiles(window); // 保持排序功能
-      return; // 直接返回，不走后面的逻辑
+      window.currentPath = '收藏夹';
+      this.sortFiles(window);
+      return;
     } catch (e) {
       console.error('加载收藏夹失败:', e);
       this.showToast('加载收藏夹失败', 'error');
@@ -640,9 +640,9 @@ async changePassword(window) {
     try {
       const res = await axios.get('/api/recent');
       window.files = res.data.items || [];
-      window.currentPath = '最近访问'; // 强制设置导航栏显示名称
-      this.sortFiles(window); // 保持排序功能
-      return; // 直接返回
+      window.currentPath = '最近访问';
+      this.sortFiles(window);
+      return;
     } catch (e) {
       console.error('加载最近访问失败:', e);
       this.showToast('加载最近访问失败', 'error');
@@ -657,11 +657,9 @@ async changePassword(window) {
   if (window.currentDrive === 'ec_volume') {
     fullPath = window.currentPath.startsWith('ec_volume') ? window.currentPath : 'ec_volume';
   } else if (window.currentDrive.startsWith('pool://')) {
-    // 针对空间池做个小优化，防止缺少斜杠 (pool://volsub/path)
     const cleanPath = window.currentPath.replace(/^\//, '');
     fullPath = cleanPath ? `${window.currentDrive}/${cleanPath}` : window.currentDrive;
   } else {
-    // 物理磁盘 (D:/)
     const cleanPath = window.currentPath.replace(/^\//, '');
     fullPath = window.currentDrive + cleanPath;
   }
@@ -677,18 +675,43 @@ async changePassword(window) {
     const errorType = errorData.error_type;
 
     // ✅ 根据错误类型做不同处理
-    if (errorType === 'disk_locked') {
+    if (errorType === 'disk_locked' || errorType === 'pool_locked') {
       window.isLocked = true;
       window.files = [];
-      const drive = errorData.drive;
+      const lockTarget = errorData.drive || errorData.volume || '存储';
 
       this.showToast(`🔒 ${errorMsg}`, 'warning');
 
       // 自动弹出解锁对话框
       setTimeout(async () => {
-        const shouldUnlock = confirm(`磁盘 ${drive} 已锁定\n\n是否立即解锁?`);
+        const shouldUnlock = confirm(`${lockTarget} 已锁定\n\n是否立即解锁?`);
         if (shouldUnlock) {
-          await this.unlockDisk(drive, window);
+          if (errorType === 'pool_locked') {
+            // 池或卷锁定，弹出解锁对话框
+            const password = prompt('请输入密码解锁:');
+            if (password) {
+              try {
+                const volume = errorData.volume;
+                // 先尝试解锁卷，再尝试解锁池
+                let res = await axios.post('/api/pool/unlock', { type: 'volume', name: volume, password });
+                if (!res.data.success) {
+                  res = await axios.post('/api/pool/unlock', { type: 'pool', name: 'main', password });
+                }
+                if (res.data.success) {
+                  this.showToast('✅ 解锁成功', 'success');
+                  await this.fetchPoolEncryptionStatus();
+                  this.loadFiles(window);
+                } else {
+                  this.showToast('❌ 密码错误', 'error');
+                }
+              } catch (e) {
+                this.showToast('解锁失败: ' + (e.response?.data?.error || e.message), 'error');
+              }
+            }
+          } else {
+            // 磁盘锁定
+            await this.unlockDisk(errorData.drive, window);
+          }
         }
       }, 100);
     } else {
@@ -696,7 +719,6 @@ async changePassword(window) {
     }
   }
 },
-
     // 2. 添加记录最近访问的方法
 async addToRecent(file, window) {
   try {
@@ -2667,9 +2689,11 @@ async fetchPoolEncryptionStatus() {
     }
 },
 
-// 加密容量池
-async encryptPool() {
-    const password = prompt('请设置容量池加密密码:');
+
+// 加密池或卷
+async encryptTarget(type, name = 'main') {
+    const label = type === 'pool' ? '存储池' : `逻辑卷 ${name}`;
+    const password = prompt(`请设置${label}加密密码:`);
     if (!password) return;
 
     const confirm = prompt('请再次输入密码确认:');
@@ -2680,20 +2704,18 @@ async encryptPool() {
 
     this.encryptionProgress.show = true;
     this.encryptionProgress.status = 'running';
-    this.encryptionProgress.title = '正在加密容量池...';
+    this.encryptionProgress.title = `正在加密${label}...`;
     this.encryptionProgress.percent = 0;
 
     try {
-        const res = await axios.post('/api/pool/encrypt', {
-            pool_name: 'main',  // 或从poolStatus获取
-            password
-        });
-
+        const res = await axios.post('/api/pool/encrypt', { type, name, password });
         if (res.data.success) {
             this.encryptionProgress.status = 'complete';
             this.encryptionProgress.title = `✅ 加密完成，共处理 ${res.data.processed} 个文件`;
             this.encryptionProgress.percent = 100;
             await this.fetchPoolEncryptionStatus();
+            // 刷新所有窗口的文件列表
+this.windows.forEach(win => this.loadFiles(win));
         } else {
             throw new Error(res.data.error);
         }
@@ -2701,27 +2723,22 @@ async encryptPool() {
         this.encryptionProgress.status = 'error';
         this.encryptionProgress.title = `❌ 加密失败: ${e.response?.data?.error || e.message}`;
     }
-
     setTimeout(() => { this.encryptionProgress.show = false; }, 3000);
 },
 
-// 解密容量池
-async decryptPool() {
-    const password = prompt('请输入容量池密码以永久解密:');
+// 解密池或卷
+async decryptTarget(type, name) {
+    const label = type === 'pool' ? '存储池' : `逻辑卷 ${name}`;
+    const password = prompt(`请输入${label}密码以永久解密:`);
     if (!password) return;
-
-    if (!confirm('确定要永久解密容量池吗？解密后数据将以明文存储。')) return;
+    if (!confirm(`确定要永久解密${label}吗？解密后数据将以明文存储。`)) return;
 
     this.encryptionProgress.show = true;
     this.encryptionProgress.status = 'running';
-    this.encryptionProgress.title = '正在解密容量池...';
+    this.encryptionProgress.title = `正在解密${label}...`;
 
     try {
-        const res = await axios.post('/api/pool/decrypt', {
-            pool_name: 'main',
-            password
-        });
-
+        const res = await axios.post('/api/pool/decrypt', { type, name, password });
         if (res.data.success) {
             this.encryptionProgress.status = 'complete';
             this.encryptionProgress.title = `✅ 解密完成`;
@@ -2734,19 +2751,19 @@ async decryptPool() {
         this.encryptionProgress.status = 'error';
         this.encryptionProgress.title = `❌ 解密失败: ${e.response?.data?.error || e.message}`;
     }
-
     setTimeout(() => { this.encryptionProgress.show = false; }, 3000);
 },
 
-// 解锁池
-async unlockPool() {
-    const password = prompt('请输入密码解锁容量池:');
+// 解锁池或卷
+async unlockTarget(type, name) {
+    const label = type === 'pool' ? '存储池' : `逻辑卷 ${name}`;
+    const password = prompt(`请输入密码解锁${label}:`);
     if (!password) return;
 
     try {
-        const res = await axios.post('/api/pool/unlock', { pool_name: 'main', password });
+        const res = await axios.post('/api/pool/unlock', { type, name, password });
         if (res.data.success) {
-            alert('✅ 容量池已解锁');
+            alert(`✅ ${label}已解锁`);
             await this.fetchPoolEncryptionStatus();
         } else {
             alert('❌ 密码错误');
@@ -2756,12 +2773,15 @@ async unlockPool() {
     }
 },
 
-// 锁定池
-async lockPool() {
+// 锁定池或卷
+async lockTarget(type, name) {
+    const label = type === 'pool' ? '存储池' : `逻辑卷 ${name}`;
     try {
-        await axios.post('/api/pool/lock', { pool_name: 'main' });
+        await axios.post('/api/pool/lock', { type, name });
         await this.fetchPoolEncryptionStatus();
-        alert('🔒 容量池已锁定');
+        // 刷新所有窗口的文件列表
+this.windows.forEach(win => this.loadFiles(win));
+        alert(`🔒 ${label}已锁定`);
     } catch (e) {
         alert('锁定失败');
     }
