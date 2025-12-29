@@ -894,6 +894,59 @@
 .sao-grid-2 {
   grid-template-columns: repeat(2, 1fr);
 }
+
+/* 搜索下拉菜单 */
+.search-dropdown {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 500px;
+  background: rgba(30, 30, 30, 0.98);
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 52;
+}
+
+.search-section {
+  padding: 8px 0;
+}
+
+.search-section-title {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.search-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.search-item:hover,
+.search-item.active {
+  background: rgba(255,255,255,0.1);
+}
+
+.search-item-icon {
+  font-size: 20px;
+  margin-right: 12px;
+  width: 28px;
+  text-align: center;
+}
+
+.search-item-name {
+  color: white;
+  font-size: 14px;
+}
+
+
   </style>
 </head>
 <body>
@@ -927,9 +980,37 @@
          placeholder="搜索文件、应用..."
          v-model="searchQuery"
          @keyup.enter="doSearch"
-         @keyup.esc="searchBarOpen = false"
+         @keydown="handleSearchKeydown"
+         @keyup.esc="searchBarOpen = false; searchQuery = ''"
          ref="searchInput">
   <span @click="searchBarOpen = false; searchQuery = ''" class="sao-icon">✕</span>
+</div>
+
+<!-- 搜索下拉菜单 - 移到外面 -->
+<div v-if="searchQuery.trim() && searchBarOpen" class="search-dropdown">
+  <!-- 匹配的应用 -->
+  <div v-if="matchedApps.length > 0" class="search-section">
+    <div class="search-section-title">应用</div>
+    <div v-for="(app, index) in matchedApps" :key="app.name"
+         class="search-item"
+         :class="{ active: searchSelectedIndex === index }"
+         @click="openMatchedApp(app)"
+         @mouseenter="searchSelectedIndex = index">
+      <span class="search-item-icon">{{ app.icon }}</span>
+      <span class="search-item-name">{{ app.name }}</span>
+    </div>
+  </div>
+
+  <div class="search-section">
+    <div class="search-section-title">搜索</div>
+    <div class="search-item"
+         :class="{ active: searchSelectedIndex === matchedApps.length }"
+         @click="doFileSearch"
+         @mouseenter="searchSelectedIndex = matchedApps.length">
+      <span class="search-item-icon">📄</span>
+      <span class="search-item-name">搜索文件: "{{ searchQuery }}"</span>
+    </div>
+  </div>
 </div>
 
     <!-- 桌面环境 -->
@@ -1658,13 +1739,21 @@
         </div>
       </div>
 
-      <!-- 参与硬盘 -->
+      <!-- 参与硬盘（带状态） -->
       <div class="text-sm text-gray-600">
-        参与硬盘:
-        <span v-for="(disk, idx) in ecStatus.config_disks" :key="disk" class="font-mono">
-          {{ disk.replace(':/', '').replace('/', '') }}盘<span v-if="idx < ecStatus.config_disks.length - 1">、</span>
-        </span>
-        <span class="text-gray-400 ml-1">(共 {{ ecStatus.config_disks?.length || 0 }} 块)</span>
+        <div class="mb-1">参与硬盘 (共 {{ ecStatus.config_disks?.length || 0 }} 块):</div>
+        <div class="flex flex-wrap gap-2">
+          <span v-for="diskInfo in ecStatus.disk_status" :key="diskInfo.disk"
+                :class="[
+                  'px-2 py-1 rounded font-mono text-xs',
+                  diskInfo.status === 'online' ? 'bg-green-100 text-green-700' :
+                  diskInfo.status === 'replaced' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+                ]">
+            {{ diskInfo.status === 'online' ? '🟢' : diskInfo.status === 'replaced' ? '🟡' : '🔴' }}
+            {{ diskInfo.disk.replace(':/', '').replace('/', '') }}盘
+          </span>
+        </div>
       </div>
 
       <!-- 操作按钮 -->
@@ -1693,18 +1782,39 @@
   </div>
 </div>
 
-  <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
+ <div v-if="ecStatus.is_configured && !ecStatus.is_healthy"
        class="bg-red-50 border-l-4 border-red-500 p-4 rounded">
     <h4 class="font-semibold text-red-900 mb-2">⚠️ 系统警告</h4>
-    <p class="text-sm text-red-800 mb-3">检测到 {{ ecStatus.lost_disks?.length || 0 }} 个硬盘离线</p>
-    <button v-if="ecStatus.can_rebuild"
-        @click="recoverLostDisk()"
+
+    <!-- 离线磁盘 -->
+    <p v-if="ecStatus.lost_disks?.length" class="text-sm text-red-800 mb-2">
+      🔴 离线磁盘 ({{ ecStatus.lost_disks.length }}个):
+      <span class="font-mono font-bold">{{ ecStatus.lost_disks.join(', ') }}</span>
+    </p>
+
+    <!-- 已更换磁盘 -->
+    <p v-if="ecStatus.replaced_disks?.length" class="text-sm text-yellow-800 mb-2">
+      🟡 已更换磁盘 ({{ ecStatus.replaced_disks.length }}个):
+      <span class="font-mono font-bold">{{ ecStatus.replaced_disks.join(', ') }}</span>
+      <br><span class="text-xs">（盘符相同但硬盘已更换，需要重建数据）</span>
+    </p>
+
+    <!-- 空磁盘（新硬盘） -->
+    <p v-if="ecStatus.empty_disks?.length" class="text-sm text-yellow-800 mb-2">
+      🟡 新硬盘 ({{ ecStatus.empty_disks.length }}个):
+      <span class="font-mono font-bold">{{ ecStatus.empty_disks.join(', ') }}</span>
+      <br><span class="text-xs">（检测到空磁盘，可能是替换后的新硬盘）</span>
+    </p>
+    <div class="mt-3">
+      <button v-if="ecStatus.can_rebuild"
+        @click="batchRecover(window)"
         class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
   🚀 开始恢复
 </button>
-    <p v-else class="text-sm text-red-900 font-semibold">
-      ❌ 损坏硬盘数量超过冗余上限,数据可能已丢失
-    </p>
+      <p v-else class="text-sm text-red-900 font-semibold">
+        ❌ 损坏硬盘数量超过冗余上限 (最多容许 {{ ecStatus.m }} 块)，数据可能已丢失
+      </p>
+    </div>
   </div>
 
   <!-- 健康检查区域 -->
@@ -2115,19 +2225,31 @@
                     </div>
                   </div>
 
-                  <div class="bg-white border rounded-lg shadow-sm">
+                 <div class="bg-white border rounded-lg shadow-sm">
                     <div class="p-4 border-b font-semibold text-gray-700">
-                      参与磁盘 ({{ window.ecDetails.config_disks.length }} 个)
+                      参与磁盘 ({{ window.ecDetails.config_disks?.length || 0 }} 个)
                     </div>
                     <div class="max-h-48 overflow-y-auto">
                       <ul>
-                        <li v-for="disk in window.ecDetails.config_disks" :key="disk" class="px-4 py-3 border-b last:border-b-0 flex items-center justify-between">
-                          <span class="font-mono font-semibold">{{ disk }}</span>
-                          <span v-if="window.ecDetails.lost_disks.includes(disk)" class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">
-                            ❌ 离线
+                        <li v-for="diskInfo in window.ecDetails.disk_status" :key="diskInfo.disk"
+                            class="px-4 py-3 border-b last:border-b-0 flex items-center justify-between">
+                          <div>
+                            <span class="font-mono font-semibold">{{ diskInfo.disk }}</span>
+                            <span v-if="diskInfo.status === 'replaced'" class="text-xs text-gray-500 ml-2">
+                              (新序列号: {{ diskInfo.current_serial }})
+                            </span>
+                          </div>
+                          <span v-if="diskInfo.status === 'offline'"
+                                class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">
+                            🔴 离线
                           </span>
-                          <span v-else class="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                            ✔️ 在线
+                          <span v-else-if="diskInfo.status === 'replaced'"
+                                class="text-xs font-bold bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full">
+                            🟡 已更换
+                          </span>
+                          <span v-else
+                                class="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                            🟢 在线
                           </span>
                         </li>
                       </ul>
@@ -2559,12 +2681,12 @@
       <div class="grid grid-cols-2 gap-6">
         <div class="bg-gray-50 p-4 rounded-lg border">
           <label class="block text-sm font-semibold text-gray-700 mb-2">数据份数</label>
-<input type="number" ...>
+<input type="number" v-model.number="ecSetupForm.k" min="2" max="16" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
 <p class="text-xs text-gray-500 mt-2">文件会被拆分成多少份存储。</p>
         </div>
         <div class="bg-gray-50 p-4 rounded-lg border">
           <label class="block text-sm font-semibold text-gray-700 mb-2">容错份数</label>
-<input type="number" ...>
+<input type="number" v-model.number="ecSetupForm.m" min="1" max="4" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
 <p class="text-xs text-gray-500 mt-2">额外保存的备份份数。<strong class="text-blue-600">最多允许 {{ ecSetupForm.m }} 块硬盘同时损坏而不丢失数据。</strong></p>
         </div>
       </div>

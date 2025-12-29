@@ -1,36 +1,6 @@
 {
-  "pool": {
-    "name": "主存储池",
-    "disks": [
-      "E:/",
-      "G:/",
-      "H:/"
-    ],
-    "created_at": "2025-12-27T16:25:09"
-  },
-  "volumes": {
-    "movie": {
-      "display_name": "电影",
-      "icon": "🎬",
-      "strategy": "largest_free",
-      "created_at": "2025-12-27T16:25:23"
-    }
-  },
-  "files": {
-    "movie/6d158296a1d29a2a84c867f9c30b935a.jpg": {
-      "disk": "E:/",
-      "real_path": ".pool/movie/6d158296a1d29a2a84c867f9c30b935a.jpg",
-      "size": 144566,
-      "mtime": 1766829176
-    },
-    "movie/13368617530845079_recovered.jpg": {
-      "disk": "E:/",
-      "real_path": ".pool/movie/13368617530845079_recovered.jpg",
-      "size": 211288,
-      "mtime": 1766830715
-    }
-  },
-  "round_robin_index": {
-    "movie": 0
-  }
+  "pool": null,
+  "volumes": {},
+  "files": {},
+  "round_robin_index": {}
 }

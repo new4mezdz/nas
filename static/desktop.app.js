@@ -105,11 +105,23 @@ volumeForm: {
 
 // 可选图标列表
 volumeIcons: ['📁', '🎬', '📄', '🎵', '🖼️', '🎮', '💼', '📦', '🔧', '📚'],
-
+// ========== 应用列表 ==========
+appList: [
+  { name: '文件管理', icon: '📁', keywords: ['文件', '文件管理', 'file', 'files'], action: 'openFilesWindow', adminOnly: false },
+  { name: '系统信息', icon: '📊', keywords: ['系统', '系统信息', 'system'], action: 'openSystemWindow', adminOnly: false },
+  { name: '磁盘管理', icon: '💿', keywords: ['磁盘', '硬盘', 'disk'], action: 'openDiskWindow', adminOnly: true },
+  { name: '空间池', icon: '📦', keywords: ['空间池', 'pool', '存储池'], action: 'openPoolWindow', adminOnly: true },
+  { name: '桌面背景', icon: '🖼️', keywords: ['背景', '壁纸', 'background'], action: 'openBgSettings', adminOnly: false },
+  { name: '个人设置', icon: '⚙️', keywords: ['设置', '个人', 'settings'], action: 'openPersonalSettings', adminOnly: false },
+],
+      searchSelectedIndex: 0,
   };
 },
 
   watch: {
+      searchQuery() {
+  this.searchSelectedIndex = 0;
+},
     'ecSetupForm.selectedDisks': {
       deep: true,
       handler() { this.getEcCapacityEstimate(); }
@@ -141,40 +153,63 @@ async getEcCapacityEstimate() {
 async doSearch() {
   if (!this.searchQuery.trim()) return;
 
-  this.showToast(`🔍 正在搜索: ${this.searchQuery}...`, 'info');
+  // 如果有匹配的应用且选中了应用项，打开应用
+  if (this.matchedApps.length > 0 && this.searchSelectedIndex < this.matchedApps.length) {
+    this.openMatchedApp(this.matchedApps[this.searchSelectedIndex]);
+    return;
+  }
+
+  // 否则搜索文件
+  this.doFileSearch();
+},
+
+openMatchedApp(app) {
+  this.searchQuery = '';
+  this.searchBarOpen = false;
+  this.searchSelectedIndex = 0;
+
+  if (app.action === 'openBgSettings') {
+    this.showBgSettings = true;
+  } else {
+    this[app.action]();
+  }
+  this.showToast(`✅ 打开: ${app.name}`, 'success');
+},
+
+async doFileSearch() {
+  this.showToast(`🔍 正在搜索文件: ${this.searchQuery}...`, 'info');
+  const keyword = this.searchQuery;
+  this.searchBarOpen = false;
+  this.searchSelectedIndex = 0;
 
   try {
     const response = await axios.get('/api/search_global', {
-      params: { keyword: this.searchQuery, limit: 200 }
+      params: { keyword: keyword, limit: 200 }
     });
 
     if (response.data.success) {
       const results = response.data.items || [];
 
       if (results.length === 0) {
-        this.showToast(`未找到包含 "${this.searchQuery}" 的文件`, 'warning');
+        this.showToast(`未找到包含 "${keyword}" 的文件`, 'warning');
+        this.searchQuery = '';
         return;
       }
 
-      // 打开文件窗口并显示搜索结果
       const storageList = this.buildStorageList();
-      const window = this.createWindow('files', `搜索结果: ${this.searchQuery}`, '🔍', {
+      this.createWindow('files', `搜索结果: ${keyword}`, '🔍', {
         width: 1100,
         height: 700,
-        sidebar: {
-          storage: storageList,
-          favorites: [],
-          recent: []
-        },
+        sidebar: { storage: storageList, favorites: [], recent: [] },
         currentDrive: 'search',
-        currentPath: `搜索: "${this.searchQuery}"`,
+        currentPath: `搜索: "${keyword}"`,
         files: results,
         selectedFiles: [],
         viewMode: 'list',
         history: [],
         historyIndex: 0,
         clipboard: { mode: null, items: [], sourceDrive: null, sourcePath: null },
-        searchKeyword: this.searchQuery,
+        searchKeyword: keyword,
         isSearching: false,
         isSearchMode: true,
         searchResults: results,
@@ -182,14 +217,25 @@ async doSearch() {
         sortOrder: 'asc'
       });
 
-      this.showToast(`✅ 找到 ${results.length} 个结果`, 'success');
-      this.searchQuery = ''; // 清空搜索框
+      this.showToast(`✅ 找到 ${results.length} 个文件`, 'success');
+      this.searchQuery = '';
     } else {
       this.showToast(response.data.error || '搜索失败', 'error');
     }
   } catch (e) {
     console.error('搜索失败:', e);
     this.showToast('搜索失败: ' + (e.response?.data?.error || e.message), 'error');
+  }
+},
+
+handleSearchKeydown(e) {
+  const totalItems = this.matchedApps.length + 1; // 应用数 + 搜索文件选项
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    this.searchSelectedIndex = (this.searchSelectedIndex + 1) % totalItems;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    this.searchSelectedIndex = (this.searchSelectedIndex - 1 + totalItems) % totalItems;
   }
 },
 
@@ -2110,11 +2156,172 @@ async batchRecover(window) {
         await this.performHealthCheck(window);
 
     } catch (error) {
-        this.showToast(`❌ 批量修复失败: ${error.response?.data?.error || error.message}`, 'error');
+        const errData = error.response?.data;
+
+        if (errData?.need_disk_recovery) {
+            const offlineDisks = errData.unavailable_disks || [];
+            const replacedDisks = errData.replaced_disks || [];
+            const emptyDisks = errData.empty_disks || [];  // 新增
+
+            // 情况1：磁盘存在但没有数据（新硬盘占用了原盘符）
+            if (emptyDisks.length > 0) {
+                const diskInfo = emptyDisks[0];
+                const confirmMsg =
+                    `🟡 检测到新硬盘：\n\n` +
+                    `盘符: ${diskInfo.disk}\n` +
+                    `原因: ${diskInfo.reason}\n\n` +
+                    `这可能是替换故障硬盘后插入的新硬盘。\n\n` +
+                    `是否将数据重建到这个硬盘上？`;
+
+                if (confirm(confirmMsg)) {
+                    await this.rebuildOnReplacedDisk(diskInfo.disk);
+                }
+                return;
+            }
+
+            // 情况2：序列号检测到磁盘更换
+            if (replacedDisks.length > 0) {
+                const diskInfo = replacedDisks[0];
+                const confirmMsg =
+                    `🟡 检测到磁盘已更换：\n\n` +
+                    `盘符: ${diskInfo.disk}\n` +
+                    `原序列号: ${diskInfo.original_serial}\n` +
+                    `新序列号: ${diskInfo.current_serial}\n\n` +
+                    `是否将数据重建到这个新硬盘上？`;
+
+                if (confirm(confirmMsg)) {
+                    await this.rebuildOnReplacedDisk(diskInfo.disk);
+                }
+                return;
+            }
+
+            // 情况3：磁盘离线
+            if (offlineDisks.length > 0) {
+                let message = `🔴 以下磁盘离线：\n\n${offlineDisks.join(', ')}\n\n`;
+                message += '请插入新硬盘后重试。';
+
+                if (confirm(message)) {
+                    this.openDiskRecoveryDialog(offlineDisks);
+                }
+                return;
+            }
+        } else {
+            this.showToast(`❌ 批量修复失败: ${errData?.error || error.message}`, 'error');
+        }
+    }
+},
+
+// 打开磁盘恢复对话框
+openDiskRecoveryDialog(problemDisks = []) {
+    if (problemDisks.length === 0) {
+        alert('没有需要恢复的磁盘');
+        return;
+    }
+
+    const lostDisk = problemDisks[0];
+
+    // 获取可用的新磁盘列表
+    const configDisks = this.ecStatus.config_disks || [];
+    const availableNewDisks = this.availableDrives
+        .filter(d => {
+            const drive = d.drive;
+            const normDrive = drive.toUpperCase().replace(/\\/g, '/').replace(/\/$/, '');
+
+            // 排除问题磁盘
+            const isProblem = problemDisks.some(pd => {
+                const normPd = pd.toUpperCase().replace(/\\/g, '/').replace(/\/$/, '');
+                return normPd === normDrive;
+            });
+            if (isProblem) return false;
+
+            // 排除已在配置中的正常磁盘
+            const inConfig = configDisks.some(cd => {
+                const normCd = cd.toUpperCase().replace(/\\/g, '/').replace(/\/$/, '');
+                return normCd === normDrive;
+            });
+            if (inConfig) return false;
+
+            return true;
+        })
+        .map(d => d.drive);
+
+    if (availableNewDisks.length === 0) {
+        alert('❌ 没有可用的新磁盘！\n\n请先插入新硬盘，然后重试。');
+        return;
+    }
+
+    const diskOptions = availableNewDisks.map((d, i) => `${i + 1}. ${d}`).join('\n');
+    const choice = prompt(
+        `🔧 磁盘恢复\n\n` +
+        `故障磁盘: ${lostDisk}\n\n` +
+        `请选择新磁盘来替换（输入序号）:\n${diskOptions}`
+    );
+
+    if (!choice) return;
+
+    const idx = parseInt(choice) - 1;
+    if (idx < 0 || idx >= availableNewDisks.length) {
+        alert('无效的选择');
+        return;
+    }
+
+    const newDisk = availableNewDisks[idx];
+    this.recoverDisk(lostDisk, newDisk);
+},
+
+// 执行磁盘恢复
+async recoverDisk(lostDisk, newDisk) {
+    if (!confirm(`确认要将数据从 ${lostDisk} 恢复到 ${newDisk} 吗？\n\n此操作会重建所有丢失的数据块。`)) {
+        return;
+    }
+
+    try {
+        this.showToast('🔄 正在恢复磁盘数据...', 'info');
+
+        const response = await axios.post('/api/ec_recover', {
+            lost_disk: lostDisk,
+            new_disk: newDisk
+        });
+
+        if (response.data.success) {
+            const msg = response.data.message || `磁盘恢复成功！已将数据迁移到 ${newDisk}`;
+            this.showToast(`✅ ${msg}`, 'success');
+
+            // 刷新数据
+            await this.loadData();
+            await this.fetchEcStatus();
+        } else {
+            this.showToast(`❌ 恢复失败: ${response.data.error}`, 'error');
+        }
+    } catch (error) {
+        const errMsg = error.response?.data?.error || error.message;
+        this.showToast(`❌ 磁盘恢复失败: ${errMsg}`, 'error');
+        console.error('磁盘恢复错误:', error.response?.data || error);
     }
 },
 
 
+      // 在已更换的磁盘上重建数据
+async rebuildOnReplacedDisk(disk) {
+    try {
+        this.showToast('🔄 正在重建数据到新硬盘...', 'info');
+
+        const response = await axios.post('/api/ec_rebuild_replaced', {
+            disk: disk
+        });
+
+        if (response.data.success) {
+            this.showToast(`✅ ${response.data.message || '数据重建成功！'}`, 'success');
+            await this.loadData();
+            await this.fetchEcStatus();
+        } else {
+            this.showToast(`❌ 重建失败: ${response.data.error}`, 'error');
+        }
+    } catch (error) {
+        const errMsg = error.response?.data?.error || error.message;
+        this.showToast(`❌ 重建失败: ${errMsg}`, 'error');
+    }
+},
    async unlockDisk(drive, inFileManagerWindow = null) {
     const password = prompt(`请输入磁盘 [${drive}] 的解锁密码:`);
     if (!password) return;
@@ -3436,6 +3643,16 @@ async checkCurrentUser() {
 },
 
   computed: {
+      // 搜索匹配的应用
+matchedApps() {
+  if (!this.searchQuery.trim()) return [];
+  const query = this.searchQuery.trim().toLowerCase();
+  return this.appList.filter(app => {
+    if (app.adminOnly && !this.user.is_admin) return false;
+    return app.name.toLowerCase().includes(query) ||
+           app.keywords.some(kw => kw.toLowerCase().includes(query));
+  });
+},
   canRead() {
     const permission = this.user.file_permission;
     return permission === 'readonly' ||

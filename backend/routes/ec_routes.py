@@ -27,6 +27,34 @@ _ctx = {
 }
 
 
+import subprocess
+
+def get_disk_serial(disk_path):
+    """获取磁盘卷序列号作为唯一标识"""
+    if os.name == 'nt':  # Windows
+        drive = os.path.splitdrive(disk_path)[0]  # 获取盘符如 "F:"
+        try:
+            result = subprocess.run(
+                ['cmd', '/c', 'vol', drive],
+                capture_output=True, text=True, timeout=5
+            )
+            # 输出格式: "卷序列号是 XXXX-XXXX"
+            for line in result.stdout.split('\n'):
+                if '序列号' in line or 'Serial Number' in line:
+                    return line.split()[-1].strip()
+        except:
+            pass
+    else:  # Linux
+        try:
+            result = subprocess.run(
+                ['lsblk', '-no', 'UUID', disk_path],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.stdout.strip()
+        except:
+            pass
+    return None
+
 def _norm_abs(path: str) -> str:
     """绝对化 + 规范化路径"""
     return os.path.normcase(os.path.abspath(os.path.normpath(path or "")))
@@ -68,44 +96,111 @@ def get_ec_status():
 
     k = cfg.get("k", 0)
     m = cfg.get("m", 0)
-    config_disks = set(cfg.get("disks", []))
+    config_disks = cfg.get("disks", [])
+    saved_serials = cfg.get("disk_serials", {})
 
-    # 获取可用磁盘
+    # 获取当前可用磁盘
     available_disks = set()
     for disk in get_disk_info():
         mount_point = disk.get("mount", "").upper().replace("\\", "/")
         if mount_point not in ["C:/", "D:/", "/"]:
             available_disks.add(_norm_abs(disk.get("mount")))
 
-    lost_disks = [d for d in config_disks if _norm_abs(d) not in available_disks]
-    is_healthy = not bool(lost_disks)
-    can_rebuild = 0 < len(lost_disks) <= m
+    # ========== 新增：详细的磁盘状态 ==========
+        # ========== 详细的磁盘状态检测 ==========
+        idx = load_json(_ctx['EC_IDX_PATH'], {"files": {}})
+        has_files = len(idx.get("files", {})) > 0
 
-    # 计算可用容量
+        disk_status = []
+        lost_disks = []
+        replaced_disks = []
+        empty_disks = []  # 新增
+        online_disks = []
+
+        for disk in config_disks:
+            norm_disk = _norm_abs(disk)
+            status_info = {
+                "disk": disk,
+                "status": "unknown",
+                "original_serial": saved_serials.get(disk),
+                "current_serial": None
+            }
+
+            if norm_disk not in available_disks:
+                # 磁盘离线
+                status_info["status"] = "offline"
+                lost_disks.append(disk)
+            else:
+                # 磁盘路径存在，进一步检查
+                current_serial = get_disk_serial(disk)
+                status_info["current_serial"] = current_serial
+
+                # 检查encoded目录是否有数据
+                encoded_dir = os.path.join(disk, "encoded")
+                has_data = os.path.exists(encoded_dir) and len(os.listdir(encoded_dir)) > 0
+
+                if disk in saved_serials and current_serial:
+                    if current_serial != saved_serials[disk]:
+                        # 序列号不同，磁盘已被更换
+                        status_info["status"] = "replaced"
+                        replaced_disks.append(disk)
+                    else:
+                        # 序列号匹配，正常在线
+                        status_info["status"] = "online"
+                        online_disks.append(disk)
+                elif has_files and not has_data:
+                    # 没有序列号但有文件记录，且encoded目录为空 -> 新硬盘
+                    status_info["status"] = "empty"
+                    empty_disks.append(disk)
+                else:
+                    # 其他情况按在线处理
+                    status_info["status"] = "online"
+                    online_disks.append(disk)
+
+            disk_status.append(status_info)
+
+        # 健康状态判断
+        problem_count = len(lost_disks) + len(replaced_disks) + len(empty_disks)
+        is_healthy = problem_count == 0
+        can_rebuild = 0 < problem_count <= m
+
+    # 健康状态判断
+    problem_count = len(lost_disks) + len(replaced_disks)
+    is_healthy = problem_count == 0
+    can_rebuild = 0 < problem_count <= m
+
+    # 计算可用容量（只计算在线磁盘）
     usable_bytes = 0
-    if config_disks:
+    if online_disks:
         min_free = float('inf')
         for disk in get_disk_info():
             mount_point = _norm_abs(disk.get("mount"))
-            if mount_point in config_disks:
+            if mount_point in [_norm_abs(d) for d in online_disks]:
                 free = disk.get("bytes_free", 0)
                 if free < min_free:
                     min_free = free
         if min_free != float('inf'):
             usable_bytes = min_free * k
 
+    # 可用于替换的新磁盘
+    config_disks_norm = set(_norm_abs(d) for d in config_disks)
+    available_new_disks = [d for d in available_disks if d not in config_disks_norm]
+
     return jsonify({
         "is_configured": True,
         "is_healthy": is_healthy,
         "k": k,
         "m": m,
-        "config_disks": list(config_disks),
+        "config_disks": config_disks,
+        "disk_status": disk_status,
+        "online_disks": online_disks,
         "lost_disks": lost_disks,
+        "replaced_disks": replaced_disks,
+        "empty_disks": empty_disks,  # 新增
         "can_rebuild": can_rebuild,
         "usable_bytes": usable_bytes,
-        "available_new_disks": [d for d in available_disks if d not in config_disks]
+        "available_new_disks": available_new_disks
     })
-
 
 # ==================== EC健康检查 ====================
 @ec_bp.route('/api/ec_health_check', methods=['GET'])
@@ -181,6 +276,58 @@ def ec_batch_recover():
 
     idx = load_json(_ctx['EC_IDX_PATH'], {"files": {}})
 
+    # ========== 检查磁盘可用性 ==========
+    config_disks = cfg.get("disks", [])
+    saved_serials = cfg.get("disk_serials", {})
+    unavailable_disks = []
+    replaced_disks = []
+    empty_disks = []  # 磁盘存在但没有数据
+
+    for disk in config_disks:
+        if not os.path.exists(disk) or not os.path.isdir(disk):
+            # 磁盘路径不存在
+            unavailable_disks.append(disk)
+        else:
+            # 磁盘路径存在，进一步检查
+            encoded_dir = os.path.join(disk, "encoded")
+            has_data = os.path.exists(encoded_dir) and len(os.listdir(encoded_dir)) > 0
+
+            # 方法1：通过序列号检测（如果有保存的话）
+            if disk in saved_serials:
+                current_serial = get_disk_serial(disk)
+                if current_serial and current_serial != saved_serials[disk]:
+                    replaced_disks.append({
+                        "disk": disk,
+                        "original_serial": saved_serials[disk],
+                        "current_serial": current_serial,
+                        "has_data": has_data
+                    })
+                    continue
+
+            # 方法2：通过检查encoded目录是否为空（兼容旧配置）
+                    # 方法2：通过检查encoded目录是否为空（兼容旧配置）
+                    # 只有当索引中有文件时，空目录才说明是新硬盘
+                    if not has_data and len(idx.get("files", {})) > 0:
+                        current_serial = get_disk_serial(disk)
+                        empty_disks.append({
+                            "disk": disk,
+                            "current_serial": current_serial,
+                            "reason": "encoded目录为空或不存在，可能是新硬盘"
+                        })
+
+    # 如果有任何问题磁盘
+    if unavailable_disks or replaced_disks or empty_disks:
+        return jsonify({
+            "success": False,
+            "error": "检测到磁盘变化，无法直接修复",
+            "unavailable_disks": unavailable_disks,
+            "replaced_disks": replaced_disks,
+            "empty_disks": empty_disks,
+            "suggestion": "请使用「磁盘恢复」功能重建数据到新磁盘",
+            "need_disk_recovery": True
+        }), 400
+
+    # ========== 原有的修复逻辑 ==========
     recovery_report = {
         "total_processed": 0,
         "successfully_recovered": 0,
@@ -257,6 +404,119 @@ def ec_batch_recover():
     return jsonify({"success": True, "report": recovery_report})
 
 
+# ==================== EC重建已更换磁盘 ====================
+@ec_bp.route('/api/ec_rebuild_replaced', methods=['POST'])
+@permission_required('fullcontrol')
+def ec_rebuild_replaced():
+    """在已更换的磁盘上重建数据（盘符相同，新硬盘）"""
+    load_json = _ctx['load_json']
+    save_json = _ctx['save_json']
+    decode_from_dict = _ctx['decode_from_dict']
+    rs_encode = _ctx['rs_encode']
+
+    data = request.get_json()
+    disk = data.get('disk', '')
+    disk_norm = _norm_abs(disk)
+
+    cfg = load_json(_ctx['EC_CFG_PATH'], {})
+    if not cfg:
+        return jsonify({"error": "未配置纠删码"}), 400
+
+    config_disks = cfg.get("disks", [])
+
+    # 找到原始路径格式
+    original_disk = None
+    for d in config_disks:
+        if _norm_abs(d) == disk_norm:
+            original_disk = d
+            break
+
+    if not original_disk:
+        return jsonify({"error": "该磁盘不在配置中"}), 400
+
+    # 确保encoded目录存在
+    try:
+        os.makedirs(os.path.join(original_disk, "encoded"), exist_ok=True)
+    except Exception as e:
+        return jsonify({"error": f"无法创建目录: {e}"}), 500
+
+    idx = load_json(_ctx['EC_IDX_PATH'], {"files": {}})
+    rebuilt_count = 0
+    failed_files = []
+
+    for name, meta in idx.get("files", {}).items():
+        k, m = meta["k"], meta["m"]
+        file_disks = meta.get("disks", [])
+        file_disks_norm = [_norm_abs(d) for d in file_disks]
+
+        # 找到该磁盘在文件中的索引
+        try:
+            disk_index = file_disks_norm.index(disk_norm)
+        except ValueError:
+            continue  # 该文件不涉及这个磁盘
+
+        # 收集其他磁盘上的数据块
+        shard_dict = {}
+        meta_obj = None
+        for i, fd in enumerate(file_disks):
+            if _norm_abs(fd) == disk_norm:
+                continue  # 跳过要重建的磁盘
+            enc_dir = os.path.join(fd, "encoded", os.path.dirname(name))
+            blk_path = os.path.join(enc_dir, f"{os.path.basename(name)}.blk_{i}")
+            meta_path = os.path.join(enc_dir, f"{os.path.basename(name)}.meta.json")
+
+            if os.path.exists(blk_path):
+                with open(blk_path, "rb") as f:
+                    shard_dict[i] = f.read()
+            if not meta_obj and os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as mf:
+                    meta_obj = json.load(mf)
+
+        if len(shard_dict) < k:
+            failed_files.append({"name": name, "reason": "数据块不足"})
+            continue
+
+        if not meta_obj:
+            failed_files.append({"name": name, "reason": "找不到元数据"})
+            continue
+
+        try:
+            # 从现有数据块恢复原始数据
+            reconstructed_data = decode_from_dict(shard_dict, meta_obj)
+            # 重新编码生成所有数据块
+            all_shards = rs_encode(reconstructed_data, k, m)
+
+            # 写入该磁盘对应的数据块
+            new_enc_dir = os.path.join(original_disk, "encoded", os.path.dirname(name))
+            os.makedirs(new_enc_dir, exist_ok=True)
+
+            blk_path = os.path.join(new_enc_dir, f"{os.path.basename(name)}.blk_{disk_index}")
+            with open(blk_path, "wb") as f:
+                f.write(all_shards[disk_index])
+
+            # 同时写入元数据
+            meta_path = os.path.join(new_enc_dir, f"{os.path.basename(name)}.meta.json")
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump(meta_obj, mf, ensure_ascii=False)
+
+            rebuilt_count += 1
+        except Exception as e:
+            failed_files.append({"name": name, "reason": str(e)})
+
+    # 更新配置中的磁盘序列号
+    new_serial = get_disk_serial(original_disk)
+    if new_serial:
+        disk_serials = cfg.get("disk_serials", {})
+        disk_serials[original_disk] = new_serial
+        cfg["disk_serials"] = disk_serials
+        save_json(_ctx['EC_CFG_PATH'], cfg)
+
+    return jsonify({
+        "success": True,
+        "message": f"重建完成！共恢复 {rebuilt_count} 个文件",
+        "rebuilt_count": rebuilt_count,
+        "failed_files": failed_files
+    })
 # ==================== EC磁盘恢复 ====================
 @ec_bp.route('/api/ec_recover', methods=['POST'])
 @permission_required('fullcontrol')
@@ -285,6 +545,19 @@ def ec_recover_disk():
 
     new_config_disks_raw = [new_disk_raw if _norm_abs(d) == lost_disk_path else d for d in config_disks_raw]
     cfg["disks"] = new_config_disks_raw
+
+    # 更新磁盘序列号
+    disk_serials = cfg.get("disk_serials", {})
+    # 删除旧磁盘的序列号
+    for old_disk in config_disks_raw:
+        if _norm_abs(old_disk) == lost_disk_path and old_disk in disk_serials:
+            del disk_serials[old_disk]
+    # 添加新磁盘的序列号
+    new_serial = get_disk_serial(new_disk_raw)
+    if new_serial:
+        disk_serials[new_disk_raw] = new_serial
+    cfg["disk_serials"] = disk_serials
+
     save_json(_ctx['EC_CFG_PATH'], cfg)
 
     idx = load_json(_ctx['EC_IDX_PATH'], {"files": {}})
@@ -463,7 +736,20 @@ def api_ec_config():
     except Exception as e:
         return jsonify({"error": f"无法创建 encoded 目录：{e}"}), 500
 
-    cfg = {"scheme": scheme, "k": k, "m": m, "disks": disks_norm}
+    # 获取每个磁盘的序列号
+    disk_serials = {}
+    for disk in disks_norm:
+        serial = get_disk_serial(disk)
+        if serial:
+            disk_serials[disk] = serial
+
+    cfg = {
+        "scheme": scheme,
+        "k": k,
+        "m": m,
+        "disks": disks_norm,
+        "disk_serials": disk_serials  # 新增：保存磁盘序列号
+    }
     save_json(_ctx['EC_CFG_PATH'], cfg)
 
     if not os.path.exists(_ctx['EC_IDX_PATH']):
