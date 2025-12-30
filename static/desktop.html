@@ -1399,12 +1399,14 @@
 
             <!-- 系统信息 -->
 <!-- 系统信息 - SAO风格 -->
+<!-- 系统信息 -->
+<!-- 系统信息 - SAO风格 -->
 <div v-else-if="window.type === 'system'" class="h-full flex flex-col overflow-hidden sao-system-panel">
   <!-- SAO风格标题 -->
   <div class="sao-header">
     <h3 class="text-xl font-bold flex items-center gap-3">
       <span class="text-2xl">⚙️</span>
-      <span>SYSTEM STATUS</span>
+      <span>系统状态</span>
       <span class="ml-auto text-sm opacity-60">{{ currentTime }}</span>
     </h3>
   </div>
@@ -1414,14 +1416,14 @@
 
     <!-- 系统概览 -->
     <div>
-      <div class="sao-section-title">📡 SYSTEM OVERVIEW</div>
+      <div class="sao-section-title">📡 系统概览</div>
       <div class="sao-grid sao-grid-2">
         <div class="sao-card">
-          <div class="sao-label">Hostname</div>
+          <div class="sao-label">主机名</div>
           <div class="sao-value">{{ systemInfo.hostname || '--' }}</div>
         </div>
         <div class="sao-card">
-          <div class="sao-label">Operating System</div>
+          <div class="sao-label">操作系统</div>
           <div class="sao-value" style="font-size: 14px;">{{ systemInfo.os || '--' }}</div>
         </div>
       </div>
@@ -1429,11 +1431,11 @@
 
     <!-- CPU & 内存 -->
     <div>
-      <div class="sao-section-title">💻 PERFORMANCE</div>
+      <div class="sao-section-title">💻 性能监控</div>
       <div class="sao-grid sao-grid-2">
         <!-- CPU使用率 -->
         <div class="sao-card">
-          <div class="sao-label">CPU Usage</div>
+          <div class="sao-label">CPU 使用率</div>
           <div class="sao-value sao-value-highlight">{{ systemInfo.cpu_percent || 0 }}%</div>
           <div class="sao-progress-bar">
             <div class="sao-progress-fill"
@@ -1443,7 +1445,7 @@
         </div>
         <!-- 内存使用 -->
         <div class="sao-card">
-          <div class="sao-label">Memory Usage</div>
+          <div class="sao-label">内存使用率</div>
           <div class="sao-value sao-value-highlight">
             {{ ((systemInfo.memory_used / systemInfo.memory_total) * 100).toFixed(1) }}%
           </div>
@@ -1461,40 +1463,40 @@
 
     <!-- 硬件监控 -->
     <div>
-      <div class="sao-section-title">🌡️ HARDWARE MONITOR</div>
+      <div class="sao-section-title">🌡️ 硬件监控</div>
       <div class="sao-grid">
         <!-- CPU温度 -->
         <div class="sao-card">
-          <div class="sao-label">CPU Temp</div>
+          <div class="sao-label">CPU 温度</div>
           <div class="sao-value" :class="{ 'sao-value-highlight': (systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value || 0) > 70 }">
             {{ systemInfo.temperatures?.find(t => t.name.toLowerCase().includes('cpu'))?.value?.toFixed(0) || '--' }}°C
           </div>
         </div>
         <!-- CPU频率 -->
         <div class="sao-card">
-          <div class="sao-label">CPU Freq</div>
+          <div class="sao-label">CPU 频率</div>
           <div class="sao-value">{{ systemInfo.cpu_freq || '--' }} GHz</div>
         </div>
         <!-- CPU功耗 -->
         <div class="sao-card">
-          <div class="sao-label">CPU Power</div>
+          <div class="sao-label">CPU 功耗</div>
           <div class="sao-value">{{ systemInfo.cpu_power || '--' }} W</div>
         </div>
         <!-- 风扇转速 -->
         <div class="sao-card">
-          <div class="sao-label">Fan Speed</div>
+          <div class="sao-label">风扇转速</div>
           <div class="sao-value">{{ systemInfo.fans?.[0]?.value?.toFixed(0) || '--' }} RPM</div>
         </div>
         <!-- 硬盘温度 -->
         <div class="sao-card">
-          <div class="sao-label">Disk Temp</div>
+          <div class="sao-label">硬盘温度</div>
           <div class="sao-value">
             {{ (systemInfo.disks_temp?.[0]?.value || systemInfo.temperatures?.find(t => t.name === 'Temperature')?.value || 0).toFixed(0) }}°C
           </div>
         </div>
         <!-- 网络 -->
         <div class="sao-card">
-          <div class="sao-label">Network I/O</div>
+          <div class="sao-label">网络流量</div>
           <div class="sao-value" style="font-size: 14px;">
             ↓{{ systemInfo.network_download || '--' }} ↑{{ systemInfo.network_upload || '--' }}
           </div>
@@ -1504,7 +1506,7 @@
 
     <!-- 磁盘容量 -->
     <div>
-      <div class="sao-section-title">💾 STORAGE</div>
+      <div class="sao-section-title">💾 存储空间</div>
       <div class="space-y-3">
         <div v-for="disk in disks" :key="disk.mount" class="sao-card">
           <div class="flex justify-between items-center mb-2">
@@ -1532,7 +1534,6 @@
 
   </div>
 </div>
-
 
 
 
@@ -2053,11 +2054,7 @@
             class="px-6 py-3 font-semibold transition">
       👤 个人资料
     </button>
-    <button @click="window.currentTab = 'password'"
-            :class="window.currentTab === 'password' ? 'bg-white border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'"
-            class="px-6 py-3 font-semibold transition">
-      🔒 修改密码
-    </button>
+
   </div>
 
   <!-- 内容区 -->
@@ -2115,59 +2112,7 @@
       </div>
     </div>
 
-    <!-- 修改密码标签页 -->
-    <div v-if="window.currentTab === 'password'" class="space-y-4">
-      <div class="bg-white border rounded-lg p-6">
-        <h4 class="text-lg font-semibold mb-4 text-gray-800">修改密码</h4>
 
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">当前密码</label>
-            <input v-model="window.passwordForm.oldPassword"
-                   type="password"
-                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                   placeholder="请输入当前密码">
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">新密码</label>
-            <input v-model="window.passwordForm.newPassword"
-                   type="password"
-                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                   placeholder="请输入新密码">
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
-            <input v-model="window.passwordForm.confirmPassword"
-                   type="password"
-                   class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                   placeholder="请再次输入新密码">
-          </div>
-
-          <button @click="submitPasswordChange(window)"
-                  class="w-full bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition">
-            确认修改
-          </button>
-        </div>
-      </div>
-
-      <!-- 安全提示 -->
-      <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
-        <div class="flex items-start gap-3">
-          <span class="text-2xl">⚠️</span>
-          <div class="text-sm text-yellow-800">
-            <p class="font-semibold mb-1">安全建议:</p>
-            <ul class="list-disc list-inside space-y-1">
-              <li>密码长度至少 6 位</li>
-              <li>建议包含字母、数字和特殊字符</li>
-              <li>定期修改密码以保证安全</li>
-              <li>不要与他人分享密码</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </div>
 

@@ -395,44 +395,14 @@ createWindow(type, title, icon, data = {}) {
   return window;
 },
 
-// 提交密码修改
-async submitPasswordChange(window) {
-  const form = window.passwordForm;
-
-  if (!form.oldPassword || !form.newPassword || !form.confirmPassword) {
-    this.showToast('⚠️ 请填写完整信息', 'warning');
-    return;
-  }
-
-  if (form.newPassword !== form.confirmPassword) {
-    this.showToast('❌ 两次输入的密码不一致', 'error');
-    return;
-  }
-
-  if (form.newPassword.length < 6) {
-    this.showToast('⚠️ 密码长度至少 6 位', 'warning');
-    return;
-  }
-
-  try {
-    await axios.patch('/api/change_password', {
-      old_password: form.oldPassword,
-      new_password: form.newPassword
-    });
-    this.showToast('✅ 密码修改成功', 'success');
-
-    // 清空表单
-    form.oldPassword = '';
-    form.newPassword = '';
-    form.confirmPassword = '';
-  } catch (error) {
-    this.showToast(`❌ 修改失败: ${error.response?.data?.error || error.message}`, 'error');
-  }
-},
 
     closeWindow(id) {
-      this.windows = this.windows.filter(w => w.id !== id);
-    },
+  const win = this.windows.find(w => w.id === id);
+  if (win && win.refreshTimer) {
+    clearInterval(win.refreshTimer);
+  }
+  this.windows = this.windows.filter(w => w.id !== id);
+},
 
     minimizeWindow(id) {
       const window = this.windows.find(w => w.id === id);
@@ -629,30 +599,7 @@ openPersonalSettings() {
   this.showStartMenu = false;
 },
 
-// 修改个人密码
-async changePassword(window) {
-  const oldPassword = prompt('请输入当前密码:');
-  if (!oldPassword) return;
 
-  const newPassword = prompt('请输入新密码:');
-  if (!newPassword) return;
-
-  const confirmPassword = prompt('请再次输入新密码:');
-  if (newPassword !== confirmPassword) {
-    this.showToast('❌ 两次输入的密码不一致', 'error');
-    return;
-  }
-
-  try {
-    await axios.patch('/api/change_password', {
-      old_password: oldPassword,
-      new_password: newPassword
-    });
-    this.showToast('✅ 密码修改成功', 'success');
-  } catch (error) {
-    this.showToast(`❌ 修改失败: ${error.response?.data?.error || error.message}`, 'error');
-  }
-},
 
     async loadFiles(window) {
   window.isLocked = false; // 每次加载前重置状态
@@ -2406,20 +2353,21 @@ async decryptDiskPermanently(drive) {
         }
     },
 
-    // ==========================================
-    // 用户管理
-    // ==========================================
     async openUserManagement() {
-      const window = this.createWindow('users', '用户管理', '👥', {
+      const win = this.createWindow('users', '用户管理', '👥', {
         width: 900,
         height: 650,
         users: [],
         loading: true,
         editingUser: null,
-        newPassword: ''
+        newPassword: '',
+        refreshTimer: null
       });
       this.showStartMenu = false;
-      await this.loadUsers(window);
+      await this.loadUsers(win);
+      win.refreshTimer = setInterval(async () => {
+        await this.loadUsers(win);
+      }, 10000);
     },
 
    async loadUsers(window) {
@@ -2528,20 +2476,31 @@ async decryptDiskPermanently(drive) {
     // 系统窗口
     // ==========================================
     openSystemWindow() {
-      this.createWindow('system', '系统信息', '📊');
+      const win = this.createWindow('system', '系统信息', '📊', {
+        refreshTimer: null
+      });
+      win.refreshTimer = setInterval(async () => {
+        await this.fetchSystemInfo();
+      }, 5000);
       this.showStartMenu = false;
     },
 
-    openDiskWindow() {
-      this.createWindow('disks', '磁盘管理', '💿', {
+      openDiskWindow() {
+      const win = this.createWindow('disks', '磁盘管理', '💿', {
         activeTab: 'encryption',
         width: 900,
-        height: 650
+        height: 650,
+        refreshTimer: null
       });
+      // 启动自动刷新（每3秒）
+      win.refreshTimer = setInterval(async () => {
+        await this.fetchDiskInfo();
+        await this.fetchEncryptionStatus();
+        await this.fetchAvailableDrives();
+        await this.fetchEcStatus();
+      }, 3000);
       this.showStartMenu = false;
     },
-
-
     // ==================== 空间池状态 ====================
 async fetchPoolStatus() {
   try {
@@ -2788,12 +2747,17 @@ openSearchResult(window, file) {
 },
 // ==================== 打开池配置对话框 ====================
 openPoolWindow() {
-  // 如果已配置，打开管理窗口；否则打开配置对话框
   if (this.poolStatus.is_configured) {
-    this.createWindow('pool-detail', '空间池管理', '📦', {
+    const win = this.createWindow('pool-detail', '空间池管理', '📦', {
       width: 800,
-      height: 600
+      height: 600,
+      refreshTimer: null
     });
+    win.refreshTimer = setInterval(async () => {
+      await this.fetchPoolStatus();
+      await this.fetchPoolHealth();
+      await this.fetchPoolEncryptionStatus();
+    }, 5000);
   } else {
     this.openPoolSetupDialog();
   }
