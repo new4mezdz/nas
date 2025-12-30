@@ -144,10 +144,13 @@ def create_share():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
 @share_bp.route('/api/collab_share', methods=['POST'])
 @permission_required('readonly')
 def create_collab_share():
     """创建协作编辑分享链接"""
+    from config import runtime_config  # 动态获取最新配置
+
     data = request.get_json()
     file_path = data.get('file_path', '')
     guest_prefix = data.get('guest_prefix', '访客')
@@ -165,10 +168,13 @@ def create_collab_share():
     db.commit()
 
     guest_name = f"{guest_prefix}_{secrets.token_hex(3)}"
-    proxy_base = f"/proxy/node/{_ctx['THIS_NODE_ID']}" if _ctx['THIS_NODE_ID'] else ""
 
-    if _ctx['NAS_CENTER_PUBLIC_URL']:
-        base = _ctx['NAS_CENTER_PUBLIC_URL']
+    # 动态获取节点ID和公网地址
+    node_id = runtime_config.this_node_id or _ctx['THIS_NODE_ID']
+    proxy_base = f"/proxy/node/{node_id}" if node_id else ""
+
+    if runtime_config.nas_center_public_url:
+        base = runtime_config.nas_center_public_url
     else:
         base = request.host_url.rstrip('/')
 
@@ -179,7 +185,6 @@ def create_collab_share():
         'share_url': share_url,
         'share_id': share_id
     })
-
 
 @share_bp.route('/api/collab_verify', methods=['POST'])
 def verify_collab_token():
