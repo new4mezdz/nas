@@ -1225,3 +1225,254 @@ def api_ec_estimate():
     except Exception as e:
         return jsonify({"error": f"计算容量失败: {str(e)}"}), 500
 
+
+# ==================== EC文件列表 ====================
+@ec_bp.route('/api/ec_files', methods=['GET'])
+@permission_required('readonly')
+def list_ec_files():
+    """列出所有EC保护的文件"""
+    load_json = _ctx['load_json']
+    idx = load_json(_ctx['EC_IDX_PATH'], {"files": {}})
+
+    files = []
+    for name, meta in idx.get("files", {}).items():
+        files.append({
+            "name": name,
+            "size": meta.get("size", 0),
+            "k": meta.get("k"),
+            "m": meta.get("m"),
+            "ctime": meta.get("ctime"),
+            "sha256": meta.get("sha256")
+        })
+
+    return jsonify({"files": files})
+
+
+# ==================== EC文件上传 ====================
+@ec_bp.route('/api/ec_upload', methods=['POST'])
+@internal_or_permission('fullcontrol')
+def ec_upload():
+    """上传文件到EC卷"""
+    load_json = _ctx['load_json']
+    save_json = _ctx['save_json']
+    rs_encode = _ctx['rs_encode']
+
+    if 'file' not in request.files:
+        return jsonify({'error': '没有文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '未选择文件'}), 400
+
+    cfg = load_json(_ctx['EC_CFG_PATH'], {})
+    if not cfg or cfg.get("scheme") != "rs":
+        return jsonify({"error": "未配置RS纠删码"}), 400
+
+    k, m, disks = cfg["k"], cfg["m"], cfg["disks"]
+    if len(disks) < k + m:
+        return jsonify({"error": f"磁盘数量不足（需要≥{k + m})"}), 400
+
+    try:
+        # 读取文件内容
+        data = file.read()
+        filename = file.filename
+
+        # RS编码
+        shards = rs_encode(data, k, m)
+        shard_size = len(shards[0]) if shards else 0
+        file_sha = hashlib.sha256(data).hexdigest()
+
+        meta = {
+            'k': k, 'm': m,
+            'shard_size': shard_size,
+            'original_size': len(data),
+            'sha256': file_sha
+        }
+
+        # 写分片到各磁盘
+        for i, disk in enumerate(disks[:k + m]):
+            enc_dir = os.path.join(disk, 'encoded')
+            os.makedirs(enc_dir, exist_ok=True)
+            with open(os.path.join(enc_dir, f'{filename}.blk_{i}'), 'wb') as wf:
+                wf.write(shards[i])
+            with open(os.path.join(enc_dir, f'{filename}.meta.json'), 'w', encoding='utf-8') as mf:
+                json.dump(meta, mf, ensure_ascii=False)
+
+        # 更新索引
+        idx = load_json(_ctx['EC_IDX_PATH'], {'files': {}})
+        idx['files'][filename] = {
+            'size': len(data), 'k': k, 'm': m, 'sha256': file_sha,
+            'disks': disks, 'ctime': int(time.time())
+        }
+        save_json(_ctx['EC_IDX_PATH'], idx)
+
+        return jsonify({'success': True, 'message': '文件已上传到EC卷', 'name': filename})
+
+    except Exception as e:
+        return jsonify({'error': f'上传失败: {str(e)}'}), 500
+
+
+# ==================== EC批量导出 ====================
+@ec_bp.route('/api/ec_export_all', methods=['GET'])
+@internal_or_permission('readonly')
+def ec_export_all():
+    """一键导出所有EC文件为zip包"""
+    import zipfile
+    from io import BytesIO
+    from flask import send_file
+
+    load_json = _ctx['load_json']
+    decode_from_dict = _ctx['decode_from_dict']
+
+    idx = load_json(_ctx['EC_IDX_PATH'], {'files': {}})
+    files_meta = idx.get('files', {})
+
+    if not files_meta:
+        return jsonify({'error': '没有文件可导出'}), 400
+
+    try:
+        # 创建内存中的zip文件
+        zip_buffer = BytesIO()
+
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name, meta in files_meta.items():
+                try:
+                    # 读取分片
+                    shard_dict = {}
+                    meta_json = None
+                    disks = meta.get('disks', [])
+                    k = meta.get('k', 4)
+                    m = meta.get('m', 2)
+
+                    for i, disk in enumerate(disks[:k + m]):
+                        blk_path = os.path.join(disk, 'encoded', f'{name}.blk_{i}')
+                        if os.path.exists(blk_path):
+                            with open(blk_path, 'rb') as f:
+                                shard_dict[i] = f.read()
+
+                        if not meta_json:
+                            meta_path = os.path.join(disk, 'encoded', f'{name}.meta.json')
+                            if os.path.exists(meta_path):
+                                with open(meta_path, 'r', encoding='utf-8') as f:
+                                    meta_json = json.load(f)
+
+                    if len(shard_dict) >= k and meta_json:
+                        # 解码并添加到zip
+                        data = decode_from_dict(shard_dict, meta_json)
+                        zf.writestr(name, data)
+                        print(f"[EC_EXPORT] 已导出: {name}")
+                    else:
+                        print(f"[EC_EXPORT] 跳过(分片不足): {name}")
+
+                except Exception as e:
+                    print(f"[EC_EXPORT] 导出失败 {name}: {e}")
+                    continue
+
+        zip_buffer.seek(0)
+
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            download_name=f'ec_export_{int(time.time())}.zip',
+            as_attachment=True
+        )
+
+    except Exception as e:
+        return jsonify({'error': f'导出失败: {str(e)}'}), 500
+
+
+# ==================== 跨节点EC分片接口 ====================
+@ec_bp.route('/api/ec_shard', methods=['POST'])
+@internal_or_permission('fullcontrol')
+def store_ec_shard():
+    """存储来自管理端的EC分片"""
+    data = request.get_json()
+
+    filename = data.get('filename')
+    shard_index = data.get('shard_index')
+    shard_data = bytes.fromhex(data.get('shard_data', ''))
+    disk = data.get('disk')
+    meta = data.get('meta', {})
+
+    if not all([filename, shard_index is not None, shard_data, disk]):
+        return jsonify({'error': '缺少必要参数'}), 400
+
+    try:
+        enc_dir = os.path.join(disk, 'cross_encoded')
+        os.makedirs(enc_dir, exist_ok=True)
+
+        blk_path = os.path.join(enc_dir, f'{filename}.blk_{shard_index}')
+        with open(blk_path, 'wb') as f:
+            f.write(shard_data)
+
+        meta_path = os.path.join(enc_dir, f'{filename}.meta.json')
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False)
+
+        print(f"[EC_SHARD] 已存储: {filename} shard {shard_index} -> {disk}")
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'error': f'存储失败: {str(e)}'}), 500
+
+
+@ec_bp.route('/api/ec_shard', methods=['GET'])
+@internal_or_permission('readonly')
+def get_ec_shard():
+    """读取EC分片"""
+    filename = request.args.get('filename')
+    shard_index = request.args.get('shard_index', type=int)
+    disk = request.args.get('disk')
+
+    if not all([filename, shard_index is not None, disk]):
+        return jsonify({'error': '缺少必要参数'}), 400
+
+    try:
+        blk_path = os.path.join(disk, 'cross_encoded', f'{filename}.blk_{shard_index}')
+        meta_path = os.path.join(disk, 'cross_encoded', f'{filename}.meta.json')
+
+        if not os.path.exists(blk_path):
+            return jsonify({'error': '分片不存在'}), 404
+
+        with open(blk_path, 'rb') as f:
+            shard_data = f.read()
+
+        meta = {}
+        if os.path.exists(meta_path):
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+
+        return jsonify({
+            'success': True,
+            'shard_data': shard_data.hex(),
+            'meta': meta
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'读取失败: {str(e)}'}), 500
+
+
+@ec_bp.route('/api/ec_shard', methods=['DELETE'])
+@internal_or_permission('fullcontrol')
+def delete_ec_shard():
+    """删除EC分片"""
+    filename = request.args.get('filename')
+    shard_index = request.args.get('shard_index', type=int)
+    disk = request.args.get('disk')
+
+    if not all([filename, shard_index is not None, disk]):
+        return jsonify({'error': '缺少必要参数'}), 400
+
+    try:
+        blk_path = os.path.join(disk, 'cross_encoded', f'{filename}.blk_{shard_index}')
+        meta_path = os.path.join(disk, 'cross_encoded', f'{filename}.meta.json')
+
+        if os.path.exists(blk_path):
+            os.remove(blk_path)
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'error': f'删除失败: {str(e)}'}), 500

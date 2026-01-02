@@ -19,10 +19,10 @@ _app_context = {
     'THIS_NODE_ID': None,
     'NAS_CENTER_PUBLIC_URL': None,
     'NAS_CENTER_API_URL': None,
+    'encryption_manager': None,  # 新增
 }
 
-
-def init_system_routes(load_json, ec_cfg_path, load_node_config, this_node_id, center_public_url, center_api_url):
+def init_system_routes(load_json, ec_cfg_path, load_node_config, this_node_id, center_public_url, center_api_url, encryption_manager=None):
     """初始化系统路由所需的外部依赖"""
     _app_context['load_json'] = load_json
     _app_context['EC_CFG_PATH'] = ec_cfg_path
@@ -30,7 +30,7 @@ def init_system_routes(load_json, ec_cfg_path, load_node_config, this_node_id, c
     _app_context['THIS_NODE_ID'] = this_node_id
     _app_context['NAS_CENTER_PUBLIC_URL'] = center_public_url
     _app_context['NAS_CENTER_API_URL'] = center_api_url
-
+    _app_context['encryption_manager'] = encryption_manager  # 新增
 
 @system_bp.route('/system-stats', methods=['GET'])
 def get_system_stats():
@@ -125,6 +125,12 @@ def get_disks_info():
     """返回详细磁盘信息 - 供 NAS Center 调用"""
     try:
         all_disks = get_disk_info()
+        encryption_manager = _app_context.get('encryption_manager')
+
+        # 获取加密状态
+        enc_status = {}
+        if encryption_manager:
+            enc_status = encryption_manager.get_disk_status()
 
         formatted_disks = []
         for disk in all_disks:
@@ -136,6 +142,12 @@ def get_disks_info():
             used = disk.get('bytes_used', 0) or disk.get('used', 0)
             free = disk.get('bytes_free', 0) or disk.get('free', 0)
 
+            # 查询该磁盘的加密状态
+            norm_mount = _norm_abs(disk.get('mount', ''))
+            disk_enc = enc_status.get(norm_mount, {})
+            is_encrypted = disk_enc.get('is_configured', False)
+            is_locked = is_encrypted and not disk_enc.get('is_unlocked', False)
+
             formatted_disks.append({
                 'mount': disk.get('mount', ''),
                 'total_gb': round(total / (1024 ** 3), 2),
@@ -143,7 +155,9 @@ def get_disks_info():
                 'free_gb': round(free / (1024 ** 3), 2),
                 'usage_percent': round((used / total * 100) if total > 0 else 0, 2),
                 'filesystem': disk.get('fstype', 'unknown'),
-                'device': disk.get('device', 'unknown')
+                'device': disk.get('device', 'unknown'),
+                'is_encrypted': is_encrypted,  # 新增
+                'is_locked': is_locked,  # 新增
             })
 
         return jsonify(formatted_disks)
@@ -151,7 +165,6 @@ def get_disks_info():
     except Exception as e:
         print(f"[ERROR] 获取磁盘信息失败: {e}")
         return jsonify({'error': str(e)}), 500
-
 
 @system_bp.route('/system', methods=['GET'])
 @permission_required('readonly')

@@ -165,7 +165,8 @@ init_system_routes(
     load_node_config=load_node_config,
     this_node_id=runtime_config.this_node_id,
     center_public_url=runtime_config.nas_center_public_url,
-    center_api_url=runtime_config.nas_center_api_url
+    center_api_url=runtime_config.nas_center_api_url,
+    encryption_manager=encryption_manager  # 添加这行
 )
 
 init_setup_routes(

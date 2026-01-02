@@ -1,3 +1,8 @@
 {
-  "disks": {}
+  "disks": {
+    "e:\\": {
+      "password_salt": "8204dd07ecd4163f88fd28902b305d772e5d6af206f031dd18af3ff131949253",
+      "password_hash": "8a1526e8b6915f46b7c2af968763c6fad7b2a194cf8ec63a464efd55575667ab"
+    }
+  }
 }
