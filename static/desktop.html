@@ -2474,16 +2474,11 @@
       <span>磁盘管理</span>
     </div>
 
-    <!-- 纠删码配置 - 仅管理员
-    <div v-if="user.is_admin"
-         class="start-menu-item"
-         @click="openECConfig">
-      <span class="text-xl">⚙️</span>
-      <span>纠删码配置</span>
-    </div>
-      这是注释的结束 -->
-
-
+   <!-- 帮助文档 - 所有用户 -->
+<div class="start-menu-item" @click="showHelpDialog = true; showStartMenu = false">
+  <span class="text-xl">❓</span>
+  <span>帮助文档</span>
+</div>
 
     <div class="h-px bg-white/20 my-2"></div>
       <!-- 桌面背景 - 所有用户 -->
@@ -2896,8 +2891,117 @@
   </div>
 </div>
 
+
+      <!-- 帮助文档对话框 - 说明书风格 -->
+<div v-if="showHelpDialog"
+     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000]"
+     @click.self="showHelpDialog = false">
+  <div class="bg-white rounded-lg shadow-xl w-[900px] h-[80vh] flex flex-col">
+
+    <!-- 标题栏 -->
+    <div class="flex justify-between items-center p-4 border-b bg-gray-50">
+      <h3 class="text-xl font-bold">📘 NAS Center 使用手册</h3>
+      <button @click="showHelpDialog = false" class="text-gray-500 hover:text-gray-700 text-2xl">×</button>
+    </div>
+
+    <!-- 主体：左侧目录 + 右侧内容 -->
+    <div class="flex flex-1 overflow-hidden">
+
+      <!-- 左侧目录 -->
+      <div class="w-48 border-r bg-gray-50 overflow-y-auto">
+        <div v-for="chapter in helpContent.chapters" :key="chapter.id"
+             @click="currentHelpChapter = chapter.id"
+             class="px-4 py-3 cursor-pointer hover:bg-gray-200 border-b border-gray-100"
+             :class="currentHelpChapter === chapter.id ? 'bg-blue-100 text-blue-700 font-medium' : ''">
+          {{ chapter.icon }} {{ chapter.title }}
+        </div>
+      </div>
+
+      <!-- 右侧内容 -->
+      <div class="flex-1 overflow-y-auto p-6">
+        <div v-if="helpContent.sections[currentHelpChapter]">
+          <h2 class="text-2xl font-bold mb-6 pb-2 border-b">
+            {{ helpContent.sections[currentHelpChapter].title }}
+          </h2>
+
+          <!-- 渲染各种内容块 -->
+          <template v-for="(block, idx) in helpContent.sections[currentHelpChapter].blocks" :key="idx">
+
+            <!-- 文字段落 -->
+            <p v-if="block.type === 'text'" class="text-gray-700 mb-4 leading-relaxed">
+              {{ block.content }}
+            </p>
+
+            <!-- 小标题 -->
+            <h3 v-if="block.type === 'heading'" class="text-lg font-bold mt-6 mb-3 text-gray-800">
+              {{ block.content }}
+            </h3>
+
+            <!-- 图片 -->
+            <figure v-if="block.type === 'image'" class="my-4">
+              <img :src="block.src" :alt="block.caption"
+                   class="rounded-lg border shadow-sm max-w-full">
+              <figcaption class="text-center text-sm text-gray-500 mt-2">
+                {{ block.caption }}
+              </figcaption>
+            </figure>
+
+            <!-- 提示框 -->
+            <div v-if="block.type === 'tip'"
+                 class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded-r">
+              <span class="font-medium text-blue-700">💡 提示：</span>
+              <span class="text-blue-600">{{ block.content }}</span>
+            </div>
+
+            <!-- 警告框 -->
+            <div v-if="block.type === 'warning'"
+                 class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4 rounded-r">
+              <span class="font-medium text-yellow-700">⚠️ 注意：</span>
+              <span class="text-yellow-600">{{ block.content }}</span>
+            </div>
+
+            <!-- 步骤说明 -->
+            <div v-if="block.type === 'steps'" class="space-y-6 my-4">
+              <div v-for="(step, i) in block.items" :key="i"
+                   class="flex gap-4 bg-gray-50 rounded-lg p-4">
+                <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold flex-shrink-0">
+                  {{ i + 1 }}
+                </div>
+                <div class="flex-1">
+                  <h4 class="font-bold mb-1">{{ step.title }}</h4>
+                  <p class="text-gray-600 text-sm mb-2">{{ step.text }}</p>
+                  <img v-if="step.image" :src="step.image" class="rounded border max-w-md">
+                </div>
+              </div>
+            </div>
+
+            <!-- 列表说明 -->
+            <div v-if="block.type === 'list'" class="bg-gray-50 rounded-lg p-4 mb-4">
+              <div v-for="item in block.items" :key="item.label" class="py-2 border-b last:border-0">
+                <span class="font-medium text-blue-600">{{ item.label }}：</span>
+                <span class="text-gray-600">{{ item.desc }}</span>
+              </div>
+            </div>
+
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部 -->
+    <div class="flex justify-between items-center p-4 border-t bg-gray-50">
+      <span class="text-sm text-gray-500">NAS Center v1.0.0</span>
+      <button @click="showHelpDialog = false"
+              class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+        关闭
+      </button>
+    </div>
+  </div>
+</div>
+
   </div>
 
-  <script src="static/desktop.app.js"></script>
+  <script src="static/desktop_helpContent.js"></script>
+<script src="static/desktop.app.js"></script>
 </body>
 </html>

@@ -36,7 +36,9 @@ searchQuery: '',
     availableDrives: [],
     ecStatus: { is_configured: false },
     encryptionStatus: [],
-
+      showHelpDialog: false,
+currentHelpChapter: 'quickstart',
+helpContent: helpContent,
 
     encryptionProgress: {
       show: false,
