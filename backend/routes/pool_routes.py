@@ -84,8 +84,9 @@ def api_pool_remove():
     try:
         Storage_pool = _ctx['Storage_pool']
         data = request.json
-        confirm_text = data.get('confirm_text', '')
-        result = Storage_pool.remove_pool(confirm_text)
+        if not data.get('confirm'):
+            return jsonify({"error": "需要确认"}), 400
+        result = Storage_pool.remove_pool()
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

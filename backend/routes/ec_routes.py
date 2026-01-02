@@ -768,14 +768,12 @@ def api_ec_config():
 @ec_bp.route('/api/ec_remove', methods=['POST'])
 @permission_required('fullcontrol')
 def remove_ec_config():
-    """删除EC配置（危险操作）"""
+    """删除EC配置"""
     load_json = _ctx['load_json']
 
     data = request.get_json()
-    confirm_text = data.get('confirm_text', '')
-
-    if confirm_text != "DELETE EC":
-        return jsonify({"error": "确认文本不正确"}), 400
+    if not data.get('confirm'):
+        return jsonify({"error": "需要确认"}), 400
 
     try:
         cfg = load_json(_ctx['EC_CFG_PATH'], {})

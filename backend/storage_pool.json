@@ -1,5 +1,13 @@
 {
-  "pool": null,
+  "pool": {
+    "name": "主存储池",
+    "disks": [
+      "E:/",
+      "G:/",
+      "F:/"
+    ],
+    "created_at": "2026-01-02T21:05:59"
+  },
   "volumes": {},
   "files": {},
   "round_robin_index": {}

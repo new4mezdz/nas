@@ -2300,14 +2300,7 @@ async rebuildOnReplacedDisk(disk) {
 
 // [新增] 永久解密磁盘的方法
 async decryptDiskPermanently(drive) {
-    // 风险提示 1
-    if (!confirm(`⚠️ 警告：这是一个高风险操作！\n\n您确定要永久解密磁盘 [${drive}] 吗？\n此操作会将所有文件还原为明文，且不可逆。`)) {
-        return;
-    }
-    // 风险提示 2：要求用户输入盘符确认
-    const confirmation = prompt(`为确认操作，请输入要解密的磁盘盘符 (例如: ${drive})`);
-    if (confirmation !== drive) {
-        this.showToast('输入不匹配，操作已取消', 'info');
+    if (!confirm(`⚠️ 警告：永久解密磁盘\n\n您确定要永久解密磁盘 [${drive}] 吗？\n此操作会将所有文件还原为明文，且不可逆。`)) {
         return;
     }
 
@@ -2324,10 +2317,8 @@ async decryptDiskPermanently(drive) {
             password: password
         });
 
-        // 这里的消息只是告诉用户任务已启动
         alert(response.data.message);
 
-        // 稍等片刻后刷新状态，让用户看到变化（最终完成需要看后台日志）
         setTimeout(() => {
             this.fetchEncryptionStatus();
         }, 3000);
@@ -2823,27 +2814,25 @@ async removePool() {
     return;
   }
 
-  if (!confirm('⚠️ 警告：删除存储池\n\n此操作将：\n1. 删除所有逻辑卷中的文件\n2. 清除存储池配置\n\n确定要继续吗？')) {
-    return;
-  }
-
-  const confirmText = prompt('请输入 "DELETE POOL" 确认删除：');
-  if (confirmText !== 'DELETE POOL') {
-    this.showToast('❌ 确认文本不正确', 'info');
+  if (!confirm('⚠️ 警告：删除存储池\n\n此操作将：\n1. 删除存储池配置\n2. 释放所有参与的磁盘\n3. 逻辑卷数据将无法访问\n\n确定要继续吗？')) {
     return;
   }
 
   try {
-    await axios.post('/api/pool/remove', { confirm_text: confirmText });
-    this.showToast('✅ 存储池已删除', 'success');
+    this.showToast('🚀 正在删除存储池...', 'info');
+
+    const response = await axios.post('/api/pool/remove', { confirm: true });
+
+    this.showToast(`✅ ${response.data.message || '存储池已删除'}`, 'success');
+
     await this.loadData();
 
-    // 刷新文件管理器
     this.windows.forEach(w => {
       if (w.type === 'files') {
         w.sidebar.storage = this.buildStorageList();
       }
     });
+
   } catch (error) {
     this.showToast(`❌ 删除失败: ${error.response?.data?.error || error.message}`, 'error');
   }
@@ -3247,32 +3236,19 @@ async removeEcConfig() {
     return;
   }
 
-  // 第一次确认
   if (!confirm('⚠️ 警告：删除纠删码配置\n\n此操作将：\n1. 删除所有纠删码文件（无法恢复）\n2. 清除纠删码配置\n3. 释放参与纠删码的磁盘\n\n确定要继续吗？')) {
-    return;
-  }
-
-  // 第二次确认：要求输入确认文本
-  const confirmText = prompt('这是一个危险操作！\n\n所有纠删码卷中的文件将被永久删除！\n请输入 "DELETE EC" 确认删除：');
-
-  if (confirmText !== 'DELETE EC') {
-    this.showToast('❌ 确认文本不正确，操作已取消', 'info');
     return;
   }
 
   try {
     this.showToast('🚀 正在删除纠删码配置...', 'info');
 
-    const response = await axios.post('/api/ec_remove', {
-      confirm_text: confirmText
-    });
+    const response = await axios.post('/api/ec_remove', { confirm: true });
 
     this.showToast(`✅ ${response.data.message}`, 'success');
 
-    // 刷新所有数据
     await this.loadData();
 
-    // 刷新所有文件管理器窗口的侧边栏
     this.windows.forEach(w => {
       if (w.type === 'files') {
         w.sidebar.storage = this.buildStorageList();

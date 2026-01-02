@@ -481,10 +481,27 @@ def internal_change_password():
 
     try:
         encryption_manager = _ctx['encryption_manager']
-        result = encryption_manager.set_password(drive, new_password)
-        if result.get("success"):
-            return jsonify({"success": True, "message": f"磁盘 {drive} 密码已更新"})
-        else:
-            return jsonify({"error": result.get("error", "修改密码失败")}), 500
+        load_json = _ctx['load_json']
+        save_json = _ctx['save_json']
+
+        norm_drive = _norm_abs(drive)
+        config = load_json(encryption_manager.config_path, {"disks": {}})
+
+        if "disks" not in config:
+            config["disks"] = {}
+
+        # 生成新的盐和哈希
+        new_salt = os.urandom(16)
+        new_hash = hashlib.pbkdf2_hmac('sha256', new_password.encode('utf-8'), new_salt, 100000)
+
+        config["disks"][norm_drive] = {
+            "password_salt": new_salt.hex(),
+            "password_hash": new_hash.hex()
+        }
+
+        save_json(encryption_manager.config_path, config)
+        encryption_manager.load_config()
+
+        return jsonify({"success": True, "message": f"磁盘 {drive} 密码已更新"})
     except Exception as e:
         return jsonify({"error": f"修改密码异常: {e}"}), 500
