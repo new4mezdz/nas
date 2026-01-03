@@ -176,3 +176,4 @@ backend/LibreHardwareMonitor-net472/
 backend/tool/
 # 忽略所有 json 文件
 *.json
+*.db
