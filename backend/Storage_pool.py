@@ -148,10 +148,8 @@ def get_pool_status() -> dict:
     }
 
 
-def remove_pool(confirm_text: str) -> dict:
+def remove_pool() -> dict:
     """删除存储池"""
-    if confirm_text != "DELETE POOL":
-        raise Exception("确认文本不正确")
 
     config = load_config()
 
