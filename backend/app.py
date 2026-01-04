@@ -51,7 +51,6 @@ from tasks import (
 )
 from tasks.node_reporter import load_node_config, save_node_config
 
-
 # ==================== Flask 应用初始化 ====================
 app = Flask(__name__, static_folder="../static", static_url_path="/static")
 app.config.from_object(FlaskConfig)
@@ -143,8 +142,7 @@ with app.app_context():
     init_user_data_tables()
     init_collab_share_table()
 
-
-# ==================== 注册路由蓝图 ====================
+# ==================== 导入路由蓝图 ====================
 from routes import (
     user_bp, init_user_routes,
     system_bp, init_system_routes,
@@ -158,110 +156,122 @@ from routes import (
     file_bp, init_file_routes,
 )
 
-# 初始化各路由模块的依赖
-init_system_routes(
-    load_json=load_json,
-    ec_cfg_path=EC_CFG_PATH,
-    load_node_config=load_node_config,
-    this_node_id=runtime_config.this_node_id,
-    center_public_url=runtime_config.nas_center_public_url,
-    center_api_url=runtime_config.nas_center_api_url,
-    encryption_manager=encryption_manager  # 添加这行
-)
-
-init_setup_routes(
-    save_node_config=save_node_config,
-    load_node_config=load_node_config,
-    flask_port=FLASK_PORT
-)
-
-init_auth_routes(
-    this_node_id=runtime_config.this_node_id,
-    center_api_url=runtime_config.nas_center_api_url,
-    shared_secret=runtime_config.nas_shared_secret
-)
-
-init_admin_routes(
-    center_api_url=runtime_config.nas_center_api_url,
-    shared_secret=runtime_config.nas_shared_secret
-)
-
-init_share_routes(
-    ec_cfg_path=EC_CFG_PATH,
-    ec_idx_path=EC_IDX_PATH,
-    this_node_id=runtime_config.this_node_id,
-    center_public_url=runtime_config.nas_center_public_url,
-    load_json=load_json,
-    save_json=save_json,
-    decode_from_dict=decode_from_dict,
-    encryption_manager=encryption_manager,
-    storage_pool=Storage_pool,
-    rs_encode=rs_encode
-)
-
-init_encryption_routes(
-    encryption_manager=encryption_manager,
-    shared_secret=runtime_config.nas_shared_secret,
-    load_json=load_json,
-    save_json=save_json
-)
-
-init_pool_routes(
-    storage_pool=Storage_pool,
-    encryption_manager=encryption_manager
-)
-
-init_ec_routes(
-    ec_cfg_path=EC_CFG_PATH,
-    ec_idx_path=EC_IDX_PATH,
-    shared_secret=runtime_config.nas_shared_secret,
-    load_json=load_json,
-    save_json=save_json,
-    decode_from_dict=decode_from_dict,
-    rs_encode=rs_encode
-)
-
-init_file_routes(
-    ec_cfg_path=EC_CFG_PATH,
-    ec_idx_path=EC_IDX_PATH,
-    load_json=load_json,
-    save_json=save_json,
-    decode_from_dict=decode_from_dict,
-    rs_encode=rs_encode,
-    encryption_manager=encryption_manager,
-    storage_pool=Storage_pool
-)
+# 兼容旧的文件管理蓝图
+from filemanager import file_bp as filemanager_bp
 
 
-# ==================== 代理前缀处理 ====================
+# ==================== 路由初始化函数 ====================
+def init_all_routes():
+    """
+    初始化所有路由模块的依赖
+    ✅ 修复：此函数在配置加载后调用，确保 runtime_config 已正确设置
+    """
+    print(f"[DEBUG] 初始化路由，管理端地址: {runtime_config.nas_center_api_url}")
+
+    init_system_routes(
+        load_json=load_json,
+        ec_cfg_path=EC_CFG_PATH,
+        load_node_config=load_node_config,
+        this_node_id=runtime_config.this_node_id,
+        center_public_url=runtime_config.nas_center_public_url,
+        center_api_url=runtime_config.nas_center_api_url,
+        encryption_manager=encryption_manager
+    )
+
+    init_setup_routes(
+        save_node_config=save_node_config,
+        load_node_config=load_node_config,
+        flask_port=FLASK_PORT
+    )
+
+    init_auth_routes(
+        this_node_id=runtime_config.this_node_id,
+        center_api_url=runtime_config.nas_center_api_url,
+        shared_secret=runtime_config.nas_shared_secret
+    )
+
+    init_admin_routes(
+        center_api_url=runtime_config.nas_center_api_url,
+        shared_secret=runtime_config.nas_shared_secret
+    )
+
+    init_share_routes(
+        ec_cfg_path=EC_CFG_PATH,
+        ec_idx_path=EC_IDX_PATH,
+        this_node_id=runtime_config.this_node_id,
+        center_public_url=runtime_config.nas_center_public_url,
+        load_json=load_json,
+        save_json=save_json,
+        decode_from_dict=decode_from_dict,
+        encryption_manager=encryption_manager,
+        storage_pool=Storage_pool,
+        rs_encode=rs_encode
+    )
+
+    init_encryption_routes(
+        encryption_manager=encryption_manager,
+        shared_secret=runtime_config.nas_shared_secret,
+        load_json=load_json,
+        save_json=save_json
+    )
+
+    init_pool_routes(
+        storage_pool=Storage_pool,
+        encryption_manager=encryption_manager
+    )
+
+    init_ec_routes(
+        ec_cfg_path=EC_CFG_PATH,
+        ec_idx_path=EC_IDX_PATH,
+        shared_secret=runtime_config.nas_shared_secret,
+        load_json=load_json,
+        save_json=save_json,
+        decode_from_dict=decode_from_dict,
+        rs_encode=rs_encode
+    )
+
+    init_file_routes(
+        ec_cfg_path=EC_CFG_PATH,
+        ec_idx_path=EC_IDX_PATH,
+        load_json=load_json,
+        save_json=save_json,
+        decode_from_dict=decode_from_dict,
+        rs_encode=rs_encode,
+        encryption_manager=encryption_manager,
+        storage_pool=Storage_pool
+    )
+
+    print("[DEBUG] 路由初始化完成")
+
+
+def register_blueprints():
+    """注册所有蓝图"""
+    app.register_blueprint(user_bp)
+    app.register_blueprint(system_bp)
+    app.register_blueprint(setup_bp)
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(share_bp)
+    app.register_blueprint(encryption_bp)
+    app.register_blueprint(pool_bp)
+    app.register_blueprint(ec_bp)
+    app.register_blueprint(file_bp)
+    app.register_blueprint(filemanager_bp)
+
+
 # ==================== 代理前缀处理 ====================
 @app.before_request
 def strip_proxy_prefix():
     """移除代理前缀，使路由正常工作"""
     import re
     path = request.path
-    print(f"[DEBUG] 原始请求路径: {path}")  # 添加调试
+    print(f"[DEBUG] 原始请求路径: {path}")
     # 匹配 /proxy/node/xxx/ 前缀
     match = re.match(r'^/proxy/node/[^/]+(/.*)', path)
     if match:
         new_path = match.group(1)
-        print(f"[DEBUG] 重写路径为: {new_path}")  # 添加调试
+        print(f"[DEBUG] 重写路径为: {new_path}")
         request.environ['PATH_INFO'] = new_path
-# 注册蓝图
-app.register_blueprint(user_bp)
-app.register_blueprint(system_bp)
-app.register_blueprint(setup_bp)
-app.register_blueprint(auth_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(share_bp)
-app.register_blueprint(encryption_bp)
-app.register_blueprint(pool_bp)
-app.register_blueprint(ec_bp)
-app.register_blueprint(file_bp)
-
-# 兼容旧的文件管理蓝图
-from filemanager import file_bp as filemanager_bp
-app.register_blueprint(filemanager_bp)
 
 
 # ==================== 特殊路由（无法移动到蓝图的） ====================
@@ -280,8 +290,10 @@ def pwa_manifest():
         "lang": "zh-CN",
         "scope": "/",
         "icons": [
-            {"src": "/static/pwa/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-            {"src": "/static/pwa/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+            {"src": "/static/pwa/icons/icon-192.png", "sizes": "192x192", "type": "image/png",
+             "purpose": "any maskable"},
+            {"src": "/static/pwa/icons/icon-512.png", "sizes": "512x512", "type": "image/png",
+             "purpose": "any maskable"}
         ]
     }
     response = jsonify(manifest_data)
@@ -462,6 +474,19 @@ def start_libreoffice_service():
     """启动 LibreOffice Portable"""
     print("📄  正在启动 LibreOffice Portable...")
 
+    # 清理旧进程(在启动前)
+    try:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/F', '/IM', 'LibreOfficePortable.exe'],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['taskkill', '/F', '/IM', 'soffice.exe'],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['taskkill', '/F', '/IM', 'soffice.bin'],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.5)  # 等待进程完全退出
+    except:
+        pass
+
     if not os.path.exists(LO_LAUNCHER_PATH):
         print(f"⚠️  LibreOffice Portable 未找到: {LO_LAUNCHER_PATH}")
         return None
@@ -528,6 +553,10 @@ if __name__ == '__main__':
     if need_setup:
         # ========== 配置向导模式 ==========
         app.config['SETUP_MODE'] = True
+
+        # ✅ 配置向导模式也需要注册蓝图
+        register_blueprints()
+
         try:
             print(f"🔧  配置服务启动在端口: {FLASK_PORT}")
             print("=" * 50)
@@ -541,11 +570,15 @@ if __name__ == '__main__':
 
     else:
         # ========== 正常启动模式 ==========
-        # 加载运行时配置
+        # ✅ 修复：先加载配置，再初始化路由
         runtime_config.load_from_node_config(node_config)
 
         print(f"📡  管理端地址: {runtime_config.nas_center_api_url}")
         print(f"🆔  节点ID: {runtime_config.this_node_id}")
+
+        # ✅ 修复：配置加载后再初始化路由
+        init_all_routes()
+        register_blueprints()
 
         ohm_proc = None
         lo_proc = None
