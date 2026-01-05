@@ -1433,3 +1433,106 @@ def access_preview_session(session_id):
     except Exception as e:
         print(f"[DEBUG] 预览会话文件访问失败: {e}")
         return jsonify({'error': '文件访问失败'}), 500
+
+
+
+
+# ==================== 内部接口（供管理端调用）====================
+from config import NAS_SHARED_SECRET
+
+@file_bp.route('/api/internal/upload', methods=['POST'])
+def internal_upload():
+    """内部上传接口 - 供管理端跨节点池使用"""
+    # 验证密钥
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    uploaded_files = request.files.getlist('file')
+    upload_path = request.form.get('path', '')
+
+    if not uploaded_files or not upload_path:
+        return jsonify({'error': '缺少文件或路径'}), 400
+
+    try:
+        # 创建目录
+        os.makedirs(upload_path, exist_ok=True)
+
+        saved = []
+        for f in uploaded_files:
+            if f.filename:
+                target = os.path.join(upload_path, f.filename)
+                f.save(target)
+                saved.append(f.filename)
+
+        return jsonify({'success': True, 'files': saved})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@file_bp.route('/api/internal/download', methods=['GET'])
+def internal_download():
+    """内部下载接口 - 供管理端跨节点池使用"""
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    path = request.args.get('path')
+    if not path or not os.path.exists(path):
+        return jsonify({'error': '文件不存在'}), 404
+
+    return send_file(path, as_attachment=True)
+
+
+@file_bp.route('/api/internal/delete', methods=['POST'])
+def internal_delete():
+    """内部删除接口 - 供管理端跨节点池使用"""
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    data = request.get_json()
+    path = data.get('path')
+
+    if not path:
+        return jsonify({'error': '缺少路径'}), 400
+
+    try:
+        if os.path.exists(path):
+            if os.path.isfile(path):
+                os.remove(path)
+            else:
+                shutil.rmtree(path)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@file_bp.route('/api/disk-info', methods=['GET'])
+def api_disk_info():
+    """获取指定磁盘的空间信息（供管理端调用）"""
+    from config import NAS_SHARED_SECRET
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'error': '缺少路径'}), 400
+
+    try:
+        # 处理 Windows 路径
+        check_path = path.rstrip('\\').rstrip('/')
+        if os.name == 'nt' and len(check_path) == 2 and check_path[1] == ':':
+            check_path = check_path + '\\'
+
+        total, used, free = shutil.disk_usage(check_path)
+        return jsonify({
+            'total': total,
+            'used': used,
+            'free': free,
+            'path': path
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
