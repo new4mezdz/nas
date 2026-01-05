@@ -2900,7 +2900,7 @@
 
     <!-- 标题栏 -->
     <div class="flex justify-between items-center p-4 border-b bg-gray-50">
-      <h3 class="text-xl font-bold">📘 NAS Center 使用手册</h3>
+      <h3 class="text-xl font-bold">📘 NAS使用手册</h3>
       <button @click="showHelpDialog = false" class="text-gray-500 hover:text-gray-700 text-2xl">×</button>
     </div>
 
@@ -2939,7 +2939,7 @@
 
             <!-- 图片 -->
             <figure v-if="block.type === 'image'" class="my-4">
-              <img :src="block.src" :alt="block.caption"
+              <img :src="getHelpImageUrl(block.src)" :alt="block.caption"
                    class="rounded-lg border shadow-sm max-w-full">
               <figcaption class="text-center text-sm text-gray-500 mt-2">
                 {{ block.caption }}

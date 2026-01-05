@@ -6,7 +6,6 @@ const helpContent = {
         { id: 'files', title: '文件管理', icon: '📁' },
         { id: 'pool', title: '空间池', icon: '📦' },
         { id: 'disk', title: '磁盘管理', icon: '💿' },
-        { id: 'encryption', title: '磁盘加密', icon: '🔐' },
         { id: 'system', title: '系统信息', icon: '📊' },
         { id: 'settings', title: '个性化设置', icon: '⚙️' },
         { id: 'faq', title: '常见问题', icon: '💡' }
@@ -19,9 +18,11 @@ const helpContent = {
             title: '快速入门',
             blocks: [
                 { type: 'text', content: '欢迎使用 NAS Web Desktop！这是您的个人网络存储空间，可以像操作本地电脑一样管理您的文件。' },
-                { type: 'image', src: '/static/images/help/desktop-overview.png', caption: '桌面主界面' },
+                // 修改：desktop-main.png -> desktop-overview.png
+                { type: 'image', src: '/images/help/desktop-overview.png', caption: '桌面主界面' },
 
                 { type: 'heading', content: '桌面布局' },
+
                 { type: 'list', items: [
                     { label: '桌面图标', desc: '双击图标打开对应的应用程序' },
                     { label: '任务栏', desc: '底部任务栏显示已打开的窗口，点击可切换' },
@@ -33,7 +34,9 @@ const helpContent = {
                 { type: 'text', content: '点击任务栏的搜索图标或使用快捷键，可以快速搜索应用和文件。' },
                 { type: 'list', items: [
                     { label: '搜索应用', desc: '输入应用名称如"文件"、"磁盘"快速打开' },
-                    { label: '搜索文件', desc: '输入文件名关键词，全盘搜索文件' }
+                    { label: '搜索文件', desc: '输入文件名关键词，全盘搜索文件' },
+                    // 修改：2.png -> desktop-search-bar.png
+                    { type: 'image', src: '/images/help/desktop-search-bar.png', caption: '顶部抽屉搜索栏' },
                 ]},
                 { type: 'tip', content: '使用上下箭头键选择搜索结果，回车键确认。' }
             ]
@@ -43,45 +46,64 @@ const helpContent = {
         files: {
             title: '文件管理',
             blocks: [
-                { type: 'text', content: '文件管理器是您管理存储文件的主要工具，支持上传、下载、复制、移动、删除等操作。' },
-                { type: 'image', src: '/static/images/help/file-manager.png', caption: '文件管理器界面' },
+                { type: 'text', content: '文件管理器是您管理存储文件的主要工具，支持上传、下载、复制、移动、删除、分享以及在线协作等高级功能。' },
+                // 修改：3.png -> files-manager-main.png
+                { type: 'image', src: '/images/help/files-manager-main.png', caption: '文件管理器界面' },
 
-                { type: 'heading', content: '界面说明' },
+                { type: 'heading', content: '界面布局' },
                 { type: 'list', items: [
-                    { label: '左侧边栏', desc: '显示所有可用的存储位置（磁盘、空间池、逻辑卷）' },
-                    { label: '文件列表', desc: '显示当前目录的文件和文件夹' },
-                    { label: '工具栏', desc: '提供上传、新建文件夹、视图切换等功能' },
-                    { label: '路径栏', desc: '显示当前位置，可点击快速跳转' }
+                    { label: '左侧边栏', desc: '显示物理磁盘、空间池、逻辑卷及“纠删码卷”等存储位置。' },
+                    { label: '工具栏', desc: '提供上传、新建、重命名、删除、剪切/复制/粘贴及搜索功能。' },
+                    { label: '视图切换', desc: '位于工具栏右侧，可快速切换列表或网格显示模式。' }
                 ]},
 
-                { type: 'heading', content: '上传文件' },
-                { type: 'steps', items: [
-                    { title: '点击上传按钮', text: '在工具栏点击"上传"按钮' },
-                    { title: '选择文件', text: '在弹出的对话框中选择要上传的文件' },
-                    { title: '等待上传', text: '文件将自动上传，可在进度条查看状态' }
-                ]},
-                { type: 'tip', content: '也可以直接将文件拖拽到文件列表区域进行上传。' },
-
-                { type: 'heading', content: '文件操作' },
-                { type: 'text', content: '右键点击文件可打开操作菜单：' },
+                { type: 'heading', content: '视图模式切换' },
+                { type: 'text', content: '您可以根据需要随时切换文件的呈现方式：' },
                 { type: 'list', items: [
-                    { label: '下载', desc: '将文件下载到本地电脑' },
-                    { label: '复制', desc: '复制文件到剪贴板' },
-                    { label: '剪切', desc: '剪切文件（移动）' },
-                    { label: '粘贴', desc: '将剪贴板中的文件粘贴到当前目录' },
-                    { label: '重命名', desc: '修改文件或文件夹名称' },
-                    { label: '删除', desc: '删除选中的文件' }
+                    { label: '📋 列表视图', desc: '显示文件名、大小、修改时间等详细元数据，适合精确查找。' },
+                    { label: '⊞ 网格视图', desc: '以大图标形式展示，方便快速预览图片或多媒体文件。' }
                 ]},
-                { type: 'warning', content: '删除操作不可恢复，请谨慎操作！' },
 
-                { type: 'heading', content: '批量操作' },
-                { type: 'text', content: '按住 Ctrl 键点击可多选文件，然后进行批量下载、复制、删除等操作。' },
-
-                { type: 'heading', content: '视图模式' },
+                { type: 'heading', content: '文件预览功能' },
+                { type: 'text', content: '系统集成了强大的多媒体预览引擎，支持以下格式的直接查看：' },
                 { type: 'list', items: [
-                    { label: '列表视图', desc: '显示详细信息，包括大小、修改时间等' },
-                    { label: '图标视图', desc: '以大图标形式显示，适合浏览图片' }
-                ]}
+                    { label: '🖼️ 图片', desc: '支持 JPG, PNG, GIF, WebP 等主流图像格式预览。' },
+                    { label: '🎬 视频', desc: '支持 MP4, WebM 等浏览器原生支持的视频格式播放。' },
+                    { label: '🎵 音频', desc: '支持 MP3, WAV 等音频文件在线试听。' },
+                    { label: '📄 文档', desc: '支持 PDF 格式文件的在线阅读。' },
+                    { label: '📝 文本', desc: '支持 TXT,代码文件等纯文本格式的查看。' }
+                ]},
+
+                { type: 'heading', content: '在线文档协作' },
+                { type: 'text', content: '系统集成了 Univer 在线编辑器，支持无需下载即可直接编辑文档。' },
+                { type: 'tip', content: '双击支持的表格或文档文件，系统将自动打开在线编辑窗口，支持实时保存。' },
+                // 修改：4.png -> files-editor-univer.png
+                { type: 'image', src: '/images/help/files-editor-univer.png', caption: 'Univer 在线文档编辑界面' },
+
+                { type: 'heading', content: '文件分享链接' },
+                { type: 'text', content: '您可以为文件创建外链分享，系统将生成唯一的访问地址。' },
+                { type: 'list', items: [
+                    { label: '分享有效期', desc: '默认分享链接有效期通常为 24 小时。' },
+                    { label: '密码保护', desc: '系统会随机生成访问密码，确保只有获得授权的用户才能访问。' },
+                    { label: '一键复制', desc: '分享成功后，可一键复制链接和密码发送给对方。' },
+                    // 修改：5.png -> files-share-link.png
+                    { type: 'image', src: '/images/help/files-share-link.png', caption: '生成的分享链接及提取码界面' },
+                ]},
+
+                { type: 'heading', content: '加密卷与存储安全' },
+                { type: 'text', content: '系统支持访问受保护的纠删码卷（EC Volume）和加密物理磁盘。' },
+                { type: 'list', items: [
+                    { label: '加密标识', desc: '侧边栏中带有“纠删码卷”标签的区域受容错保护。' },
+                    { label: '锁定状态', desc: '若磁盘已加密，您需要先在磁盘管理中输入密码解锁，才能在文件管理器中看到其内容。' },
+                ]},
+
+                { type: 'heading', content: '批量与高级操作' },
+                { type: 'list', items: [
+                    { label: '多选操作', desc: '按住 Ctrl 键或使用全选按钮，可批量执行下载、移动或删除。' },
+                    { label: '搜索过滤', desc: '使用工具栏搜索框，可根据文件名在当前目录下快速过滤。' },
+                    { label: '智能路径', desc: '路径栏支持点击跳转，也支持通过“前进/返回”按钮快速导航历史记录。' }
+                ]},
+                { type: 'warning', content: '在对加密卷或空间池执行删除操作前，请务必确认数据已备份，此类操作无法撤销。' }
             ]
         },
 
@@ -90,7 +112,8 @@ const helpContent = {
             title: '空间池',
             blocks: [
                 { type: 'text', content: '空间池可以将多个物理磁盘合并为一个统一的存储空间，并通过"逻辑卷"进行分类管理。' },
-                { type: 'image', src: '/static/images/help/pool-overview.png', caption: '空间池管理界面' },
+                // 修改：6.png -> pool-management.png (且统一放入 /images/help/ 目录)
+                { type: 'image', src: '/images/help/pool-management.png', caption: '空间池管理界面' },
 
                 { type: 'heading', content: '基本概念' },
                 { type: 'list', items: [
@@ -134,57 +157,38 @@ const helpContent = {
         disk: {
             title: '磁盘管理',
             blocks: [
-                { type: 'text', content: '磁盘管理显示所有可用的物理磁盘信息，包括容量、使用情况等。' },
-                { type: 'image', src: '/static/images/help/disk-manager.png', caption: '磁盘管理界面' },
+                { type: 'text', content: '磁盘管理是系统的核心安全与可靠性中心，主要包含“加密管理”与“容错管理（纠删码）”两大功能模块，用于保护数据不被非法访问，并在硬件损坏时确保数据不丢失。' },
 
-                { type: 'heading', content: '磁盘信息' },
+                { type: 'heading', content: '🔐 加密管理 (Encryption)' },
+                { type: 'text', content: '系统提供工业级的磁盘加密功能，支持物理硬盘和容量池的独立加密。' },
+                // 修改：7.png -> disk-encryption-console.png
+                { type: 'image', src: '/images/help/disk-encryption-console.png', caption: '磁盘与容量池加密控制台' },
                 { type: 'list', items: [
-                    { label: '盘符', desc: '磁盘的标识符，如 C:、D:' },
-                    { label: '总容量', desc: '磁盘的总存储空间' },
-                    { label: '已用空间', desc: '已使用的存储空间' },
-                    { label: '可用空间', desc: '剩余可用的存储空间' },
-                    { label: '使用率', desc: '已用空间占总容量的百分比' }
+                    { label: '磁盘加密', desc: '为独立物理硬盘设置密码，保护底层数据安全。' },
+                    { label: '容量池加密', desc: '支持对整个存储池或池内特定的逻辑卷进行二次加密。' },
+                    { label: '锁定/解锁', desc: '加密后的磁盘需手动输入密码解锁后才能在文件管理器中读写。' },
+                    { label: '管理操作', desc: '支持在线修改加密密码或永久移除加密（需提供原密码）。' }
                 ]},
+                { type: 'warning', content: '加密密码不会存储在云端或系统后台，一旦遗忘，数据将无法找回！' },
 
-                { type: 'heading', content: '磁盘状态' },
+                { type: 'heading', content: '🛡️ 容错管理 (纠删码/RAID)' },
+                { type: 'text', content: '通过纠删码（Erasure Coding）技术，将数据分散存储在多块硬盘上，即使部分硬盘损坏，数据依然完整。' },
+                // 修改：8.png -> disk-ec-raid-config.png
+                { type: 'image', src: '/images/help/disk-ec-raid-config.png', caption: '容错保护配置与监控' },
                 { type: 'list', items: [
-                    { label: '🟢 正常', desc: '磁盘运行正常' },
-                    { label: '🟡 警告', desc: '磁盘空间不足（使用率超过80%）' },
-                    { label: '🔴 危险', desc: '磁盘空间严重不足（使用率超过95%）' }
+                    { label: '配置方案', desc: '支持自定义 K（数据份数）+ M（容错份数）模式。' },
+                    { label: '容错能力', desc: '例如 2+1 模式允许同时损坏 1 块硬盘，4+2 模式允许同时损坏 2 块。' },
+                    { label: '健康检查', desc: '一键扫描文件块的完整性，识别风险文件和损坏文件。' },
+                    { label: '数据修复', desc: '检测到新硬盘替换后，支持批量执行数据重建（Rebuild）。' }
                 ]},
-                { type: 'tip', content: '建议保持磁盘使用率在80%以下，以确保系统正常运行。' }
-            ]
-        },
 
-        // ========== 磁盘加密 ==========
-        encryption: {
-            title: '磁盘加密',
-            blocks: [
-                { type: 'text', content: '磁盘加密功能可以保护您的数据安全，即使磁盘被物理盗取也无法读取数据。' },
-                { type: 'image', src: '/static/images/help/encryption.png', caption: '磁盘加密管理' },
-
-                { type: 'heading', content: '加密状态' },
+                { type: 'heading', content: '硬盘状态监控' },
                 { type: 'list', items: [
-                    { label: '未加密', desc: '磁盘未启用加密' },
-                    { label: '已加密（已解锁）', desc: '加密磁盘当前已解锁，可正常访问' },
-                    { label: '已加密（已锁定）', desc: '加密磁盘已锁定，需要密码解锁' }
+                    { label: '🟢 在线 (Online)', desc: '硬盘运行正常，数据读写无误。' },
+                    { label: '🟡 已更换 (Replaced)', desc: '检测到新硬盘，需要执行数据恢复以重建丢失的切片。' },
+                    { label: '🔴 离线 (Offline)', desc: '硬盘连接断开或已损坏，需尽快处理以免超过冗余上限。' }
                 ]},
-
-                { type: 'heading', content: '加密磁盘' },
-                { type: 'steps', items: [
-                    { title: '选择磁盘', text: '在磁盘列表中选择要加密的磁盘' },
-                    { title: '点击加密', text: '点击"加密"按钮' },
-                    { title: '设置密码', text: '输入加密密码（请牢记！）' },
-                    { title: '确认加密', text: '等待加密完成' }
-                ]},
-                { type: 'warning', content: '加密密码一旦遗忘将无法恢复，数据将永久丢失！请务必牢记密码！' },
-
-                { type: 'heading', content: '解锁磁盘' },
-                { type: 'text', content: '已锁定的加密磁盘需要输入正确密码才能解锁访问。' },
-
-                { type: 'heading', content: '锁定磁盘' },
-                { type: 'text', content: '可以随时锁定已解锁的加密磁盘，锁定后需要密码才能再次访问。' },
-                { type: 'tip', content: '离开时锁定加密磁盘可以提高数据安全性。' }
+                { type: 'tip', content: '在“容错管理”中，系统会根据磁盘容量差异给出容量预估，建议选择规格接近的硬盘以获得最大空间利用率。' }
             ]
         },
 
@@ -193,7 +197,8 @@ const helpContent = {
             title: '系统信息',
             blocks: [
                 { type: 'text', content: '系统信息显示当前NAS节点的运行状态和资源使用情况。' },
-                { type: 'image', src: '/static/images/help/system-info.png', caption: '系统信息界面' },
+                // 修改：9.png -> system-info-dashboard.png
+                { type: 'image', src: '/images/help/system-info-dashboard.png', caption: '系统信息界面' },
 
                 { type: 'heading', content: '监控指标' },
                 { type: 'list', items: [
@@ -226,7 +231,8 @@ const helpContent = {
                     { label: '自定义图片', desc: '上传自己的图片作为背景' },
                     { label: '网络图片', desc: '输入图片URL使用网络图片' }
                 ]},
-                { type: 'image', src: '/static/images/help/bg-settings.png', caption: '背景设置' },
+                // 修改：bg-settings.png -> settings-background.png
+                { type: 'image', src: '/images/help/settings-background.png', caption: '背景设置' },
 
                 { type: 'heading', content: '个人设置' },
                 { type: 'text', content: '在开始菜单中打开"个人设置"，可以修改个人信息。' },

@@ -80,7 +80,10 @@ def save_setup():
 @setup_bp.route('/api/setup/current-config', methods=['GET'])
 def get_current_setup_config():
     """返回当前配置信息（不含密钥）"""
-    cfg = _ctx['load_node_config']()
+    load_func = _ctx.get('load_node_config')
+    if load_func is None:
+        return {"error": "load_node_config 未初始化"}, 500
+    cfg = load_func()
     if cfg:
         return jsonify({
             'master_url': cfg.get('master_url', ''),

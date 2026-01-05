@@ -152,6 +152,18 @@ async getEcCapacityEstimate() {
     }
 },
 
+
+
+
+
+getHelpImageUrl(src) {
+    if (src && src.startsWith('/images/help/')) {
+        return axios.defaults.baseURL + src;
+    }
+    return src;
+},
+
+
 async doSearch() {
   if (!this.searchQuery.trim()) return;
 

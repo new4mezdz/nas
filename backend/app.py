@@ -276,6 +276,13 @@ def strip_proxy_prefix():
 
 # ==================== 特殊路由（无法移动到蓝图的） ====================
 
+
+# ==================== 帮助文档图片 ====================
+@app.route('/images/help/<path:filename>')
+def serve_help_images(filename):
+    """帮助文档图片"""
+    help_images_dir = os.path.join(app.static_folder, 'images', 'help')
+    return send_from_directory(help_images_dir, filename)
 @app.route('/static/pwa/manifest.json')
 def pwa_manifest():
     """PWA应用清单"""
@@ -553,6 +560,8 @@ if __name__ == '__main__':
     if need_setup:
         # ========== 配置向导模式 ==========
         app.config['SETUP_MODE'] = True
+        # ✅ 新增这一行
+        init_setup_routes(save_node_config, load_node_config, FLASK_PORT)
 
         # ✅ 配置向导模式也需要注册蓝图
         register_blueprints()
