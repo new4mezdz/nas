@@ -2939,7 +2939,7 @@
 
             <!-- 图片 -->
             <figure v-if="block.type === 'image'" class="my-4">
-              <img :src="getHelpImageUrl(block.src)" :alt="block.caption"
+              <img :src="block.src" :alt="block.caption"
                    class="rounded-lg border shadow-sm max-w-full">
               <figcaption class="text-center text-sm text-gray-500 mt-2">
                 {{ block.caption }}

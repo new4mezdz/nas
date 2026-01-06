@@ -312,6 +312,8 @@ handleSearchKeydown(e) {
             this.fetchPoolEncryptionStatus(),
             this.fetchPoolStatus()
         ]);
+        // ✅ 数据加载完成后，刷新所有文件管理窗口的侧边栏
+        this.refreshAllFileWindowsSidebar();
       } catch (e) {
         console.error('加载数据失败:', e);
         if (e.response?.status === 401) {
@@ -345,7 +347,12 @@ handleSearchKeydown(e) {
             }
         });
         if (response.data) {
+            const oldStatus = JSON.stringify(this.encryptionStatus);
             this.encryptionStatus = response.data;  // 直接使用 response.data,不要 .drives
+            // ✅ 如果加密状态发生变化，刷新文件管理窗口侧边栏（影响图标显示）
+            if (oldStatus !== JSON.stringify(this.encryptionStatus)) {
+              this.refreshAllFileWindowsSidebar();
+            }
         }
     } catch (error) {
         console.error('获取加密状态失败:', error);
@@ -355,10 +362,36 @@ handleSearchKeydown(e) {
     async fetchAvailableDrives() {
       try {
         const res = await axios.get('/api/drives');
+        const oldDrives = JSON.stringify(this.availableDrives);
         this.availableDrives = res.data;
+        // ✅ 如果驱动器列表发生变化，刷新文件管理窗口侧边栏
+        if (oldDrives !== JSON.stringify(this.availableDrives)) {
+          this.refreshAllFileWindowsSidebar();
+        }
       } catch (e) {
         console.error('获取可用驱动器失败:', e);
       }
+    },
+
+    // ✅ 新增：刷新所有文件管理窗口的侧边栏
+    refreshAllFileWindowsSidebar() {
+      const newStorageList = this.buildStorageList();
+      this.windows.forEach(win => {
+        if (win.type === 'files' && win.sidebar) {
+          const oldDrive = win.currentDrive;
+          win.sidebar.storage = newStorageList;
+
+          // 检查当前选中的驱动器是否还存在
+          const driveStillExists = newStorageList.some(s => s.path === oldDrive);
+          if (!driveStillExists && newStorageList.length > 0) {
+            // 如果当前驱动器已被移除，切换到第一个可用驱动器
+            win.currentDrive = newStorageList[0].path;
+            win.currentPath = newStorageList[0].path === 'ec_volume' ? 'ec_volume' : '/';
+            this.loadFiles(win);
+            this.showToast('⚠️ 当前磁盘已移除，已切换到其他存储', 'warning');
+          }
+        }
+      });
     },
 
     async fetchEcStatus() {
@@ -369,7 +402,12 @@ handleSearchKeydown(e) {
             }
         });
         if (response.data) {
+            const oldStatus = JSON.stringify(this.ecStatus);
             this.ecStatus = response.data;  // 这个保持对象
+            // ✅ 如果EC状态发生变化，刷新文件管理窗口侧边栏
+            if (oldStatus !== JSON.stringify(this.ecStatus)) {
+              this.refreshAllFileWindowsSidebar();
+            }
         }
     } catch (error) {
         console.error('获取纠删码状态失败:', error);
@@ -2286,20 +2324,20 @@ async rebuildOnReplacedDisk(disk) {
    async unlockDisk(drive, inFileManagerWindow = null) {
     const password = prompt(`请输入磁盘 [${drive}] 的解锁密码:`);
     if (!password) return;
-    
+
     try {
         await axios.post('/api/encryption/unlock', { drive, password });
         this.showToast(`✅ 磁盘 ${drive} 解锁成功`, 'success');
         await this.fetchEncryptionStatus();
-        
+
         // ✅ 刷新所有文件管理器窗口
         this.windows.forEach(w => {
             if (w.type === 'files') {
                 // 更新侧边栏存储列表
                 w.sidebar.storage = this.buildStorageList();
-                
+
                 // 如果当前窗口正在显示该磁盘,则自动刷新
-                if (w.currentDrive === drive || 
+                if (w.currentDrive === drive ||
                     (inFileManagerWindow && w.id === inFileManagerWindow.id)) {
                     this.loadFiles(w);
                 }
@@ -2510,7 +2548,12 @@ async decryptDiskPermanently(drive) {
 async fetchPoolStatus() {
   try {
     const res = await axios.get('/api/pool/status');
+    const oldStatus = JSON.stringify(this.poolStatus);
     this.poolStatus = res.data;
+    // ✅ 如果空间池状态发生变化，刷新文件管理窗口侧边栏
+    if (oldStatus !== JSON.stringify(this.poolStatus)) {
+      this.refreshAllFileWindowsSidebar();
+    }
   } catch (e) {
     console.error('获取空间池状态失败:', e);
     this.poolStatus = { is_configured: false };
@@ -3382,8 +3425,7 @@ async checkCurrentUser() {
         return;
       }
     } catch (err) {
-      console.error('Token 验证失败:', err);
-      this.showToast('❌ 访问令牌无效或已过期,请重新登录', 'error');
+  console.log('[DEBUG] 访问令牌需要刷新，正在跳转登录...');
       // 清除本地认证信息
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -3417,11 +3459,13 @@ async checkCurrentUser() {
     await this.loadData();
     return;
 }
-    } catch (err) {
-      // token 过期,清除
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-    }
+   } catch (err) {
+  // token 过期,清除（静默处理，不显示错误）
+  console.log('[DEBUG] 本地token已过期，需要重新登录');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  delete axios.defaults.headers.common['Authorization'];
+}
   }
 
   // 3. 都没有,跳转回管理端登录页
@@ -3651,6 +3695,15 @@ matchedApps() {
   mounted() {
   this.updateTime();
   setInterval(this.updateTime, 1000);
+
+  // 每10秒自动刷新存储设备列表
+setInterval(() => {
+  if (this.loggedIn) {
+    this.fetchAvailableDrives();
+    this.fetchPoolStatus();
+    this.fetchEcStatus();
+  }
+}, 5000);
 
   document.addEventListener('contextmenu', (e) => {
     if (this.loggedIn) {
