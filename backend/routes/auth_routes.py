@@ -4,7 +4,11 @@ import requests
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, session, g, make_response, send_from_directory, redirect, current_app
 import jwt
-
+import os
+import shutil
+import time
+import tarfile
+import io
 from common import get_db
 
 auth_bp = Blueprint('auth', __name__)
@@ -147,4 +151,163 @@ def verify_access_token_proxy():
         print(f"[ERROR] 转发失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+# ============ 客户端同步接口 ============
+import os
+import tarfile
+import io
+import shutil
+import time
+
+# 需要排除的文件/目录（不参与同步）
+# 需要排除的文件/目录（不参与同步）
+EXCLUDE_PATTERNS = [
+    '__pycache__',
+    '.git',
+    '*.pyc',
+    '*.db',
+    '*.json',
+    'logs',
+    'backup_*',
+    '*.log',
+]
+
+
+def should_exclude(name):
+    """检查文件是否应该排除"""
+    import fnmatch
+    for pattern in EXCLUDE_PATTERNS:
+        if fnmatch.fnmatch(name, pattern):
+            return True
+    return False
+
+
+@auth_bp.route('/api/client-files', methods=['GET'])
+def list_client_files():
+    """列出客户端目录下的文件（供管理端选择性同步使用）"""
+    if request.headers.get('X-NAS-Secret') != _ctx['NAS_SHARED_SECRET']:
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        # 获取客户端根目录
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        files = []
+        for item in os.listdir(backend_dir):
+            if should_exclude(item):
+                continue
+
+            item_path = os.path.join(backend_dir, item)
+            files.append({
+                'name': item,
+                'path': item,
+                'isDir': os.path.isdir(item_path),
+                'size': os.path.getsize(item_path) if os.path.isfile(item_path) else 0
+            })
+
+        # 按类型和名称排序
+        files.sort(key=lambda x: (not x['isDir'], x['name'].lower()))
+
+        return jsonify({'success': True, 'files': files})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/api/export-client', methods=['GET'])
+def export_client():
+    """导出客户端代码包（供管理端拉取）"""
+    if request.headers.get('X-NAS-Secret') != _ctx['NAS_SHARED_SECRET']:
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        from flask import send_file
+
+        # 获取客户端根目录
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # 检查是否选择性同步
+        selected_files = request.args.get('files', '')
+        selected_list = [f.strip() for f in selected_files.split(',') if f.strip()] if selected_files else []
+
+        # 创建 tar.gz 包
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+            for item in os.listdir(backend_dir):
+                # 排除不需要同步的文件
+                if should_exclude(item):
+                    continue
+
+                # 如果指定了文件列表，只打包选中的
+                if selected_list and item not in selected_list:
+                    continue
+
+                item_path = os.path.join(backend_dir, item)
+                tar.add(item_path, arcname=item)
+
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype='application/gzip',
+            as_attachment=True,
+            download_name='client.tar.gz'
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/api/receive-update', methods=['POST'])
+def receive_update():
+    """接收并应用客户端更新"""
+    if request.headers.get('X-NAS-Secret') != _ctx['NAS_SHARED_SECRET']:
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        pkg = request.files.get('package')
+        if not pkg:
+            return jsonify({'error': '没有收到更新包'}), 400
+
+        do_backup = request.form.get('backup', '1') == '1'
+
+        # 获取客户端根目录
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # 备份当前版本
+        if do_backup:
+            backup_dir = os.path.join(backend_dir, f'backup_{int(time.time())}')
+            os.makedirs(backup_dir, exist_ok=True)
+
+            for item in os.listdir(backend_dir):
+                if should_exclude(item) or item.startswith('backup_'):
+                    continue
+                src = os.path.join(backend_dir, item)
+                dst = os.path.join(backup_dir, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+
+            print(f"[UPDATE] 已备份到 {backup_dir}")
+
+        # 解压覆盖
+        with tarfile.open(fileobj=pkg.stream, mode='r:gz') as tar:
+            # 安全检查：防止路径遍历攻击
+            for member in tar.getmembers():
+                if member.name.startswith('/') or '..' in member.name:
+                    return jsonify({'error': '非法的文件路径'}), 400
+
+            tar.extractall(backend_dir)
+
+        print(f"[UPDATE] 客户端更新完成")
+
+        return jsonify({
+            'success': True,
+            'message': '更新完成，请重启服务生效',
+            'backup': backup_dir if do_backup else None
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
