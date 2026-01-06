@@ -10,6 +10,8 @@ import time
 import tarfile
 import io
 from common import get_db
+import sys
+import threading
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -269,11 +271,13 @@ def receive_update():
             return jsonify({'error': '没有收到更新包'}), 400
 
         do_backup = request.form.get('backup', '1') == '1'
+        auto_restart = request.form.get('auto_restart', '1') == '1'  # 新增参数
 
         # 获取客户端根目录
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         # 备份当前版本
+        backup_dir = None
         if do_backup:
             backup_dir = os.path.join(backend_dir, f'backup_{int(time.time())}')
             os.makedirs(backup_dir, exist_ok=True)
@@ -292,22 +296,30 @@ def receive_update():
 
         # 解压覆盖
         with tarfile.open(fileobj=pkg.stream, mode='r:gz') as tar:
-            # 安全检查：防止路径遍历攻击
             for member in tar.getmembers():
                 if member.name.startswith('/') or '..' in member.name:
                     return jsonify({'error': '非法的文件路径'}), 400
-
             tar.extractall(backend_dir)
 
         print(f"[UPDATE] 客户端更新完成")
 
+        # ========== 新增：自动重启 ==========
+        if auto_restart:
+            def delayed_restart():
+                time.sleep(2)  # 等待响应发送完成
+                print("[UPDATE] 正在重启服务...")
+                os.execl(sys.executable, sys.executable, *sys.argv)
+
+            restart_thread = threading.Thread(target=delayed_restart, daemon=True)
+            restart_thread.start()
+
         return jsonify({
             'success': True,
-            'message': '更新完成，请重启服务生效',
-            'backup': backup_dir if do_backup else None
+            'message': '更新完成' + ('，服务即将自动重启' if auto_restart else '，请手动重启服务'),
+            'backup': backup_dir,
+            'auto_restart': auto_restart
         })
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
-

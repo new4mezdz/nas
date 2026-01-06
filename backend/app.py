@@ -17,6 +17,44 @@ import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
+
+# ==================== 管理员权限检查（必须在最开始） ====================
+def is_admin():
+    """检查是否以管理员权限运行"""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+
+def run_as_admin(script_path):
+    """请求管理员权限并重新启动脚本"""
+    try:
+        import ctypes
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, script_path, None, 1
+        )
+        return result > 32
+    except Exception as e:
+        print(f"请求管理员权限失败: {e}")
+        return False
+
+
+# ========== 在导入任何其他模块之前，先检查管理员权限 ==========
+if __name__ == '__main__' and os.name == 'nt':
+    if not is_admin():
+        print('🔐  程序需要管理员权限，正在请求...')
+        print('    请在 UAC 对话框中点击"是"')
+        if run_as_admin(' '.join(sys.argv)):
+            print('✅  程序即将以管理员权限重启...')
+            # 立即退出，不做任何其他初始化
+            sys.exit(0)
+        else:
+            print('⚠️  未能获取管理员权限，部分功能可能受限')
+            print('    建议右键点击程序 -> "以管理员身份运行"')
+            # 继续运行，但某些功能可能不可用
+
 # ===== 第三方库 =====
 import requests
 from flask import (
@@ -283,6 +321,8 @@ def serve_help_images(filename):
     """帮助文档图片"""
     help_images_dir = os.path.join(app.static_folder, 'images', 'help')
     return send_from_directory(help_images_dir, filename)
+
+
 @app.route('/static/pwa/manifest.json')
 def pwa_manifest():
     """PWA应用清单"""
@@ -383,30 +423,8 @@ OHM_PATH = str(PROJECT_ROOT / 'LibreHardwareMonitor-net472' / 'LibreHardwareMoni
 LO_LAUNCHER_PATH = os.path.join(BACKEND_DIR, 'tool', 'LibreOfficePortable', 'LibreOfficePortable.exe')
 
 
-def is_admin():
-    """检查是否以管理员权限运行"""
-    try:
-        import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
-
-def run_as_admin(script_path):
-    """请求管理员权限并重新启动脚本"""
-    try:
-        import ctypes
-        result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, script_path, None, 1
-        )
-        return result > 32
-    except Exception as e:
-        print(f"请求管理员权限失败: {e}")
-        return False
-
-
 def start_librehardwaremonitor():
-    """启动 LibreHardwareMonitor，自动处理权限问题"""
+    """启动 LibreHardwareMonitor（权限检查已在程序入口完成）"""
     print("🌡️  正在启动 LibreHardwareMonitor...")
 
     # 检查是否已在运行
@@ -455,24 +473,7 @@ def start_librehardwaremonitor():
         return ohm_proc
 
     except Exception as e:
-        error_code = getattr(e, 'winerror', None)
-
-        # 如果是权限错误，自动请求管理员权限
-        if error_code == 740 or isinstance(e, PermissionError):
-            print(f'❌  LibreHardwareMonitor 需要管理员权限！')
-
-            if not is_admin():
-                print('🔐  正在请求管理员权限，请在 UAC 对话框中点击"是"...')
-
-                if run_as_admin(' '.join(sys.argv)):
-                    print('✅  程序即将以管理员权限重启...')
-                    time.sleep(2)
-                    sys.exit(0)
-                else:
-                    print('❌  无法获取管理员权限')
-                    print('请右键 app.py -> "以管理员身份运行"')
-                    return None
-
+        # 权限检查已在程序入口完成，这里只打印错误
         print(f'❌  LibreHardwareMonitor 启动失败: {e}')
         return None
 
@@ -537,6 +538,8 @@ def verify_master_connection(config):
 
 # ==================== 主程序入口 ====================
 if __name__ == '__main__':
+    # 注意：管理员权限检查已在文件顶部完成
+
     print("✅  数据库初始化完成")
     print("🚀  正在启动文件管理系统...")
 
