@@ -1421,6 +1421,7 @@ def get_ec_shard():
     filename = request.args.get('filename')
     shard_index = request.args.get('shard_index', type=int)
     disk = request.args.get('disk')
+    check_only = request.args.get('check_only', '').lower() == 'true'
 
     if not all([filename, shard_index is not None, disk]):
         return jsonify({'error': '缺少必要参数'}), 400
@@ -1431,6 +1432,10 @@ def get_ec_shard():
 
         if not os.path.exists(blk_path):
             return jsonify({'error': '分片不存在'}), 404
+
+        # 只检查存在性，不返回数据
+        if check_only:
+            return jsonify({'success': True, 'exists': True})
 
         with open(blk_path, 'rb') as f:
             shard_data = f.read()
@@ -1448,7 +1453,6 @@ def get_ec_shard():
 
     except Exception as e:
         return jsonify({'error': f'读取失败: {str(e)}'}), 500
-
 
 @ec_bp.route('/api/ec_shard', methods=['DELETE'])
 @internal_or_permission('fullcontrol')
@@ -1474,3 +1478,34 @@ def delete_ec_shard():
 
     except Exception as e:
         return jsonify({'error': f'删除失败: {str(e)}'}), 500
+
+
+@ec_bp.route('/api/write_file', methods=['POST'])
+@internal_or_permission('fullcontrol')
+def write_file():
+    """写入文件到指定路径（用于EC导出）"""
+    data = request.get_json()
+
+    path = data.get('path')
+    file_data = data.get('data')  # hex编码的数据
+    create_dirs = data.get('create_dirs', False)
+
+    if not path or not file_data:
+        return jsonify({'error': '缺少参数'}), 400
+
+    try:
+        # 创建目录
+        if create_dirs:
+            dir_path = os.path.dirname(path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+
+        # 写入文件
+        with open(path, 'wb') as f:
+            f.write(bytes.fromhex(file_data))
+
+        print(f"[WRITE_FILE] 已写入: {path}")
+        return jsonify({'success': True, 'path': path})
+
+    except Exception as e:
+        return jsonify({'error': f'写入失败: {str(e)}'}), 500

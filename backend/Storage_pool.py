@@ -177,7 +177,7 @@ def remove_pool() -> dict:
 # ==================== 逻辑卷管理 ====================
 
 def create_volume(name: str, display_name: str, icon: str = "📁",
-                  strategy: str = "largest_free") -> dict:
+                  strategy: str = "largest_free", quota: int = 0) -> dict:
     """
     创建逻辑卷
     :param name: 卷标识 (英文，如 movies)
@@ -201,6 +201,7 @@ def create_volume(name: str, display_name: str, icon: str = "📁",
         "display_name": display_name,
         "icon": icon,
         "strategy": strategy,
+        "quota": quota,  # 0 表示不限制
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
     }
 
@@ -445,6 +446,27 @@ def add_file(volume_name: str, subpath: str, filename: str,
 
     if volume_name not in config.get("volumes", {}):
         raise Exception(f"逻辑卷 {volume_name} 不存在")
+
+    vol = config["volumes"][volume_name]
+
+    # ========== 新增：配额检查 ==========
+    quota = vol.get("quota", 0)
+    if quota > 0:
+        # 计算当前卷已用空间
+        used = sum(
+            f.get("size", 0)
+            for vpath, f in config.get("files", {}).items()
+            if vpath.startswith(volume_name + "/")
+        )
+        if used + len(file_data) > quota:
+            used_gb = used / (1024 ** 3)
+            quota_gb = quota / (1024 ** 3)
+            file_mb = len(file_data) / (1024 ** 2)
+            raise Exception(
+                f"超出逻辑卷配额限制（已用 {used_gb:.2f} GB / 配额 {quota_gb:.2f} GB，"
+                f"本次上传 {file_mb:.2f} MB）"
+            )
+    # ====================================
 
     # 构建虚拟路径
     if subpath:

@@ -374,12 +374,18 @@ def api_download():
             if not is_path_allowed(actual_path):
                 return jsonify({"error": "不允许访问该路径"}), 403
 
+            # 新增：判断是否为预览模式
+            preview = request.args.get('preview', '').lower() == 'true'
+
             if encryption_manager.is_path_encrypted(actual_path):
                 decrypted_data = encryption_manager.read_encrypted_file(actual_path)
-                return send_file(io.BytesIO(decrypted_data), as_attachment=True,
+                return send_file(io.BytesIO(decrypted_data),
+                                 as_attachment=not preview,
                                  download_name=os.path.basename(actual_path))
             else:
-                return send_file(actual_path, as_attachment=True, download_name=os.path.basename(actual_path))
+                return send_file(actual_path,
+                                 as_attachment=not preview,
+                                 download_name=os.path.basename(actual_path))
 
         except Exception as e:
             return jsonify({'error': f'下载文件时出错: {e}'}), 500
@@ -1430,10 +1436,16 @@ def access_preview_session(session_id):
         else:
             return jsonify({'error': '不支持的文件类型'}), 400
 
+    except ConnectionAbortedError:
+        # 客户端主动断开连接，忽略此错误
+        print(f"[DEBUG] 预览会话客户端断开连接: {session_id}")
+        return '', 499  # 499 是 nginx 用的客户端关闭连接状态码
+    except (BrokenPipeError, ConnectionResetError) as e:
+        print(f"[DEBUG] 预览连接异常: {e}")
+        return '', 499
     except Exception as e:
         print(f"[DEBUG] 预览会话文件访问失败: {e}")
         return jsonify({'error': '文件访问失败'}), 500
-
 
 
 
@@ -1538,4 +1550,81 @@ def api_disk_info():
         return jsonify({'error': str(e)}), 500
 
 
+@file_bp.route('/api/internal/scan-dir', methods=['GET'])
+def internal_scan_dir():
+    """内部接口 - 扫描目录下的所有文件（用于跨节点池重建索引）"""
+    from config import NAS_SHARED_SECRET
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '无权访问'}), 403
+
+    path = request.args.get('path')
+    if not path:
+        return jsonify({'error': '缺少 path 参数'}), 400
+
+    # 规范化路径
+    path = path.replace('/', os.sep).replace('\\', os.sep)
+
+    if not os.path.exists(path):
+        return jsonify({'error': '目录不存在'}), 404
+
+    if not os.path.isdir(path):
+        return jsonify({'error': '路径不是目录'}), 400
+
+    files = []
+    try:
+        for root, dirs, filenames in os.walk(path):
+            for filename in filenames:
+                full_path = os.path.join(root, filename)
+                # 统一使用正斜杠
+                full_path_normalized = full_path.replace('\\', '/')
+                try:
+                    stat = os.stat(full_path)
+                    files.append({
+                        'name': filename,
+                        'path': full_path_normalized,
+                        'size': stat.st_size,
+                        'mtime': stat.st_mtime,
+                        'is_dir': False
+                    })
+                except Exception as e:
+                    # 跳过无法访问的文件
+                    pass
+    except Exception as e:
+        return jsonify({'error': f'扫描失败: {str(e)}'}), 500
+
+    return jsonify({'files': files, 'count': len(files)})
+
+
+@file_bp.route('/api/internal/delete-dir', methods=['POST'])
+def internal_delete_dir():
+    """内部接口 - 删除目录（用于跨节点池清理）"""
+    from config import NAS_SHARED_SECRET
+    import shutil
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '无权访问'}), 403
+
+    data = request.json or {}
+    path = data.get('path')
+
+    if not path:
+        return jsonify({'error': '缺少 path 参数'}), 400
+
+    # 规范化路径
+    path = path.replace('/', os.sep).replace('\\', os.sep)
+
+    if not os.path.exists(path):
+        return jsonify({'success': True, 'message': '目录不存在，无需删除'})
+
+    if not os.path.isdir(path):
+        return jsonify({'error': '路径不是目录'}), 400
+
+    try:
+        shutil.rmtree(path)
+        return jsonify({'success': True, 'message': f'已删除目录: {path}'})
+    except Exception as e:
+        return jsonify({'error': f'删除失败: {str(e)}'}), 500
 

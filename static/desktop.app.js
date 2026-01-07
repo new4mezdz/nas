@@ -102,6 +102,8 @@ volumeForm: {
   display_name: '',
   icon: '📁',
   strategy: 'largest_free',
+     quota: 0,        // 0 表示不限制
+  quotaUnit: 'GB', // 单位：GB 或 TB
   error: ''
 },
 
@@ -517,12 +519,18 @@ createWindow(type, title, icon, data = {}) {
           currentDrive = initialPath;
           currentPath = '/';
         }
-      } else {
-        // 默认选择第一个存储设备
-        currentDrive = storageList[0]?.path || 'D:/';
-        currentPath = storageList[0]?.path === 'ec_volume' ? 'ec_volume' : '/';
-      }
-
+   } else {
+  // 默认选择第一个可用的存储设备（跳过 pool_empty）
+  const firstUsable = storageList.find(s => s.path !== 'pool_empty');
+  if (firstUsable) {
+    currentDrive = firstUsable.path;
+    currentPath = firstUsable.path === 'ec_volume' ? 'ec_volume' : '/';
+  } else {
+    // 没有可用存储设备，使用 pool_empty
+    currentDrive = 'pool_empty';
+    currentPath = '/';
+  }
+}
       const window = this.createWindow('files', '文件管理', '📁', {
         width: 1100,
         height: 700,
@@ -612,18 +620,30 @@ if (this.poolStatus.is_configured && this.poolStatus.disks) {
     });
   });
 
-  // 添加空间池逻辑卷
-if (this.poolStatus.is_configured && this.poolStatus.volumes) {
-  Object.entries(this.poolStatus.volumes).forEach(([volName, volConfig]) => {
-    storage.push({
-      icon: volConfig.icon || '📦',
-      label: volConfig.display_name,
-      path: `pool://${volName}`,
-      type: 'pool_volume',
-      usage: 0,
-      volumeName: volName
+// 添加空间池逻辑卷
+if (this.poolStatus.is_configured) {
+  const volumes = this.poolStatus.volumes ? Object.entries(this.poolStatus.volumes) : [];
+  if (volumes.length > 0) {
+    volumes.forEach(([volName, volConfig]) => {
+      storage.push({
+        icon: volConfig.icon || '📦',
+        label: volConfig.display_name,
+        path: `pool://${volName}`,
+        type: 'pool_volume',
+        usage: 0,
+        volumeName: volName
+      });
     });
-  });
+  } else {
+    // 有空间池但没有逻辑卷时显示提示
+    storage.push({
+      icon: '🗄️',
+      label: '存储池（暂无逻辑卷）',
+      path: 'pool_empty',
+      type: 'pool_empty',
+      usage: 0
+    });
+  }
 }
   // 添加 EC 卷
   if (this.ecStatus.is_configured) {
@@ -660,7 +680,12 @@ openPersonalSettings() {
     this.showToast('未登录', 'error');
     return;
   }
-
+// 如果是空存储池，不加载文件
+// 如果是空存储池或无存储设备，不加载文件
+if (window.currentDrive === 'pool_empty' || window.currentDrive === 'none') {
+  window.files = [];
+  return;
+}
   // ==============================
   // 🟢 新增: 处理收藏夹视图
   // ==============================
@@ -823,14 +848,20 @@ async addToRecent(file, window) {
       this.sortFiles(window);
     },
 
-    navigateToStorage(window, storagePath) {
-      window.currentDrive = storagePath;
-      window.currentPath = storagePath === 'ec_volume' ? 'ec_volume' : '/';
-      window.selectedFiles = [];
-      this.addToHistory(window);
-      this.loadFiles(window);
-    },
+   navigateToStorage(window, storagePath) {
+  // 如果点击的是空存储池提示，打开空间池管理
+  if (storagePath === 'pool_empty') {
+    this.showToast('请先在空间池管理中创建逻辑卷', 'info');
+    this.openPoolManager();
+    return;
+  }
 
+  window.currentDrive = storagePath;
+  window.currentPath = storagePath === 'ec_volume' ? 'ec_volume' : '/';
+  window.selectedFiles = [];
+  this.addToHistory(window);
+  this.loadFiles(window);
+},
     openFolder(window, folderName) {
       let newPath;
       if (window.currentDrive === 'ec_volume') {
@@ -1971,7 +2002,7 @@ async previewFile(window, file, overridePath = null) {
     return;
   }
   // 其他文件类型逻辑
-  const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}`;
+  const url = `${axios.defaults.baseURL || ''}/api/download?path=${encodeURIComponent(fullPath)}&token=${encodeURIComponent(token)}&preview=true`;
   if (this.isImage(file) || this.isVideo(file) || this.isAudio(file)) {
     previewWindow.previewContent = url;
     previewWindow.isLoading = false;
@@ -3021,7 +3052,7 @@ closeVolumeDialog() {
 },
 
 async submitVolumeConfig() {
-  const { name, display_name, icon, strategy } = this.volumeForm;
+  const { name, display_name, icon, strategy, quota, quotaUnit } = this.volumeForm;
   this.volumeForm.error = '';
 
   if (!name || !display_name) {
@@ -3035,12 +3066,18 @@ async submitVolumeConfig() {
     return;
   }
 
+  // 计算配额字节数 (0 表示不限制)
+  const quotaBytes = quota > 0
+    ? quota * (quotaUnit === 'TB' ? 1024 * 1024 * 1024 * 1024 : 1024 * 1024 * 1024)
+    : 0;
+
   try {
     await axios.post('/api/pool/volume/create', {
       name,
       display_name,
       icon,
-      strategy
+      strategy,
+      quota: quotaBytes
     });
 
     this.showToast('✅ 逻辑卷创建成功！', 'success');
