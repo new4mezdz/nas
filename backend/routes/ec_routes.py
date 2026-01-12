@@ -1408,7 +1408,7 @@ def store_ec_shard():
             json.dump(meta, f, ensure_ascii=False)
 
         print(f"[EC_SHARD] 已存储: {filename} shard {shard_index} -> {disk}")
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'path': blk_path})
 
     except Exception as e:
         return jsonify({'error': f'存储失败: {str(e)}'}), 500

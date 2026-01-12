@@ -1680,6 +1680,7 @@ def write_shard():
     data = request.json
     path = data.get('path', '')
     shard_hex = data.get('shard_data', '')
+    meta = data.get('meta')  # 新增：接收meta信息
 
     if not path or not shard_hex:
         return jsonify({'error': '缺少参数'}), 400
@@ -1688,9 +1689,19 @@ def write_shard():
         # 确保目录存在
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        # 写入分片数据
         shard_data = bytes.fromhex(shard_hex)
         with open(path, 'wb') as f:
             f.write(shard_data)
+
+        # 新增：写入meta.json
+        if meta:
+            # 从 xxx.blk_0 提取基础路径，生成 xxx.meta.json
+            base_path = path.rsplit('.blk_', 1)[0]
+            meta_path = f"{base_path}.meta.json"
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False)
+
         return jsonify({'success': True, 'path': path})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
