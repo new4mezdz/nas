@@ -1628,3 +1628,69 @@ def internal_delete_dir():
     except Exception as e:
         return jsonify({'error': f'删除失败: {str(e)}'}), 500
 
+
+
+
+@file_bp.route('/api/file_exists', methods=['GET'])
+def check_file_exists():
+    """检查文件是否存在 - 供主控EC健康检查使用"""
+    from config import NAS_SHARED_SECRET
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'exists': False, 'error': '缺少路径'})
+
+    return jsonify({'exists': os.path.exists(path), 'path': path})
+
+
+@file_bp.route('/api/read_shard', methods=['GET'])
+def read_shard():
+    """读取分片数据 - 供主控EC重建使用"""
+    from config import NAS_SHARED_SECRET
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    path = request.args.get('path', '')
+    if not path or not os.path.exists(path):
+        return jsonify({'error': '分片不存在'}), 404
+
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        return jsonify({'shard_data': data.hex(), 'size': len(data)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@file_bp.route('/api/write_shard', methods=['POST'])
+def write_shard():
+    """写入分片数据 - 供主控EC重建使用"""
+    from config import NAS_SHARED_SECRET
+
+    secret = request.headers.get('X-NAS-Secret')
+    if secret != NAS_SHARED_SECRET:
+        return jsonify({'error': '权限不足'}), 403
+
+    data = request.json
+    path = data.get('path', '')
+    shard_hex = data.get('shard_data', '')
+
+    if not path or not shard_hex:
+        return jsonify({'error': '缺少参数'}), 400
+
+    try:
+        # 确保目录存在
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        shard_data = bytes.fromhex(shard_hex)
+        with open(path, 'wb') as f:
+            f.write(shard_data)
+        return jsonify({'success': True, 'path': path})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
